@@ -148,3 +148,10 @@ Step 7 — Start:
   docker compose up --build -d
 
 Your Sangita is now live at your Cloudflare domain from anywhere.
+
+
+
+Images: 
+<img width="1918" height="1037" alt="image" src="https://github.com/user-attachments/assets/800622b0-a754-47b6-8817-a3cb4b24a825" />
+<img width="1922" height="1038" alt="image" src="https://github.com/user-attachments/assets/ad544933-c217-49b0-bb4b-6c5c937f4772" />
+
