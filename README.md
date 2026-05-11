@@ -12,36 +12,6 @@ What it does
 - Three themes: Blue Dark, Dark, Light — toggle in the sidebar
 - Works on desktop and mobile browser
 - Runs in Docker — one command to start
- 
-Folder structure
- 
-sangita/
-├── backend/
-│   ├── app.py
-│   └── requirements.txt
-├── frontend/
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.js
-│   └── src/
-│       ├── main.jsx
-│       ├── index.css
-│       ├── App.jsx
-│       └── components/
-│           ├── Login.jsx
-│           ├── Sidebar.jsx
-│           ├── Hero.jsx
-│           ├── TrackList.jsx
-│           └── Player.jsx
-├── music/               ← put your music here
-│   ├── Rock/
-│   │   └── song.mp3
-│   └── Jazz/
-│       └── song.flac
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-└── .gitignore
 
 HOW ANYONE CAN INSTALL AND RUN IT
 ================================================================
