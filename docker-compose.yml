@@ -1,0 +1,13 @@
+services:
+  sangita:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./music:/app/music
+    environment:
+      - MUSIC_DIR=/app/music
+      - SANGITA_USER=${SANGITA_USER:-admin}
+      - SANGITA_PASS=${SANGITA_PASS:-sangita123}
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
+    restart: unless-stopped
