@@ -1,3 +1,48 @@
+Sangita — Self-Hosted Music Player
+
+Sangita Meaning [Music in Kannada]
+
+Sangita is a music player you run on your own server or computer. Drop in your audio files, open the browser, and stream your music from anywhere.
+ 
+What it does
+- Login page with username and password
+- Each subfolder inside `music/` becomes a playlist
+- Play, pause, skip, seek, volume control, shuffle
+- Shows track duration for every song
+- Three themes: Blue Dark, Dark, Light — toggle in the sidebar
+- Works on desktop and mobile browser
+- Runs in Docker — one command to start
+ 
+Folder structure
+ 
+sangita/
+├── backend/
+│   ├── app.py
+│   └── requirements.txt
+├── frontend/
+│   ├── index.html
+│   ├── package.json
+│   ├── vite.config.js
+│   └── src/
+│       ├── main.jsx
+│       ├── index.css
+│       ├── App.jsx
+│       └── components/
+│           ├── Login.jsx
+│           ├── Sidebar.jsx
+│           ├── Hero.jsx
+│           ├── TrackList.jsx
+│           └── Player.jsx
+├── music/               ← put your music here
+│   ├── Rock/
+│   │   └── song.mp3
+│   └── Jazz/
+│       └── song.flac
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+└── .gitignore
+
 HOW ANYONE CAN INSTALL AND RUN IT
 ================================================================
 
