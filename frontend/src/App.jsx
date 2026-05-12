@@ -10,7 +10,6 @@ function buildTracks(playlistName, paths) {
     id: `${playlistName}-${i}`,
     path: p,
     name: p.split('/').pop().replace(/\.[^/.]+$/, ''),
-    playlist: playlistName,
   }))
 }
  
@@ -57,7 +56,6 @@ export default function App() {
   const [theme,           setTheme]           = useState(() => localStorage.getItem('sangita_theme') || 'bluedark')
  
   const audioRef     = useRef(null)
-  const durAudiosRef = useRef([])
   const queueRef     = useRef([])
   const indexRef     = useRef(-1)
   const isShuffleRef = useRef(false)
@@ -73,6 +71,18 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem('sangita_theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+      <rect width="32" height="32" rx="8" fill="%234F46E5"/>
+      <path d="M22 8v10.26A4 4 0 1 1 20 15V10l-8 1.5v8.76A4 4 0 1 1 10 17V9.5z" fill="white"/>
+    </svg>`
+    const link = document.querySelector("link[rel~='icon']") || document.createElement('link')
+    link.type = 'image/svg+xml'
+    link.rel  = 'icon'
+    link.href = `data:image/svg+xml,${svg}`
+    document.head.appendChild(link)
+  }, [])
  
   const cycleTheme = useCallback(() => {
     setTheme(t => t === 'bluedark' ? 'dark' : t === 'dark' ? 'light' : 'bluedark')
@@ -124,6 +134,7 @@ export default function App() {
     setCurrentTime(0)
     setDuration(0)
     setIsPlaying(false)
+    setDurations({})
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current.src = ''
@@ -131,35 +142,28 @@ export default function App() {
   }, [currentPlaylist, playlists])
  
   useEffect(() => {
-    if (!queue.length || !token) return
-    durAudiosRef.current.forEach(a => { a.src = '' })
-    durAudiosRef.current = []
-    setDurations({})
-    queue.forEach(track => {
-      const a = new Audio()
-      a.preload = 'metadata'
-      durAudiosRef.current.push(a)
-      a.addEventListener('loadedmetadata', () => {
-        const d = a.duration
-        if (d && isFinite(d) && d > 0) {
-          setDurations(prev => ({ ...prev, [track.path]: d }))
-        }
-      }, { once: true })
-      a.src = `/api/stream/${encodeURIComponent(track.path)}?token=${token}`
-    })
-    return () => {
-      durAudiosRef.current.forEach(a => { a.src = '' })
-      durAudiosRef.current = []
-    }
-  }, [queue, token])
- 
-  useEffect(() => {
     const tick = () => {
       const audio = audioRef.current
       if (audio) {
-        setCurrentTime(audio.currentTime || 0)
-        setDuration(isFinite(audio.duration) ? audio.duration : 0)
-        setIsPlaying(!audio.paused && !audio.ended && isFinite(audio.duration) && audio.duration > 0)
+        const t     = audio.currentTime || 0
+        const d     = isFinite(audio.duration) ? audio.duration : 0
+        const alive = !audio.paused && !audio.ended && d > 0
+
+        setCurrentTime(t)
+        setDuration(d)
+        setIsPlaying(alive)
+
+        if (d > 0) {
+          const idx   = indexRef.current
+          const q     = queueRef.current
+          const track = idx >= 0 ? q[idx] : null
+          if (track) {
+            setDurations(prev => {
+              if (prev[track.path] === d) return prev   
+              return { ...prev, [track.path]: d }
+            })
+          }
+        }
       }
       rafRef.current = requestAnimationFrame(tick)
     }
