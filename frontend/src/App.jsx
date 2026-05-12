@@ -159,7 +159,7 @@ export default function App() {
           const track = idx >= 0 ? q[idx] : null
           if (track) {
             setDurations(prev => {
-              if (prev[track.path] === d) return prev   
+              if (prev[track.path] === d) return prev
               return { ...prev, [track.path]: d }
             })
           }
