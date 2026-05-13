@@ -49,6 +49,7 @@ export default function App() {
   const [currentIndex,    setCurrentIndex]    = useState(-1)
   const [isPlaying,       setIsPlaying]       = useState(false)
   const [isShuffle,       setIsShuffle]       = useState(false)
+  const [isLoop,          setIsLoop]          = useState(false)   
   const [volume,          setVolume]          = useState(80)
   const [currentTime,     setCurrentTime]     = useState(0)
   const [duration,        setDuration]        = useState(0)
@@ -59,12 +60,14 @@ export default function App() {
   const queueRef     = useRef([])
   const indexRef     = useRef(-1)
   const isShuffleRef = useRef(false)
+  const isLoopRef    = useRef(false)             
   const volumeRef    = useRef(80)
   const rafRef       = useRef(null)
  
   useEffect(() => { queueRef.current     = queue        }, [queue])
   useEffect(() => { indexRef.current     = currentIndex }, [currentIndex])
   useEffect(() => { isShuffleRef.current = isShuffle    }, [isShuffle])
+  useEffect(() => { isLoopRef.current    = isLoop       }, [isLoop])   
   useEffect(() => { volumeRef.current    = volume       }, [volume])
  
   useEffect(() => {
@@ -175,9 +178,15 @@ export default function App() {
     const audio = audioRef.current
     if (!audio) return
     const onEnded = () => {
-      const q = queueRef.current
+      const q   = queueRef.current
       const idx = indexRef.current
       if (q.length === 0) return
+      if (isLoopRef.current) {
+        audio.currentTime = 0
+        audio.play().catch(console.error)
+        return
+      }
+
       let nextIdx
       if (isShuffleRef.current) {
         if (q.length === 1) { nextIdx = 0 }
@@ -372,10 +381,12 @@ export default function App() {
         playlist={currentPlaylist}
         isPlaying={isPlaying}
         isShuffle={isShuffle}
+        isLoop={isLoop}
         onTogglePlay={togglePlay}
         onNext={playNext}
         onPrev={playPrev}
         onToggleShuffle={() => setIsShuffle(s => !s)}
+        onToggleLoop={() => setIsLoop(l => !l)}
         currentTime={currentTime}
         duration={duration}
         onSeek={seekTo}
