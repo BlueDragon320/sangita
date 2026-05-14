@@ -3,13 +3,11 @@ services:
     image: redis:7-alpine
     container_name: sangita-redis
     command: redis-server --appendonly yes
-    ports:
-      - "6379:6379"
     volumes:
       - ./redis-data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
