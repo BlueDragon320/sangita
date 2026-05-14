@@ -66,7 +66,6 @@ export default function TrackList({ tracks, currentIndex, isPlaying, onPlayTrack
  
             <div className="track-info">
               <div className="track-name">{track.name}</div>
-              <div className="track-sub">{track.playlist}</div>
             </div>
  
             <div className="track-duration">

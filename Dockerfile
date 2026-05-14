@@ -10,8 +10,11 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ .
-COPY --from=builder /app/backend/static ./static
+
+# CORRECTED LINE: 
+# Copy from the frontend build output folder (vite outputs to dist)
+COPY --from=builder /app/frontend/dist ./static
+
 RUN mkdir -p /app/music
 EXPOSE 5000
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "120", "app:app"]
- 

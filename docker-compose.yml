@@ -1,6 +1,22 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: sangita-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   sangita:
     build: .
+    container_name: sangita-backend
     ports:
       - "5000:5000"
     volumes:
@@ -10,4 +26,25 @@ services:
       - SANGITA_USER=${SANGITA_USER:-admin}
       - SANGITA_PASS=${SANGITA_PASS:-sangita123}
       - SECRET_KEY=${SECRET_KEY:-change-this-secret}
+      - SYNC_SERVER_URL=http://sync-server:3001
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  sync-server:
+    image: node:20-alpine
+    container_name: sangita-sync-server
+    working_dir: /app
+    volumes:
+      - ./sync-server:/app
+    ports:
+      - "3001:3001"
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
+      - REDIS_URL=redis://redis:6379
+      - SYNC_PORT=3001
+      - CORS_ORIGIN=*
+    command: sh -c "npm install && npm start"
+    depends_on:
+      - redis
     restart: unless-stopped
