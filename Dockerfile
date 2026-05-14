@@ -10,9 +10,6 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ .
-
-# CORRECTED LINE: 
-# Copy from the frontend build output folder (vite outputs to dist)
 COPY --from=builder /app/frontend/dist ./static
 
 RUN mkdir -p /app/music
