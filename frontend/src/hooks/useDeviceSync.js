@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
 
-const SYNC_URL = import.meta.env.VITE_SYNC_URL || (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.hostname}:3001` : 'http://localhost:3001');
+const SYNC_URL = import.meta.env.VITE_SYNC_URL || '/';
 
 function getOrCreateDeviceId() {
   let id = localStorage.getItem('sangita_device_id');
@@ -98,7 +98,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [token]); // eslint-disable-line
+  }, [token]); 
 
   useEffect(() => {
     clearInterval(posReportRef.current);
@@ -111,7 +111,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
       });
     }, 5_000);
     return () => clearInterval(posReportRef.current);
-  }, [isActiveDevice, isPlaying]); // eslint-disable-line
+  }, [isActiveDevice, isPlaying]); 
 
   const broadcastState   = useCallback((state) => {
     if (socketRef.current && isActiveRef.current)
