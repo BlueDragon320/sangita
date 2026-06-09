@@ -115,36 +115,81 @@ This lets you open Sangita from your phone on mobile data, from another country,
 CLOUDFLARE_TUNNEL_TOKEN=paste-your-token-here
 ```
 
-**Step 5** — Replace your `docker-compose.yml` with this:
+**Step 5** — Add the `tunnel` service and adjust ports in your `docker-compose.yml` like this:
 ```yaml
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: sangita-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - ./redis-data:/data
+    restart: unless-stopped
+
   sangita:
     build: .
+    container_name: sangita-backend
     expose:
       - "5000"
     volumes:
       - ./music:/app/music
+      - ./data:/app/data
     environment:
       - MUSIC_DIR=/app/music
-      - SANGITA_USER=${SANGITA_USER}
-      - SANGITA_PASS=${SANGITA_PASS}
-      - SECRET_KEY=${SECRET_KEY}
+      - SANGITA_USER=${SANGITA_USER:-admin}
+      - SANGITA_PASS=${SANGITA_PASS:-sangita123}
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
+      - SYNC_SERVER_URL=http://sync-server:3001
+    depends_on:
+      - redis
     restart: unless-stopped
+
+  sync-server:
+    image: node:20-alpine
+    container_name: sangita-sync-server
+    working_dir: /app
+    volumes:
+      - ./sync-server:/app
+    expose:
+      - "3001"
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
+      - REDIS_URL=redis://redis:6379
+      - SYNC_PORT=3001
+      - CORS_ORIGIN=*
+    command: sh -c "npm install && npm start"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  proxy:
+    image: nginx:alpine
+    container_name: sangita-proxy
+    ports:
+      - "5000:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - sangita
+      - sync-server
+    restart: unless-stopped
+
   tunnel:
     image: cloudflare/cloudflared:latest
+    container_name: sangita-tunnel
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
-      - sangita
+      - proxy
 ```
 
-**Step 6** — In Cloudflare dashboard, set the tunnel to point to:
-`http://sangita:5000`
+**Step 6** — In your Cloudflare dashboard, point the tunnel to the Nginx proxy container:
+`http://proxy:80`
 
-**Step 7** — Start:
+**Step 7** — Start the services:
 ```bash
 docker compose up --build -d
 ```
-Your Sangita is now live at your Cloudflare domain from anywhere.
+Your Sangita (along with multi-device sync support) is now live at your Cloudflare domain.

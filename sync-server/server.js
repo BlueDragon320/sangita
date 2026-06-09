@@ -20,9 +20,117 @@ const io = new Server(httpServer, {
   cors: { origin: CORS_ORIGIN, methods: ['GET', 'POST'] },
 });
 
-const redis = new Redis(REDIS_URL, { lazyConnect: true });
-redis.on('error', (err) => console.error('[Redis] error:', err.message));
-redis.connect().then(() => console.log('[Redis] connected')).catch(console.error);
+class MemoryRedis {
+  constructor() {
+    this.store = new Map();
+    this.ttls = new Map();
+  }
+
+  async set(key, value) {
+    this.store.set(key, value);
+    if (this.ttls.has(key)) {
+      clearTimeout(this.ttls.get(key));
+      this.ttls.delete(key);
+    }
+  }
+
+  async setex(key, ttl, value) {
+    this.store.set(key, value);
+    if (this.ttls.has(key)) {
+      clearTimeout(this.ttls.get(key));
+    }
+    const timer = setTimeout(() => {
+      this.store.delete(key);
+      this.ttls.delete(key);
+    }, ttl * 1000);
+    if (timer.unref) timer.unref();
+    this.ttls.set(key, timer);
+  }
+
+  async get(key) {
+    return this.store.get(key) || null;
+  }
+
+  async del(key) {
+    this.store.delete(key);
+    if (this.ttls.has(key)) {
+      clearTimeout(this.ttls.get(key));
+      this.ttls.delete(key);
+    }
+  }
+
+  async sadd(key, member) {
+    let set = this.store.get(key);
+    if (!(set instanceof Set)) {
+      set = new Set();
+      this.store.set(key, set);
+    }
+    set.add(member);
+  }
+
+  async srem(key, member) {
+    const set = this.store.get(key);
+    if (set instanceof Set) {
+      set.delete(member);
+    }
+  }
+
+  async smembers(key) {
+    const set = this.store.get(key);
+    if (set instanceof Set) {
+      return Array.from(set);
+    }
+    return [];
+  }
+}
+
+class RedisClientWrapper {
+  constructor(url) {
+    this.isMock = false;
+    this.mock = new MemoryRedis();
+    this.client = new Redis(url, {
+      lazyConnect: true,
+      connectTimeout: 2000,
+      maxRetriesPerRequest: 1,
+      retryStrategy(times) {
+        return null; // Stop retrying immediately so fallback triggers
+      }
+    });
+    this.client.on('error', (err) => {
+      if (!this.isMock) {
+        console.error('[Redis] error:', err.message);
+      }
+    });
+  }
+
+  async init() {
+    try {
+      await this.client.connect();
+      console.log('[Redis] connected');
+    } catch (err) {
+      console.warn('[Redis] Connection failed, falling back to MemoryRedis. Error:', err.message);
+      this.isMock = true;
+      try {
+        this.client.disconnect();
+      } catch (e) {}
+    }
+  }
+
+  get active() {
+    return this.isMock ? this.mock : this.client;
+  }
+
+  async set(key, value) { return this.active.set(key, value); }
+  async setex(key, ttl, value) { return this.active.setex(key, ttl, value); }
+  async get(key) { return this.active.get(key); }
+  async del(key) { return this.active.del(key); }
+  async sadd(key, member) { return this.active.sadd(key, member); }
+  async srem(key, member) { return this.active.srem(key, member); }
+  async smembers(key) { return this.active.smembers(key); }
+}
+
+const redis = new RedisClientWrapper(REDIS_URL);
+redis.init();
 
 const K = {
   device    : (uid, did) => `sangita:device:${uid}:${did}`,

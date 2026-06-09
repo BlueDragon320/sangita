@@ -19,6 +19,7 @@ services:
       - "5000"
     volumes:
       - ./music:/app/music
+      - ./data:/app/data
     environment:
       - MUSIC_DIR=/app/music
       - SANGITA_USER=${SANGITA_USER:-admin}

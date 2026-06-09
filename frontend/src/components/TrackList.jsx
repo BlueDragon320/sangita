@@ -28,7 +28,7 @@ export default function TrackList({ tracks, currentIndex, isPlaying, onPlayTrack
       </div>
     )
   }
- 
+
   return (
     <div className="track-list-container">
       <div className="track-list-header">

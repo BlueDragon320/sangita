@@ -21,7 +21,7 @@ export default function Login({ onLogin }) {
         body: JSON.stringify({ username: username.trim(), password }),
       })
       const data = await res.json()
-      if (res.ok) onLogin(data.token, data.username)
+      if (res.ok) onLogin(data.token, data.username, data.role)
       else setError(data.error || 'Login failed.')
     } catch {
       setError('Cannot reach server. Is it running?')

@@ -7,3 +7,4 @@ backend/static/
 music/
 .DS_Store
 Thumbs.db
+node_modules/
