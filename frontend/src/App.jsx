@@ -38,7 +38,7 @@ export default function App() {
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
   const [queue,           setQueue]           = useState([])
   const [currentIndex,    setCurrentIndex]    = useState(-1)
-  const [isPlaying,       setIsPlaying]       = useState(false)
+  const [isLocalPlaying, setIsLocalPlaying] = useState(false)
   const [isShuffle,       setIsShuffle]       = useState(false)
   const [isLoop,          setIsLoop]          = useState(false)
   const [volume,          setVolume]          = useState(80)
@@ -65,6 +65,7 @@ export default function App() {
   const changeVolRef  = useRef(null)
   const playTrackRef  = useRef(null)
   const lastSyncIdRef = useRef(null)
+  const wasActiveRef  = useRef(false)
   const loadedTrackIdRef = useRef(null)
   const sendRemoteRef = useRef(null)
 
@@ -141,7 +142,7 @@ export default function App() {
     localStorage.removeItem('sangita_user')
     localStorage.removeItem('sangita_role')
     setToken(''); setUsername(''); setRole(''); setPlaylists({})
-    setQueue([]); setCurrentIndex(-1); setIsPlaying(false)
+    setQueue([]); setCurrentIndex(-1); setIsLocalPlaying(false)
     setCurrentTime(0); setDuration(0); setView('music')
     window.history.replaceState({}, '', '/');
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = '' }
@@ -149,6 +150,7 @@ export default function App() {
   }, [])
 
   const handleRemoteCommand = useCallback((command) => {
+    console.log('[RemoteCommand] Received action:', command.action, 'payload:', command.payload);
     switch (command.action) {
       case 'play':   togglePlayRef.current?.(true); break
       case 'pause':  togglePlayRef.current?.(false); break
@@ -156,32 +158,40 @@ export default function App() {
       case 'prev':   playPrevRef.current?.();   break
       case 'seek':   seekToRef.current?.(command.payload?.pct);      break
       case 'volume': changeVolRef.current?.(command.payload?.volume); break
-      case 'play_track': playTrackRef.current?.(command.payload?.path); break
+      case 'play_track':
+        console.log('[RemoteCommand] Routing play_track path:', command.payload?.path);
+        playTrackRef.current?.(command.payload?.path);
+        break
+      case 'loop':    setIsLoop(command.payload?.loop); break
+      case 'shuffle': setIsShuffle(command.payload?.shuffle); break
     }
-  }, [])
+  }, [setIsLoop, setIsShuffle])
 
   const {
     devices, isActiveDevice, syncState, setSyncState,
     broadcastState, transferPlayback, sendRemoteControl,
     claimActiveDevice, getMyDeviceId,
-  } = useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand: handleRemoteCommand })
+  } = useDeviceSync({ token, audioRef, isPlaying: isLocalPlaying, onRemoteCommand: handleRemoteCommand })
+
+  const isPlaying = isActiveDevice ? isLocalPlaying : !!syncState?.isPlaying;
 
   const isActiveRef   = useRef(isActiveDevice)
   const syncStateRef  = useRef(syncState)
+  const devicesRef    = useRef(devices)
   useEffect(() => { isActiveRef.current = isActiveDevice }, [isActiveDevice])
   useEffect(() => { syncStateRef.current = syncState }, [syncState])
+  useEffect(() => { devicesRef.current = devices }, [devices])
   useEffect(() => { sendRemoteRef.current = sendRemoteControl }, [sendRemoteControl])
 
   const currentTrack = (() => {
-    const curPath = loadedTrackIdRef.current || syncState?.trackId;
+    const curPath = isActiveDevice ? loadedTrackIdRef.current : (syncState?.trackId || loadedTrackIdRef.current);
     if (!curPath) return null;
     const inQueue = queue.find(t => t.path === curPath);
     if (inQueue) return inQueue;
     for (const [plName, paths] of Object.entries(playlists)) {
-      const idx = paths.indexOf(curPath);
-      if (idx >= 0) {
+      if (paths.includes(curPath)) {
         return {
-          id: `${plName}-${idx}`,
+          id: `${plName}-${paths.indexOf(curPath)}`,
           path: curPath,
           name: curPath.split('/').pop().replace(/\.[^/.]+$/, ''),
           playlist: plName
@@ -192,7 +202,7 @@ export default function App() {
   })();
 
   const getActiveQueueAndIndex = useCallback(() => {
-    const curPath = loadedTrackIdRef.current || syncState?.trackId;
+    const curPath = isActiveDevice ? loadedTrackIdRef.current : (syncState?.trackId || loadedTrackIdRef.current);
     if (!curPath) return { q: queueRef.current, idx: indexRef.current };
     const idx = queueRef.current.findIndex(t => t.path === curPath);
     if (idx >= 0) return { q: queueRef.current, idx };
@@ -202,11 +212,11 @@ export default function App() {
     }
     if (foundPlaylist) {
       const q = buildTracks(foundPlaylist, playlists[foundPlaylist]);
-      const idx = q.findIndex(t => t.path === curPath);
-      return { q, idx };
+      const newIdx = q.findIndex(t => t.path === curPath);
+      return { q, idx: newIdx };
     }
     return { q: queueRef.current, idx: indexRef.current };
-  }, [playlists, syncState?.trackId]);
+  }, [playlists, syncState?.trackId, isActiveDevice]);
 
   // Sync view history with browser back/forward buttons
   useEffect(() => {
@@ -283,11 +293,11 @@ export default function App() {
 
   useEffect(() => {
     if (!syncState) return
-    
+
     let q = queueRef.current
     let trackIdx = q.findIndex(t => t.path === syncState.trackId)
-    
-    if (trackIdx < 0) {
+
+    if (trackIdx < 0 && syncState.trackId) {
       let foundPlaylist = null;
       for (const [pName, paths] of Object.entries(playlists)) {
          if (paths.includes(syncState.trackId)) { foundPlaylist = pName; break; }
@@ -300,9 +310,15 @@ export default function App() {
       }
     }
 
-    const stateId = `${syncState.activeDeviceId}:${syncState.trackId}:${syncState.updatedAt}`
+    // Include isActiveDevice in the dedup key so that a transfer (active status change)
+    // always triggers the effect, even if syncState.trackId/updatedAt haven't changed yet
+    const stateId = `${syncState.activeDeviceId}:${syncState.trackId}:${syncState.updatedAt}:${isActiveDevice}`
     if (lastSyncIdRef.current === stateId && indexRef.current === trackIdx) return
     lastSyncIdRef.current = stateId
+
+    console.log('[SyncEffect]', { isActiveDevice, trackId: syncState.trackId, trackIdx,
+      wasActive: wasActiveRef.current, loadedTrack: loadedTrackIdRef.current,
+      activeDeviceId: syncState.activeDeviceId, isPlaying: syncState.isPlaying })
 
     if (trackIdx >= 0) {
       setCurrentIndex(trackIdx)
@@ -310,35 +326,95 @@ export default function App() {
       setCurrentIndex(-1)
     }
 
+    const targetPath = trackIdx >= 0 ? q[trackIdx].path : null;
+    const trackChanged = targetPath !== null && loadedTrackIdRef.current !== targetPath;
+    const justClaimed = !wasActiveRef.current && isActiveDevice;
+    wasActiveRef.current = isActiveDevice;
+
     if (isActiveDevice) {
-      if (trackIdx < 0 || !audioRef.current) return
-      const drift     = syncState.isPlaying ? Math.max(0, Date.now() - syncState.updatedAt) : 0
-      const targetSec = (syncState.positionMs + drift) / 1000
-      const applySeek = () => {
-        if (!audioRef.current) return
-        const targetVol = syncState.volume !== undefined ? Math.round(syncState.volume * 100) : volumeRef.current
-        setVolume(targetVol)
-        audioRef.current.volume = targetVol / 100
-        audioRef.current.currentTime = Math.min(targetSec, audioRef.current.duration || 0)
-        if (syncState.isPlaying) audioRef.current.play().catch(console.error)
-        else audioRef.current.pause()
+      if (trackIdx < 0 || !audioRef.current || !targetPath) {
+        console.log('[SyncEffect] Active but no track to play', { trackIdx, targetPath })
+        return
       }
-      const targetPath = q[trackIdx].path;
-      if (loadedTrackIdRef.current !== targetPath) {
+
+      const applyVolume = () => {
+        if (syncState.volume !== undefined) {
+          const targetVol = Math.round(syncState.volume * 100);
+          if (targetVol !== volumeRef.current) {
+            setVolume(targetVol);
+            if (audioRef.current) audioRef.current.volume = targetVol / 100;
+          }
+        }
+      }
+
+      if (trackChanged || justClaimed) {
+        console.log('[SyncEffect] Loading track on active device', { trackChanged, justClaimed, targetPath })
+        const drift     = syncState.isPlaying ? Math.max(0, Date.now() - syncState.updatedAt) : 0
+        const targetSec = (syncState.positionMs + drift) / 1000
+        const applySeek = () => {
+          if (!audioRef.current) return
+          applyVolume();
+          audioRef.current.currentTime = Math.min(targetSec, audioRef.current.duration || 0)
+          if (syncState.isPlaying) audioRef.current.play().catch(console.error)
+          else audioRef.current.pause()
+        }
         loadedTrackIdRef.current = targetPath;
         const t = localStorage.getItem('sangita_token') || ''
         audioRef.current.src = `/api/stream/${encodeURIComponent(targetPath)}?token=${t}`
         audioRef.current.addEventListener('loadedmetadata', applySeek, { once: true })
-      } else { applySeek() }
+      } else {
+        applyVolume();
+      }
     } else {
+      wasActiveRef.current = false;
       if (audioRef.current && !audioRef.current.paused) {
-        audioRef.current.pause(); setIsPlaying(false)
+        audioRef.current.pause(); setIsLocalPlaying(false)
       }
       if (syncState && syncState.volume !== undefined) {
         setVolume(Math.round(syncState.volume * 100));
       }
     }
   }, [syncState, isActiveDevice, playlists])
+
+  useEffect(() => {
+    if (!syncState) return
+    if (syncState.isLoop !== undefined && syncState.isLoop !== isLoopRef.current) {
+      setIsLoop(syncState.isLoop)
+    }
+    if (syncState.isShuffle !== undefined && syncState.isShuffle !== isShuffleRef.current) {
+      setIsShuffle(syncState.isShuffle)
+    }
+  }, [syncState])
+
+  const lastLoopRef = useRef(isLoop)
+  const lastShuffleRef = useRef(isShuffle)
+
+  useEffect(() => {
+    if (!isActiveDevice || !audioRef.current || !loadedTrackIdRef.current) {
+      lastLoopRef.current = isLoop
+      lastShuffleRef.current = isShuffle
+      return
+    }
+
+    if (isLoop === lastLoopRef.current && isShuffle === lastShuffleRef.current) {
+      return
+    }
+
+    lastLoopRef.current = isLoop
+    lastShuffleRef.current = isShuffle
+
+    broadcastState({
+      activeDeviceId: getMyDeviceId(),
+      trackId: loadedTrackIdRef.current,
+      positionMs: Math.floor((audioRef.current?.currentTime || 0) * 1000),
+      durationMs: isFinite(audioRef.current?.duration) ? Math.floor(audioRef.current.duration * 1000) : 0,
+      isPlaying: !audioRef.current?.paused,
+      volume: volumeRef.current / 100,
+      isLoop: isLoop,
+      isShuffle: isShuffle,
+      updatedAt: Date.now(),
+    })
+  }, [isLoop, isShuffle, isActiveDevice, broadcastState, getMyDeviceId])
 
   useEffect(() => {
     if (!token) return
@@ -363,10 +439,10 @@ export default function App() {
     const tracks = buildTracks(currentPlaylist, playlists[currentPlaylist])
     setQueue(tracks)
     
-    const curPath = loadedTrackIdRef.current || syncState?.trackId;
+    const curPath = isActiveDevice ? loadedTrackIdRef.current : (syncState?.trackId || loadedTrackIdRef.current);
     const newIdx = tracks.findIndex(t => t.path === curPath);
     setCurrentIndex(newIdx);
-  }, [currentPlaylist, playlists, syncState?.trackId])
+  }, [currentPlaylist, playlists, syncState?.trackId, isActiveDevice])
 
   useEffect(() => {
     const tick = () => {
@@ -374,7 +450,7 @@ export default function App() {
       if (audio) {
         const t = audio.currentTime || 0
         const d = isFinite(audio.duration) ? audio.duration : 0
-        setCurrentTime(t); setDuration(d); setIsPlaying(!audio.paused && !audio.ended && d > 0)
+        setCurrentTime(t); setDuration(d); setIsLocalPlaying(!audio.paused && !audio.ended)
         if (d > 0) {
           const track = indexRef.current >= 0 ? queueRef.current[indexRef.current] : null
           if (track) setDurations(prev => prev[track.path] === d ? prev : { ...prev, [track.path]: d })
@@ -386,12 +462,28 @@ export default function App() {
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
   }, [])
 
+
   useEffect(() => {
     const audio = audioRef.current; if (!audio) return
     const onEnded = () => {
       const q = queueRef.current; const idx = indexRef.current
       if (q.length === 0) return
-      if (isLoopRef.current) { audio.currentTime = 0; audio.play().catch(console.error); return }
+      if (isLoopRef.current) {
+        audio.currentTime = 0;
+        audio.play().catch(console.error);
+        broadcastState({
+          activeDeviceId: getMyDeviceId(),
+          trackId: loadedTrackIdRef.current,
+          positionMs: 0,
+          durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
+          isPlaying: true,
+          volume: volumeRef.current / 100,
+          isLoop: true,
+          isShuffle: isShuffleRef.current,
+          updatedAt: Date.now(),
+        });
+        return;
+      }
       let nextIdx
       if (isShuffleRef.current) {
         if (q.length === 1) { nextIdx = 0 }
@@ -408,7 +500,11 @@ export default function App() {
             trackId: loadedTrackIdRef.current,
             positionMs: Math.floor(audio.currentTime * 1000),
             durationMs: Math.floor(dur * 1000),
-            isPlaying: !audio.paused, volume: volumeRef.current / 100, updatedAt: Date.now(),
+            isPlaying: !audio.paused,
+            volume: volumeRef.current / 100,
+            isLoop: isLoopRef.current,
+            isShuffle: isShuffleRef.current,
+            updatedAt: Date.now(),
           })
         }
       }
@@ -425,11 +521,19 @@ export default function App() {
     if (!track) return
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
+    const devs = devicesRef.current || [];
+    const isRemoteOnline = sState?.activeDeviceId && devs.some(d => d.deviceId === sState.activeDeviceId);
+    console.log('[internalPlayTrack] isAct:', isAct, 'isRemoteOnline:', isRemoteOnline, 'track:', track.path, 'index:', index);
 
-    if (!isAct && sState?.activeDeviceId) {
+    if (!isAct && isRemoteOnline) {
+      console.log('[internalPlayTrack] Sending REMOTE_CONTROL play_track command');
       sendRemoteRef.current?.({ action: 'play_track', payload: { path: track.path } });
       setSyncState(prev => prev ? { ...prev, trackId: track.path, positionMs: 0, isPlaying: true, updatedAt: Date.now() } : prev);
       return;
+    }
+
+    if (!isAct) {
+      claimActiveDevice();
     }
 
     if (!audioRef.current) return
@@ -442,9 +546,12 @@ export default function App() {
     broadcastState({
       activeDeviceId: getMyDeviceId(), trackId: track.path,
       positionMs: 0, durationMs: isFinite(audioRef.current.duration) ? Math.floor(audioRef.current.duration * 1000) : 0,
-      isPlaying: true, volume: volumeRef.current / 100, updatedAt: Date.now(),
+      isPlaying: true, volume: volumeRef.current / 100,
+      isLoop: isLoopRef.current,
+      isShuffle: isShuffleRef.current,
+      updatedAt: Date.now(),
     })
-  }, [broadcastState, getMyDeviceId])
+  }, [broadcastState, getMyDeviceId, claimActiveDevice])
 
   const playTrack  = useCallback((track, index) => internalPlayTrack(track, index), [internalPlayTrack])
 
@@ -470,13 +577,22 @@ export default function App() {
   const togglePlay = useCallback((forcePlay) => {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
+    const devs = devicesRef.current || [];
+    const isRemoteOnline = sState?.activeDeviceId && devs.some(d => d.deviceId === sState.activeDeviceId);
+    
+    // Ensure we only force play/pause if forcePlay is explicitly a boolean (ignores React click event objects)
+    const shouldForce = typeof forcePlay === 'boolean' ? forcePlay : undefined;
 
-    if (!isAct && sState?.activeDeviceId) {
-       const action = forcePlay !== undefined
-         ? (forcePlay ? 'play' : 'pause')
+    if (!isAct && isRemoteOnline) {
+       const action = shouldForce !== undefined
+         ? (shouldForce ? 'play' : 'pause')
          : (sState.isPlaying ? 'pause' : 'play');
        sendRemoteRef.current?.({ action });
        return;
+    }
+
+    if (!isAct) {
+      claimActiveDevice();
     }
 
     const audio = audioRef.current; if (!audio) return
@@ -485,16 +601,19 @@ export default function App() {
       const idx = isShuffleRef.current ? Math.floor(Math.random() * q.length) : 0
       internalPlayTrack(q[idx], idx); return
     }
-    const newPlaying = forcePlay !== undefined ? forcePlay : audio.paused
+    const newPlaying = shouldForce !== undefined ? shouldForce : audio.paused
     if (newPlaying) audio.play().catch(console.error); else audio.pause()
     broadcastState({
       activeDeviceId: getMyDeviceId(),
       trackId: loadedTrackIdRef.current,
       positionMs: Math.floor(audio.currentTime * 1000),
       durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
-      isPlaying: newPlaying, volume: volumeRef.current / 100, updatedAt: Date.now(),
+      isPlaying: newPlaying, volume: volumeRef.current / 100,
+      isLoop: isLoopRef.current,
+      isShuffle: isShuffleRef.current,
+      updatedAt: Date.now(),
     })
-  }, [broadcastState, getMyDeviceId, internalPlayTrack])
+  }, [broadcastState, getMyDeviceId, internalPlayTrack, claimActiveDevice])
 
   const seekTo = useCallback((pct) => {
     const audio = audioRef.current; if (!audio) return
@@ -504,7 +623,10 @@ export default function App() {
       activeDeviceId: getMyDeviceId(), trackId: loadedTrackIdRef.current,
       positionMs: Math.floor(audio.currentTime * 1000),
       durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
-      isPlaying: !audio.paused, volume: volumeRef.current / 100, updatedAt: Date.now(),
+      isPlaying: !audio.paused, volume: volumeRef.current / 100,
+      isLoop: isLoopRef.current,
+      isShuffle: isShuffleRef.current,
+      updatedAt: Date.now(),
     })
   }, [broadcastState, getMyDeviceId])
 
@@ -524,9 +646,32 @@ export default function App() {
       activeDeviceId: getMyDeviceId(), trackId: loadedTrackIdRef.current,
       positionMs: Math.floor((audioRef.current?.currentTime || 0) * 1000),
       durationMs: isFinite(audioRef.current?.duration) ? Math.floor(audioRef.current.duration * 1000) : 0,
-      isPlaying: !audioRef.current?.paused, volume: v / 100, updatedAt: Date.now(),
+      isPlaying: !audioRef.current?.paused, volume: v / 100,
+      isLoop: isLoopRef.current,
+      isShuffle: isShuffleRef.current,
+      updatedAt: Date.now(),
     })
   }, [broadcastState, getMyDeviceId])
+
+  const handleToggleLoop = useCallback(() => {
+    const nextLoop = !isLoopRef.current
+    const isAct = isActiveRef.current
+    if (isAct) {
+      setIsLoop(nextLoop)
+    } else {
+      sendRemoteRef.current?.({ action: 'loop', payload: { loop: nextLoop } })
+    }
+  }, [])
+
+  const handleToggleShuffle = useCallback(() => {
+    const nextShuffle = !isShuffleRef.current
+    const isAct = isActiveRef.current
+    if (isAct) {
+      setIsShuffle(nextShuffle)
+    } else {
+      sendRemoteRef.current?.({ action: 'shuffle', payload: { shuffle: nextShuffle } })
+    }
+  }, [])
 
   useEffect(() => { playNextRef.current   = playNext   }, [playNext])
   useEffect(() => { playPrevRef.current   = playPrev   }, [playPrev])
@@ -536,17 +681,24 @@ export default function App() {
   useEffect(() => {
     playTrackRef.current = (path) => {
       let q = queueRef.current;
+      console.log('[PlayTrackRef] path:', path, 'queue size:', q.length);
       let idx = q.findIndex(t => t.path === path);
-      if (idx >= 0) { internalPlayTrack(q[idx], idx); return; }
+      if (idx >= 0) {
+        console.log('[PlayTrackRef] Found in queue at index:', idx);
+        internalPlayTrack(q[idx], idx);
+        return;
+      }
       let found = null;
       for (const [pName, paths] of Object.entries(playlists)) {
          if (paths.includes(path)) { found = pName; break; }
       }
+      console.log('[PlayTrackRef] Playlist lookup result:', found);
       if (found) {
          setCurrentPlaylist(found);
          q = buildTracks(found, playlists[found]);
          setQueue(q);
          idx = q.findIndex(t => t.path === path);
+         console.log('[PlayTrackRef] Rebuilt queue, new index:', idx);
          if (idx >= 0) internalPlayTrack(q[idx], idx);
       }
     }
@@ -554,14 +706,15 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      if (e.target.tagName === 'INPUT') return
+      if (view !== 'music') return
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return
       if (e.code === 'Space')      { e.preventDefault(); togglePlay() }
       if (e.code === 'ArrowRight') playNext()
       if (e.code === 'ArrowLeft')  playPrev()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [togglePlay, playNext, playPrev])
+  }, [togglePlay, playNext, playPrev, view])
 
   const downloadTrack = useCallback(() => {
     const track = currentTrack; if (!track) return
@@ -588,7 +741,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${currentTrack ? 'has-player' : ''}`}>
       <audio ref={audioRef} preload="auto" />
       {showDevices && (
         <DevicePanel
@@ -669,7 +822,18 @@ export default function App() {
                 <button className="btn-icon" onClick={() => setMobileMenuOpen(true)}>
                   <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
                 </button>
-                <span className="mobile-brand">Sangita</span>
+                <span className="mobile-brand" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="brand-icon" style={{
+                    width: 24, height: 24, borderRadius: 6,
+                    background: 'linear-gradient(135deg, var(--accent), var(--accent-dim))',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000', flexShrink: 0
+                  }}>
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                    </svg>
+                  </div>
+                  Sangita
+                </span>
                 <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                   <button className="btn-icon" onClick={() => setMobileSearchOpen(true)} title="Search">
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -741,17 +905,19 @@ export default function App() {
           )}
         </div>
       </div>
-      <Player
-        track={currentTrack} playlist={currentPlaylist} isPlaying={isPlaying}
-        isShuffle={isShuffle} isLoop={isLoop}
-        onTogglePlay={togglePlay} onNext={playNext} onPrev={playPrev}
-        onToggleShuffle={() => setIsShuffle(s => !s)} onToggleLoop={() => setIsLoop(l => !l)}
-        currentTime={currentTime} duration={duration} onSeek={seekTo}
-        volume={volume} onVolumeChange={changeVolume} formatTime={formatTime}
-        isActiveDevice={isActiveDevice} activeDeviceName={activeDeviceName} syncState={syncState}
-        onClaimDevice={claimActiveDevice} onSendRemote={sendRemoteControl}
-        devices={devices} myDeviceId={getMyDeviceId()} onOpenDevices={() => setShowDevices(true)}
-      />
+      {currentTrack && (
+        <Player
+          track={currentTrack} playlist={currentPlaylist} isPlaying={isPlaying}
+          isShuffle={isShuffle} isLoop={isLoop}
+          onTogglePlay={togglePlay} onNext={playNext} onPrev={playPrev}
+          onToggleShuffle={handleToggleShuffle} onToggleLoop={handleToggleLoop}
+          currentTime={currentTime} duration={duration} onSeek={seekTo}
+          volume={volume} onVolumeChange={changeVolume} formatTime={formatTime}
+          isActiveDevice={isActiveDevice} activeDeviceName={activeDeviceName} syncState={syncState}
+          onClaimDevice={claimActiveDevice} onSendRemote={sendRemoteControl}
+          devices={devices} myDeviceId={getMyDeviceId()} onOpenDevices={() => setShowDevices(true)}
+        />
+      )}
     </div>
   )
 }

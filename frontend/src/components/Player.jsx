@@ -65,13 +65,22 @@ export default function Player({
           </div>
         </div>
         <div className="player-center">
-
           <div className="player-controls">
-            <button className="btn-icon" onClick={() => onSendRemote({ action:'prev' })}><PrevIcon /></button>
-            <button className="btn-play-main" onClick={() => onSendRemote({ action: syncState?.isPlaying ? 'pause' : 'play' })}>
-              {syncState?.isPlaying ? <PauseIcon /> : <PlayIcon />}
+            <button className="btn-icon" onClick={onToggleShuffle}
+              style={{ color: isShuffle?'var(--accent)':undefined, background: isShuffle?'var(--accent-glow)':undefined,
+                border: isShuffle?'1px solid var(--accent)':'1px solid transparent', borderRadius:'50%' }}>
+              <ShuffleIcon />
             </button>
-            <button className="btn-icon" onClick={() => onSendRemote({ action:'next' })}><NextIcon /></button>
+            <button className="btn-icon" onClick={onPrev}><PrevIcon /></button>
+            <button className="btn-play-main" onClick={onTogglePlay}>
+              {isPlaying ? <PauseIcon /> : <PlayIcon />}
+            </button>
+            <button className="btn-icon" onClick={onNext}><NextIcon /></button>
+            <button className="btn-icon" onClick={onToggleLoop}
+              style={{ color: isLoop?'var(--accent)':undefined, background: isLoop?'var(--accent-glow)':undefined,
+                border: isLoop?'1px solid var(--accent)':'1px solid transparent', borderRadius:'50%' }}>
+              <LoopIcon />
+            </button>
           </div>
           <div className="playback-bar">
             <span className="playback-time">{formatTime(remotePositionSec)}</span>
@@ -83,6 +92,11 @@ export default function Player({
           </div>
         </div>
         <div className="player-right">
+          <button className="btn-icon player-loop-btn-mobile" onClick={onToggleLoop}
+            style={{ color: isLoop?'var(--accent)':undefined, background: isLoop?'var(--accent-glow)':undefined,
+              border: isLoop?'1px solid var(--accent)':'1px solid transparent', borderRadius:'50%' }}>
+            <LoopIcon />
+          </button>
           <button className="btn-icon player-devices-btn" onClick={onOpenDevices}>
             <DevicesIcon />
           </button>
@@ -135,6 +149,11 @@ export default function Player({
         </div>
       </div>
       <div className="player-right">
+        <button className="btn-icon player-loop-btn-mobile" onClick={onToggleLoop}
+          style={{ color: isLoop?'var(--accent)':undefined, background: isLoop?'var(--accent-glow)':undefined,
+            border: isLoop?'1px solid var(--accent)':'1px solid transparent', borderRadius:'50%' }}>
+          <LoopIcon />
+        </button>
         <button className="btn-icon player-devices-btn" onClick={onOpenDevices}>
           <DevicesIcon />
         </button>

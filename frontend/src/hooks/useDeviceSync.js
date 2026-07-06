@@ -4,13 +4,13 @@ import { io } from 'socket.io-client';
 const SYNC_URL = import.meta.env.VITE_SYNC_URL || '/';
 
 function getOrCreateDeviceId() {
-  let id = localStorage.getItem('sangita_device_id');
+  let id = sessionStorage.getItem('sangita_device_id');
   if (!id) {
     id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
       const r = (Math.random() * 16) | 0;
       return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
     });
-    localStorage.setItem('sangita_device_id', id);
+    sessionStorage.setItem('sangita_device_id', id);
   }
   return id;
 }
@@ -84,9 +84,11 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
         audioRef.current.pause();
       }
     });
-    socket.on('REMOTE_COMMAND', (command) => {
+    const handleCmd = (command) => {
       if (isActiveRef.current && onRemoteCmdRef.current) onRemoteCmdRef.current(command);
-    });
+    };
+    socket.on('REMOTE_COMMAND', handleCmd);
+    socket.on('REMOTE_CONTROL', handleCmd);
 
     heartbeatRef.current = setInterval(() => {
       socket.emit('HEARTBEAT', { deviceId: deviceId.current });
@@ -118,17 +120,41 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
       socketRef.current.emit('PLAYBACK_STATE_CHANGED', state);
   }, []);
   const transferPlayback = useCallback((targetDeviceId) => {
-    if (targetDeviceId === deviceId.current && audioRef.current && audioRef.current.paused) {
+    console.log('[transferPlayback] target:', targetDeviceId, 'myId:', deviceId.current);
+    setIsActiveDevice(targetDeviceId === deviceId.current);
+    
+    // Warm up/unlock the audio element with a user gesture
+    if (targetDeviceId === deviceId.current && audioRef.current) {
+      const origMuted = audioRef.current.muted;
+      audioRef.current.muted = true;
       const p = audioRef.current.play();
-      if (p !== undefined) p.catch(() => {});
+      if (p !== undefined) {
+        p.then(() => {
+          audioRef.current.pause();
+          audioRef.current.muted = origMuted;
+        }).catch((err) => {
+          console.log('[transferPlayback] Gesture unlock catch:', err.message);
+          audioRef.current.muted = origMuted;
+        });
+      } else {
+        audioRef.current.muted = origMuted;
+      }
     }
+
     if (socketRef.current) {
       socketRef.current.emit('TRANSFER_PLAYBACK', { targetDeviceId });
       setSyncState(prev => {
-        if (!prev) return prev;
-        const newState = { ...prev, activeDeviceId: targetDeviceId, updatedAt: Date.now() };
-        setIsActiveDevice(targetDeviceId === deviceId.current);
-        return newState;
+        const base = prev || {
+          activeDeviceId: targetDeviceId,
+          trackId: null,
+          positionMs: 0,
+          durationMs: 0,
+          isPlaying: false,
+          volume: 0.8,
+          isLoop: false,
+          isShuffle: false,
+        };
+        return { ...base, activeDeviceId: targetDeviceId, updatedAt: Date.now() };
       });
     }
   }, [audioRef]);

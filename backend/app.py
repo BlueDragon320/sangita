@@ -366,6 +366,20 @@ def stats_ping():
         return jsonify({"error": "Missing track_id"}), 400
         
     conn = get_db()
+    # Check if we should merge with the last event
+    last_event = conn.execute("""
+        SELECT id, track_id, duration_sec,
+               (strftime('%s', 'now') - strftime('%s', timestamp)) as elapsed_sec
+        FROM play_events
+        WHERE username = ? AND device_id = ?
+        ORDER BY id DESC LIMIT 1
+    """, (g.username, device_id)).fetchone()
+    
+    should_merge = False
+    if last_event and last_event["track_id"] == track_id:
+        if last_event["elapsed_sec"] is not None and last_event["elapsed_sec"] < 120:
+            should_merge = True
+
     # 1. Update user_totals
     conn.execute("""
         INSERT INTO user_totals (username, total_seconds)
@@ -375,13 +389,21 @@ def stats_ping():
     """, (g.username, duration, duration))
 
     # 2. Update user_track_totals
-    conn.execute("""
-        INSERT INTO user_track_totals (username, track_id, playlist, total_seconds, play_count)
-        VALUES (?, ?, ?, ?, 1)
-        ON CONFLICT(username, track_id, playlist) DO UPDATE SET
-        total_seconds = total_seconds + ?,
-        play_count = play_count + 1
-    """, (g.username, track_id, playlist, duration, duration))
+    if should_merge:
+        conn.execute("""
+            INSERT INTO user_track_totals (username, track_id, playlist, total_seconds, play_count)
+            VALUES (?, ?, ?, ?, 1)
+            ON CONFLICT(username, track_id, playlist) DO UPDATE SET
+            total_seconds = total_seconds + ?
+        """, (g.username, track_id, playlist, duration, duration))
+    else:
+        conn.execute("""
+            INSERT INTO user_track_totals (username, track_id, playlist, total_seconds, play_count)
+            VALUES (?, ?, ?, ?, 1)
+            ON CONFLICT(username, track_id, playlist) DO UPDATE SET
+            total_seconds = total_seconds + ?,
+            play_count = play_count + 1
+        """, (g.username, track_id, playlist, duration, duration))
 
     # 3. Update user_device_totals
     conn.execute("""
@@ -396,20 +418,27 @@ def stats_ping():
         last_seen = datetime('now')
     """, (g.username, device_id, device_name, device_type, browser, os_name, duration, device_name, device_type, browser, os_name, duration))
 
-    # 4. Insert play_event
-    conn.execute("""
-        INSERT INTO play_events (username, track_id, playlist, device_id, device_name, device_type, browser, os, duration_sec)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (g.username, track_id, playlist, device_id, device_name, device_type, browser, os_name, duration))
+    # 4. Insert or update play_event
+    if should_merge:
+        conn.execute("""
+            UPDATE play_events
+            SET duration_sec = duration_sec + ?, timestamp = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (duration, last_event["id"]))
+    else:
+        conn.execute("""
+            INSERT INTO play_events (username, track_id, playlist, device_id, device_name, device_type, browser, os, duration_sec)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (g.username, track_id, playlist, device_id, device_name, device_type, browser, os_name, duration))
 
-    # 5. Trim play_events for this user to keep only latest 100 rows
+    # 5. Trim play_events for this user to keep only latest 1000 rows
     conn.execute("""
         DELETE FROM play_events
         WHERE username = ? AND id NOT IN (
             SELECT id FROM play_events
             WHERE username = ?
             ORDER BY id DESC
-            LIMIT 100
+            LIMIT 1000
         )
     """, (g.username, g.username))
 

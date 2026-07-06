@@ -8,3 +8,5 @@ music/
 .DS_Store
 Thumbs.db
 node_modules/
+data/
+backend/data/
