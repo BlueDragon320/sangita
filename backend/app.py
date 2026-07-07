@@ -11,7 +11,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, static_folder=None)
 
-MUSIC_DIR  = os.environ.get("MUSIC_DIR", "./music")
+MUSIC_DIR  = os.path.abspath(os.environ.get("MUSIC_DIR", "./music"))
 USERNAME   = os.environ.get("SANGITA_USER", "admin")
 PASSWORD   = os.environ.get("SANGITA_PASS", "sangita123")
 SECRET_KEY = os.environ.get("SECRET_KEY", "change-this-secret")
@@ -245,7 +245,8 @@ def get_playlists():
 @app.route("/api/stream/<path:filepath>")
 @require_auth
 def stream_audio(filepath):
-    safe = os.path.normpath(filepath)
+    import urllib.parse
+    safe = os.path.normpath(urllib.parse.unquote(filepath))
     if safe.startswith("..") or safe.startswith("/"):
         abort(403)
         

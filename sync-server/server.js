@@ -284,25 +284,6 @@ io.on('connection', async (socket) => {
     console.log(`[Disconnect] user=${userId} device=${deviceId} reason=${reason}`);
     if (!deviceId) return;
     await removeDevice(userId, deviceId);
-    const state = await getState(userId);
-    if (state?.activeDeviceId === deviceId) {
-      const remaining = await getDevices(userId);
-      if (remaining.length > 0) {
-        if (state.isPlaying && state.updatedAt) {
-          state.positionMs = Math.max(0, state.positionMs + (Date.now() - state.updatedAt));
-        }
-        state.activeDeviceId = remaining[0].deviceId;
-        state.updatedAt      = Date.now();
-        await saveState(userId, state);
-        io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state);
-        console.log(`[AutoTransfer] user=${userId} → device=${state.activeDeviceId}`);
-      } else {
-        state.isPlaying      = false;
-        state.activeDeviceId = null;
-        state.updatedAt      = Date.now();
-        await saveState(userId, state);
-      }
-    }
     const devices = await getDevices(userId);
     io.to(userRoom).emit('DEVICE_LIST_UPDATED', { devices });
   });

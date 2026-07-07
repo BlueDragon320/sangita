@@ -517,15 +517,16 @@ export default function App() {
     }
   }, []) // eslint-disable-line
 
-  const internalPlayTrack = useCallback((track, index) => {
+  const internalPlayTrack = useCallback((track, index, forceLocal) => {
     if (!track) return
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
     const devs = devicesRef.current || [];
     const isRemoteOnline = sState?.activeDeviceId && devs.some(d => d.deviceId === sState.activeDeviceId);
-    console.log('[internalPlayTrack] isAct:', isAct, 'isRemoteOnline:', isRemoteOnline, 'track:', track.path, 'index:', index);
+    console.log('[internalPlayTrack] isAct:', isAct, 'isRemoteOnline:', isRemoteOnline, 'track:', track.path, 'index:', index, 'forceLocal:', forceLocal);
 
-    if (!isAct && isRemoteOnline) {
+    const isLocal = forceLocal === true;
+    if (!isAct && isRemoteOnline && !isLocal) {
       console.log('[internalPlayTrack] Sending REMOTE_CONTROL play_track command');
       sendRemoteRef.current?.({ action: 'play_track', payload: { path: track.path } });
       setSyncState(prev => prev ? { ...prev, trackId: track.path, positionMs: 0, isPlaying: true, updatedAt: Date.now() } : prev);
@@ -555,7 +556,7 @@ export default function App() {
 
   const playTrack  = useCallback((track, index) => internalPlayTrack(track, index), [internalPlayTrack])
 
-  const playNext = useCallback(() => {
+  const playNext = useCallback((forceLocal) => {
     const { q, idx } = getActiveQueueAndIndex()
     if (q.length === 0) return
     let nextIdx
@@ -563,18 +564,18 @@ export default function App() {
       if (q.length === 1) { nextIdx = 0 }
       else { do { nextIdx = Math.floor(Math.random() * q.length) } while (nextIdx === idx) }
     } else { nextIdx = idx + 1 >= q.length ? 0 : idx + 1 }
-    internalPlayTrack(q[nextIdx], nextIdx)
+    internalPlayTrack(q[nextIdx], nextIdx, forceLocal)
   }, [internalPlayTrack, getActiveQueueAndIndex])
 
-  const playPrev = useCallback(() => {
+  const playPrev = useCallback((forceLocal) => {
     const { q, idx } = getActiveQueueAndIndex()
     if (q.length === 0) return
     if (audioRef.current && audioRef.current.currentTime > 3) { audioRef.current.currentTime = 0; return }
     const prevIdx = idx <= 0 ? q.length - 1 : idx - 1
-    internalPlayTrack(q[prevIdx], prevIdx)
+    internalPlayTrack(q[prevIdx], prevIdx, forceLocal)
   }, [internalPlayTrack, getActiveQueueAndIndex])
 
-  const togglePlay = useCallback((forcePlay) => {
+  const togglePlay = useCallback((forcePlay, forceLocal) => {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
     const devs = devicesRef.current || [];
@@ -583,7 +584,8 @@ export default function App() {
     // Ensure we only force play/pause if forcePlay is explicitly a boolean (ignores React click event objects)
     const shouldForce = typeof forcePlay === 'boolean' ? forcePlay : undefined;
 
-    if (!isAct && isRemoteOnline) {
+    const isLocal = forceLocal === true;
+    if (!isAct && isRemoteOnline && !isLocal) {
        const action = shouldForce !== undefined
          ? (shouldForce ? 'play' : 'pause')
          : (sState.isPlaying ? 'pause' : 'play');
@@ -715,6 +717,156 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [togglePlay, playNext, playPrev, view])
+
+  // Set up Media Session Action Handlers
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+
+    const handlePlay = () => {
+      if (togglePlayRef.current) togglePlayRef.current(true, true)
+    }
+    const handlePause = () => {
+      if (togglePlayRef.current) togglePlayRef.current(false, true)
+    }
+    const handleNext = () => {
+      if (playNextRef.current) playNextRef.current(true)
+    }
+    const handlePrev = () => {
+      if (playPrevRef.current) playPrevRef.current(true)
+    }
+    const handleSeekTo = (details) => {
+      if (seekToRef.current && details.seekTime !== undefined) {
+        const audio = audioRef.current
+        if (audio && isFinite(audio.duration) && audio.duration > 0) {
+          const pct = (details.seekTime / audio.duration) * 100
+          seekToRef.current(pct)
+        }
+      }
+    }
+    const handleSeekBackward = (details) => {
+      const offset = details.seekOffset || 10
+      const audio = audioRef.current
+      if (audio) {
+        const target = Math.max(0, audio.currentTime - offset)
+        if (isFinite(audio.duration) && audio.duration > 0) {
+          const pct = (target / audio.duration) * 100
+          if (seekToRef.current) seekToRef.current(pct)
+        }
+      }
+    }
+    const handleSeekForward = (details) => {
+      const offset = details.seekOffset || 10
+      const audio = audioRef.current
+      if (audio) {
+        const target = Math.min(audio.duration || 0, audio.currentTime + offset)
+        if (isFinite(audio.duration) && audio.duration > 0) {
+          const pct = (target / audio.duration) * 100
+          if (seekToRef.current) seekToRef.current(pct)
+        }
+      }
+    }
+
+    navigator.mediaSession.setActionHandler('play', handlePlay)
+    navigator.mediaSession.setActionHandler('pause', handlePause)
+    navigator.mediaSession.setActionHandler('previoustrack', handlePrev)
+    navigator.mediaSession.setActionHandler('nexttrack', handleNext)
+    
+    try {
+      navigator.mediaSession.setActionHandler('seekto', handleSeekTo)
+    } catch (e) {
+      console.warn('[MediaSession] seekto action not supported:', e)
+    }
+    try {
+      navigator.mediaSession.setActionHandler('seekbackward', handleSeekBackward)
+    } catch (e) {}
+    try {
+      navigator.mediaSession.setActionHandler('seekforward', handleSeekForward)
+    } catch (e) {}
+
+    return () => {
+      navigator.mediaSession.setActionHandler('play', null)
+      navigator.mediaSession.setActionHandler('pause', null)
+      navigator.mediaSession.setActionHandler('previoustrack', null)
+      navigator.mediaSession.setActionHandler('nexttrack', null)
+      try { navigator.mediaSession.setActionHandler('seekto', null) } catch (e) {}
+      try { navigator.mediaSession.setActionHandler('seekbackward', null) } catch (e) {}
+      try { navigator.mediaSession.setActionHandler('seekforward', null) } catch (e) {}
+    }
+  }, [])
+
+  // Sync Media Session Metadata when currentTrack changes on the active device
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+
+    if (isActiveDevice && currentTrack) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentTrack.name,
+        artist: currentTrack.playlist || 'Library',
+        album: 'Sangita'
+      })
+    } else {
+      navigator.mediaSession.metadata = null
+    }
+  }, [currentTrack, isActiveDevice])
+
+  // Sync Media Session Playback and Position state with actual audio element events
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !('mediaSession' in navigator)) return
+
+    const updatePosition = () => {
+      if ('setPositionState' in navigator.mediaSession) {
+        const dur = audio.duration
+        const pos = audio.currentTime
+        if (isFinite(dur) && dur > 0 && isFinite(pos)) {
+          navigator.mediaSession.setPositionState({
+            duration: dur,
+            playbackRate: audio.playbackRate || 1,
+            position: pos
+          })
+        }
+      }
+    }
+
+    const handlePlay = () => {
+      navigator.mediaSession.playbackState = 'playing'
+      updatePosition()
+    }
+
+    const handlePause = () => {
+      navigator.mediaSession.playbackState = 'paused'
+    }
+
+    const handleSeeked = () => {
+      updatePosition()
+    }
+
+    const handleDurationChange = () => {
+      updatePosition()
+    }
+
+    audio.addEventListener('play', handlePlay)
+    audio.addEventListener('playing', handlePlay)
+    audio.addEventListener('pause', handlePause)
+    audio.addEventListener('seeked', handleSeeked)
+    audio.addEventListener('durationchange', handleDurationChange)
+
+    // Run initial update
+    if (!audio.paused) {
+      navigator.mediaSession.playbackState = 'playing'
+    } else {
+      navigator.mediaSession.playbackState = 'paused'
+    }
+    updatePosition()
+
+    return () => {
+      audio.removeEventListener('play', handlePlay)
+      audio.removeEventListener('playing', handlePlay)
+      audio.removeEventListener('pause', handlePause)
+      audio.removeEventListener('seeked', handleSeeked)
+      audio.removeEventListener('durationchange', handleDurationChange)
+    }
+  }, [currentTrack])
 
   const downloadTrack = useCallback(() => {
     const track = currentTrack; if (!track) return
