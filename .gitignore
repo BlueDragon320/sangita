@@ -10,3 +10,10 @@ Thumbs.db
 node_modules/
 data/
 backend/data/
+.venv/
+backend/.venv/
+*.log
+*.local
+
+# Reference documentation
+CODEBASE.md

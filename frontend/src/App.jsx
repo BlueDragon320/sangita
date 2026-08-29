@@ -20,17 +20,84 @@ function formatTime(s) {
   return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`
 }
 function ThemeIcon({ theme }) {
-  if (theme === 'light') return <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/></svg>
-  if (theme === 'dark') return <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>
-  return <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+  if (theme === 'light') {
+    return (
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+        <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/>
+      </svg>
+    )
+  }
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+      <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
+    </svg>
+  )
 }
+
+function QuickCardThumb({ name, firstTrackPath, token }) {
+  if (name === 'Favorites') {
+    return (
+      <div
+        className="quick-card-thumb quick-card-thumb-fav"
+        style={{
+          background: 'linear-gradient(135deg, #10B981 0%, #047857 100%)',
+          color: '#FFFFFF',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 2px 10px rgba(16, 185, 129, 0.3)'
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+        </svg>
+      </div>
+    )
+  }
+
+  const [imgErr, setImgErr] = useState(false)
+  const coverUrl = firstTrackPath
+    ? `/api/cover/${firstTrackPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token || '')}&v=2`
+    : name
+    ? `/api/cover/${encodeURIComponent(name)}?token=${encodeURIComponent(token || '')}&v=2`
+    : null
+
+  if (!imgErr && coverUrl && token) {
+    return (
+      <div className="quick-card-thumb quick-card-thumb-img">
+        <img
+          src={coverUrl}
+          key={firstTrackPath || name}
+          alt={name}
+          onError={() => setImgErr(true)}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="quick-card-thumb">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="var(--accent)">
+        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+      </svg>
+    </div>
+  )
+}
+
+import RightPanel from './components/RightPanel.jsx'
+import AddToPlaylistModal from './components/AddToPlaylistModal.jsx'
+import HomeDashboard from './components/HomeDashboard.jsx'
+import CreatePlaylistModal from './components/CreatePlaylistModal.jsx'
 
 export default function App() {
   const [token,           setToken]           = useState(() => localStorage.getItem('sangita_token') || '')
   const [username,        setUsername]        = useState(() => localStorage.getItem('sangita_user')  || '')
   const [role,            setRole]            = useState(() => localStorage.getItem('sangita_role')  || '')
   const [playlists,       setPlaylists]       = useState({})
+  const [favorites,       setFavorites]       = useState([])
   const [currentPlaylist, setCurrentPlaylist] = useState('')
+  const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null)
   const [view,            setView]            = useState(() => window.location.pathname.startsWith('/admin') ? 'admin' : 'music')
   const [searchQuery,     setSearchQuery]     = useState('')
   const [dataLoading,     setDataLoading]     = useState(false)
@@ -45,10 +112,17 @@ export default function App() {
   const [currentTime,     setCurrentTime]     = useState(0)
   const [duration,        setDuration]        = useState(0)
   const [durations,       setDurations]       = useState({})
-  const [theme,           setTheme]           = useState(() => localStorage.getItem('sangita_theme') || 'bluedark')
+  const [theme,           setTheme]           = useState(() => {
+    const saved = localStorage.getItem('sangita_theme');
+    return saved === 'light' ? 'light' : 'dark';
+  })
   const [showDevices,     setShowDevices]     = useState(false)
+  const [showRightPanel,  setShowRightPanel]  = useState(true)
   const [isCompact,       setIsCompact]       = useState(() => localStorage.getItem('sangita_compact') === 'true')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sangita_sidebar_collapsed') === 'true')
+  const [userStats,       setUserStats]       = useState(null)
+  const [statsLoading,    setStatsLoading]    = useState(false)
+  const [showCreatePlaylist, setShowCreatePlaylist] = useState(false)
 
   const audioRef     = useRef(null)
   const queueRef     = useRef([])
@@ -87,8 +161,6 @@ export default function App() {
     }
   }
 
-
-
   useEffect(() => { queueRef.current     = queue        }, [queue])
   useEffect(() => { indexRef.current     = currentIndex }, [currentIndex])
   useEffect(() => { isShuffleRef.current = isShuffle    }, [isShuffle])
@@ -109,7 +181,7 @@ export default function App() {
   }, [sidebarCollapsed])
 
   const cycleTheme = useCallback(() => {
-    setTheme(t => t === 'bluedark' ? 'dark' : t === 'dark' ? 'light' : 'bluedark')
+    setTheme(t => t === 'dark' ? 'light' : 'dark')
   }, [])
 
   const handleViewChange = useCallback((newView) => {
@@ -416,6 +488,35 @@ export default function App() {
     })
   }, [isLoop, isShuffle, isActiveDevice, broadcastState, getMyDeviceId])
 
+  const toggleFavorite = useCallback(async (trackPath) => {
+    if (!trackPath || !token) return
+    try {
+      const res = await fetch('/api/favorites/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ track_path: trackPath })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const updatedFavs = data.favorites || []
+        setFavorites(updatedFavs)
+        setPlaylists(prev => ({
+          ...prev,
+          Favorites: updatedFavs
+        }))
+        if (currentPlaylist === 'Favorites') {
+          const tks = buildTracks('Favorites', updatedFavs)
+          setQueue(tks)
+        }
+      }
+    } catch (err) {
+      console.error('[Favorites] Toggle error:', err)
+    }
+  }, [token, currentPlaylist])
+
   useEffect(() => {
     if (!token) return
     setDataLoading(true)
@@ -426,13 +527,101 @@ export default function App() {
         setRole(user.role);
         localStorage.setItem('sangita_user', user.username);
         localStorage.setItem('sangita_role', user.role);
+        
+        // Fetch durations in parallel
+        fetch('/api/durations', { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.ok ? r.json() : {})
+          .then(durMap => {
+            if (durMap && typeof durMap === 'object') {
+              setDurations(prev => ({ ...durMap, ...prev }));
+            }
+          })
+          .catch(err => console.warn('[Durations] Fetch error:', err));
+
+        // Fetch favorites in parallel
+        fetch('/api/favorites', { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.ok ? r.json() : [])
+          .then(favs => {
+            if (Array.isArray(favs)) {
+              setFavorites(favs);
+            }
+          })
+          .catch(err => console.warn('[Favorites] Fetch error:', err));
+
         return fetch('/api/playlists', { headers: { Authorization: `Bearer ${token}` } });
       })
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
-      .then(data => { setPlaylists(data); const f = Object.keys(data)[0]; if (f) setCurrentPlaylist(f) })
+      .then(data => {
+        setPlaylists(data);
+        const keys = Object.keys(data);
+        // Default to first playlist or Library
+        if (keys.length > 0 && !currentPlaylist) {
+          const defaultPl = keys.includes('Library') ? 'Library' : keys[0];
+          setCurrentPlaylist(defaultPl);
+        }
+      })
       .catch(() => handleLogout())
       .finally(() => setDataLoading(false))
   }, [token, handleLogout])
+
+  const fetchPlaylists = useCallback(() => {
+    if (!token) return
+    fetch('/api/playlists', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : {})
+      .then(data => {
+        setPlaylists(data);
+      })
+      .catch(console.error)
+  }, [token])
+
+  const fetchUserStats = useCallback(async () => {
+    if (!token) return
+    setStatsLoading(true)
+    try {
+      const res = await fetch('/api/user/stats', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setUserStats(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch user stats:', err)
+    } finally {
+      setStatsLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (token) {
+      fetchUserStats()
+    }
+  }, [token, fetchUserStats, view])
+
+  const handleSaveTop10Playlist = useCallback(async () => {
+    if (!userStats?.top_tracks?.length) return
+    const now = new Date()
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    const playlistName = `My Top 10 (${monthNames[now.getMonth()]} ${now.getDate()})`
+    const trackPaths = userStats.top_tracks.map(t => t.path)
+    try {
+      const res = await fetch('/api/user-playlists/batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ name: playlistName, tracks: trackPaths })
+      })
+      if (res.ok) {
+        fetchPlaylists()
+        setCurrentPlaylist(playlistName)
+        setView('music')
+      }
+    } catch (err) {
+      console.error('Failed to save Top 10 playlist:', err)
+    }
+  }, [userStats, token, fetchPlaylists])
 
   useEffect(() => {
     if (!currentPlaylist || !playlists[currentPlaylist]) return
@@ -555,6 +744,26 @@ export default function App() {
   }, [broadcastState, getMyDeviceId, claimActiveDevice])
 
   const playTrack  = useCallback((track, index) => internalPlayTrack(track, index), [internalPlayTrack])
+
+  const handleQuickShuffle = useCallback(() => {
+    const allTracks = []
+    Object.entries(playlists).forEach(([plName, paths]) => {
+      paths.forEach((p, idx) => {
+        allTracks.push({
+          id: `${plName}-${idx}`,
+          path: p,
+          name: p.split('/').pop().replace(/\.[^/.]+$/, ''),
+          playlist: plName
+        })
+      })
+    })
+    if (allTracks.length === 0) return
+    const shuffled = [...allTracks].sort(() => Math.random() - 0.5)
+    setQueue(shuffled)
+    setCurrentIndex(0)
+    setIsShuffle(true)
+    internalPlayTrack(shuffled[0], 0)
+  }, [playlists, internalPlayTrack])
 
   const playNext = useCallback((forceLocal) => {
     const { q, idx } = getActiveQueueAndIndex()
@@ -916,6 +1125,7 @@ export default function App() {
           isOpen={mobileMenuOpen}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed(c => !c)}
+          token={token}
         />
         <div className="main-area">
           <Header
@@ -938,125 +1148,136 @@ export default function App() {
             onLogout={handleLogout}
             onOpenDevices={() => setShowDevices(true)}
             deviceCount={devices.length}
-            onToggleSidebar={() => setSidebarCollapsed(c => !c)}
+            onOpenMobileMenu={() => setMobileMenuOpen(true)}
           />
-          <div className="mobile-topbar">
-            {mobileSearchOpen ? (
-              <div className="mobile-search-bar" style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 12 }}>
-                <button className="btn-icon" onClick={() => { setMobileSearchOpen(false); setSearchQuery(''); setView('music'); }}>
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-                    <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-                  </svg>
-                </button>
-                <div className="search-input-wrapper" style={{ flex: 1, position: 'relative' }}>
-                  <input
-                    type="text"
-                    placeholder="Search all playlists..."
-                    value={searchQuery || ''}
-                    onChange={e => {
-                      setSearchQuery(e.target.value);
-                      if (e.target.value.trim()) setView('search');
-                      else setView('music');
-                    }}
-                    className="search-input"
-                    style={{ width: '100%', padding: '10px 40px 10px 16px', borderRadius: '20px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)', color: '#fff', fontSize: '0.9rem', outline: 'none' }}
-                    autoFocus
-                  />
-                  {searchQuery && (
-                    <button onClick={() => { setSearchQuery(''); setView('music'); }} className="search-clear-btn" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: '1.2rem', cursor: 'pointer' }}>
-                      &times;
-                    </button>
-                  )}
+
+          <div className="main-scroll-body">
+            {dataLoading ? (
+              <div className="loading-state"><div className="spinner" /><p>Loading your music library…</p></div>
+            ) : view === 'home' ? (
+              <HomeDashboard
+                username={username}
+                stats={userStats}
+                loading={statsLoading}
+                onPlayTrack={(track, pl, trackQueue) => {
+                  const mappedQueue = (trackQueue || []).map((t, i) => ({
+                    id: `${t.playlist || pl || 'Home'}-${i}`,
+                    path: t.path,
+                    name: t.name,
+                    artist: t.artist,
+                    playlist: t.playlist || pl || 'Home'
+                  }))
+                  const trackIdx = mappedQueue.findIndex(t => t.path === track.path)
+                  setQueue(mappedQueue)
+                  setCurrentIndex(trackIdx !== -1 ? trackIdx : 0)
+                  internalPlayTrack(track, trackIdx !== -1 ? trackIdx : 0)
+                }}
+                isPlaying={isPlaying}
+                currentTrack={currentTrack}
+                onOpenCreatePlaylist={() => setShowCreatePlaylist(true)}
+                onSaveTop10Playlist={handleSaveTop10Playlist}
+                onQuickShuffle={handleQuickShuffle}
+                token={token}
+                favorites={favorites}
+                onToggleFavorite={toggleFavorite}
+                onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                durations={durations}
+              />
+            ) : view === 'search' ? (
+              <>
+                <div className="hero" style={{ padding: '40px 48px 24px' }}>
+                  <h1 style={{ fontSize: 'clamp(2.5rem, 8vw, 4rem)', fontWeight: 800 }}>Search Results</h1>
+                  <p className="hero-subtitle" style={{ marginTop: 4 }}>Showing matches for "{searchQuery}"</p>
                 </div>
-              </div>
-            ) : (
-              <div className="mobile-topbar-inner" style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center' }}>
-                <button className="btn-icon" onClick={() => setMobileMenuOpen(true)}>
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
-                </button>
-                <span className="mobile-brand" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div className="brand-icon" style={{
-                    width: 24, height: 24, borderRadius: 6,
-                    background: 'linear-gradient(135deg, var(--accent), var(--accent-dim))',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000', flexShrink: 0
-                  }}>
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
-                      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                    </svg>
-                  </div>
-                  Sangita
-                </span>
-                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                  <button className="btn-icon" onClick={() => setMobileSearchOpen(true)} title="Search">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                {searchResults.length === 0 ? (
+                  <div className="empty-state" style={{ marginTop: 40 }}>
+                    <svg viewBox="0 0 24 24" width="48" height="48" fill="var(--text-dim)" style={{ opacity: 0.3 }}>
                       <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
                     </svg>
-                  </button>
-                  <button className="theme-btn" onClick={cycleTheme}><ThemeIcon theme={theme} /></button>
-                  <button className="btn-icon" onClick={() => setShowDevices(true)}>
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>
-                  </button>
-                  <button className="btn-icon" onClick={handleLogout}>
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
-                  </button>
-                </div>
+                    <h3>No matches found</h3>
+                    <p>Try searching for a different song name or playlist.</p>
+                  </div>
+                ) : (
+                  <TrackList
+                    tracks={searchResults}
+                    currentIndex={searchResults.findIndex(t => t.path === currentTrack?.path)}
+                    isPlaying={isPlaying}
+                    onPlayTrack={(track, idx) => {
+                      setQueue(searchResults);
+                      setCurrentIndex(idx);
+                      internalPlayTrack(track, idx);
+                    }}
+                    durations={durations}
+                    token={token}
+                    favorites={favorites}
+                    onToggleFavorite={toggleFavorite}
+                    onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                  />
+                )}
+              </>
+            ) : Object.keys(playlists).length === 0 ? (
+              <div className="empty-state" style={{ marginTop: 80 }}>
+                <svg viewBox="0 0 24 24" width="64" height="64" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                <h3>No music found</h3><p>Add audio files to your music/ folder and restart.</p>
               </div>
+            ) : (
+              <>
+                {/* Playlist Banner Header */}
+                <Hero
+                  playlistName={currentPlaylist}
+                  tracks={queue}
+                  isPlaying={isPlaying && currentTrack?.playlist === currentPlaylist}
+                  isShuffle={isShuffle}
+                  onPlay={() => {
+                    if (currentIndex === -1 && queue.length > 0) {
+                      const idx = isShuffle ? Math.floor(Math.random() * queue.length) : 0
+                      playTrack(queue[idx], idx)
+                    } else { togglePlay() }
+                  }}
+                  onShuffle={() => setIsShuffle(s => !s)}
+                  onDownload={downloadTrack}
+                  onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                  username={username}
+                  durations={durations}
+                  token={token}
+                />
+
+                {/* Track List */}
+                <TrackList
+                  tracks={queue}
+                  currentIndex={queue.findIndex(t => t.path === currentTrack?.path)}
+                  isPlaying={isPlaying}
+                  onPlayTrack={playTrack}
+                  durations={durations}
+                  token={token}
+                  favorites={favorites}
+                  onToggleFavorite={toggleFavorite}
+                  onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                />
+              </>
             )}
           </div>
-          {dataLoading ? (
-            <div className="loading-state"><div className="spinner" /><p>Loading your library…</p></div>
-          ) : view === 'search' ? (
-            <>
-              <div className="hero" style={{ padding: '40px 48px 24px' }}>
-                <h1 style={{ fontSize: '2.2rem', fontWeight: 800 }}>Search Results</h1>
-                <p className="hero-subtitle" style={{ marginTop: 4 }}>Showing matches for "{searchQuery}"</p>
-              </div>
-              {searchResults.length === 0 ? (
-                <div className="empty-state" style={{ marginTop: 40 }}>
-                  <svg viewBox="0 0 24 24" width="48" height="48" fill="var(--text-dim)" style={{ opacity: 0.3 }}>
-                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
-                  </svg>
-                  <h3>No matches found</h3>
-                  <p>Try searching for a different song name or playlist.</p>
-                </div>
-              ) : (
-              <TrackList
-                  tracks={searchResults}
-                  currentIndex={searchResults.findIndex(t => t.path === currentTrack?.path)}
-                  isPlaying={isPlaying}
-                  onPlayTrack={(track, idx) => {
-                    setQueue(searchResults);
-                    setCurrentIndex(idx);
-                    internalPlayTrack(track, idx);
-                  }}
-                  durations={durations}
-                />
-              )}
-            </>
-          ) : Object.keys(playlists).length === 0 ? (
-            <div className="empty-state" style={{ marginTop: 80 }}>
-              <svg viewBox="0 0 24 24" width="64" height="64" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-              <h3>No music found</h3><p>Add audio files to your music/ folder and restart.</p>
-            </div>
-          ) : (
-            <>
-              <Hero
-                playlistName={currentPlaylist} trackCount={playlists[currentPlaylist]?.length || 0}
-                isPlaying={isPlaying && currentTrack?.playlist === currentPlaylist} isShuffle={isShuffle}
-                onPlay={() => {
-                  if (currentIndex === -1 && queue.length > 0) {
-                    const idx = isShuffle ? Math.floor(Math.random() * queue.length) : 0
-                    playTrack(queue[idx], idx)
-                  } else { togglePlay() }
-                }}
-                onShuffle={() => setIsShuffle(s => !s)} onDownload={downloadTrack}
-              />
-              <TrackList tracks={queue} currentIndex={queue.findIndex(t => t.path === currentTrack?.path)} isPlaying={isPlaying}
-                onPlayTrack={playTrack} durations={durations} />
-            </>
-          )}
         </div>
+
+        {/* RIGHT PANEL (Now Playing side view) */}
+        {currentTrack && showRightPanel && (
+          <RightPanel
+            track={currentTrack}
+            playlist={currentPlaylist}
+            isPlaying={isPlaying}
+            duration={duration}
+            formatTime={formatTime}
+            onClose={() => setShowRightPanel(false)}
+            onTogglePlay={togglePlay}
+            onDownload={downloadTrack}
+            token={token}
+            isFavorite={currentTrack ? favorites.includes(currentTrack.path) : false}
+            onToggleFavorite={toggleFavorite}
+            onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+          />
+        )}
       </div>
+
       {currentTrack && (
         <Player
           track={currentTrack} playlist={currentPlaylist} isPlaying={isPlaying}
@@ -1068,6 +1289,36 @@ export default function App() {
           isActiveDevice={isActiveDevice} activeDeviceName={activeDeviceName} syncState={syncState}
           onClaimDevice={claimActiveDevice} onSendRemote={sendRemoteControl}
           devices={devices} myDeviceId={getMyDeviceId()} onOpenDevices={() => setShowDevices(true)}
+          showRightPanel={showRightPanel} onToggleRightPanel={() => setShowRightPanel(p => !p)}
+          token={token}
+          isFavorite={currentTrack ? favorites.includes(currentTrack.path) : false}
+          onToggleFavorite={toggleFavorite}
+          onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+        />
+      )}
+
+      {addToPlaylistTrack && (
+        <AddToPlaylistModal
+          track={addToPlaylistTrack}
+          playlists={playlists}
+          favorites={favorites}
+          token={token}
+          onClose={() => setAddToPlaylistTrack(null)}
+          onToggleFavorite={toggleFavorite}
+          onUpdatePlaylists={setPlaylists}
+        />
+      )}
+
+      {showCreatePlaylist && (
+        <CreatePlaylistModal
+          isOpen={showCreatePlaylist}
+          onClose={() => setShowCreatePlaylist(false)}
+          onCreated={(newPlName) => {
+            fetchPlaylists()
+            setCurrentPlaylist(newPlName)
+            setView('music')
+          }}
+          token={token}
         />
       )}
     </div>

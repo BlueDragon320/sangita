@@ -447,11 +447,11 @@ export default function AdminDashboard({
 
   return (
     <div className="admin-layout" data-theme={theme}>
-      {/* Spotify styling properties custom definitions */}
+      {/* Modern Glassmorphism styling property definitions */}
       <style>{`
         .admin-layout {
-          --spotify-green: var(--accent);
-          --spotify-green-hover: var(--accent-hi);
+          --spotify-green: var(--emerald);
+          --spotify-green-hover: var(--emerald-hi);
           --spotify-black: var(--bg);
           --spotify-dark-grey: var(--surface);
           --spotify-card-grey: var(--card);
@@ -461,144 +461,189 @@ export default function AdminDashboard({
         
         .admin-navbar {
           background-color: var(--surface) !important;
-          border-bottom: 1.5px solid var(--border) !important;
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
+          border-bottom: 1px solid var(--border) !important;
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
         }
 
         .btn-navbar-nav {
-          border: 1px solid var(--spotify-green) !important;
-          color: var(--spotify-green) !important;
-          border-radius: 500px !important;
+          border: 1px solid var(--border) !important;
+          color: var(--text-sub) !important;
+          border-radius: var(--radius-sm) !important;
+          font-family: 'Inter', sans-serif !important;
+          font-weight: 700 !important;
+          font-size: 10px !important;
+          text-transform: uppercase !important;
+          letter-spacing: 0.2em !important;
         }
         .btn-navbar-nav:hover {
-          background-color: var(--accent-glow2) !important;
-          border-color: var(--spotify-green-hover) !important;
-          color: var(--spotify-green-hover) !important;
+          background-color: var(--card-hover) !important;
+          border-color: var(--border-hi) !important;
+          color: var(--text) !important;
+          transform: scale(1.05);
         }
 
         .btn-tab {
-          border-radius: 500px !important;
-          padding: 8px 24px !important;
+          border-radius: var(--radius-sm) !important;
+          padding: 8px 20px !important;
+          font-family: 'Inter', sans-serif !important;
+          font-size: 10px !important;
           font-weight: 700 !important;
-          letter-spacing: 0.2px;
-          border: 1px solid var(--border) !important;
+          letter-spacing: 0.2em !important;
+          text-transform: uppercase !important;
+          border: 1px solid transparent !important;
           color: var(--text-sub) !important;
+          transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
         }
 
         .btn-tab.active {
-          background-color: var(--accent) !important;
-          color: #fff !important;
-          border-color: var(--accent) !important;
+          background-color: var(--emerald) !important;
+          color: #000000 !important;
+          border-color: var(--emerald) !important;
+          box-shadow: 0 4px 14px var(--accent-glow) !important;
         }
 
         .btn-add-user {
-          background: var(--spotify-green) !important;
-          border-radius: 500px !important;
-          padding: 10px 24px !important;
+          background: var(--emerald) !important;
+          border-radius: var(--radius-sm) !important;
+          padding: 10px 22px !important;
+          font-family: 'Inter', sans-serif !important;
+          font-size: 10px !important;
           font-weight: 700 !important;
-          box-shadow: none !important;
-          color: #fff !important;
+          text-transform: uppercase !important;
+          letter-spacing: 0.2em !important;
+          color: #000000 !important;
+          transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
         }
         .btn-add-user:hover {
-          background: var(--spotify-green-hover) !important;
-          transform: scale(1.03) !important;
+          background: var(--emerald-hi) !important;
+          transform: scale(1.05) !important;
         }
 
         .stat-card {
-          background-color: var(--spotify-card-grey) !important;
+          background-color: var(--card) !important;
           border: 1px solid var(--border) !important;
-          border-radius: 8px !important;
+          border-radius: var(--radius-md) !important;
           padding: 24px !important;
-          transition: background-color 0.3s ease !important;
+          backdrop-filter: blur(12px) !important;
+          -webkit-backdrop-filter: blur(12px) !important;
+          transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
         }
         .stat-card:hover {
-          background-color: var(--spotify-hover-grey) !important;
+          background-color: var(--card-hover) !important;
           border-color: var(--border-hi) !important;
-          transform: none !important;
+          transform: scale(1.03) !important;
         }
 
         .stat-card-title {
-          font-size: 0.75rem !important;
+          font-family: 'Inter', sans-serif !important;
+          font-size: 10px !important;
           font-weight: 700 !important;
-          color: var(--spotify-text-muted) !important;
+          letter-spacing: 0.2em !important;
+          text-transform: uppercase !important;
+          color: var(--text-dim) !important;
         }
 
         .stat-card-value {
+          font-family: 'Inter', sans-serif !important;
           font-size: 2.2rem !important;
+          line-height: 1.05 !important;
           font-weight: 700 !important;
-          letter-spacing: -1px;
+          letter-spacing: -0.05em !important;
           color: var(--text) !important;
         }
 
         .chart-panel {
-          background-color: var(--spotify-card-grey) !important;
+          background-color: var(--card) !important;
           border: 1px solid var(--border) !important;
-          border-radius: 8px !important;
+          border-radius: var(--radius-md) !important;
           padding: 24px !important;
+          backdrop-filter: blur(12px) !important;
+          -webkit-backdrop-filter: blur(12px) !important;
         }
 
         .user-card {
-          background-color: var(--spotify-card-grey) !important;
+          background-color: var(--card) !important;
           border: 1px solid var(--border) !important;
-          border-radius: 8px !important;
-          transition: background-color 0.3s ease !important;
+          border-radius: var(--radius-md) !important;
+          transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+          backdrop-filter: blur(12px) !important;
+          -webkit-backdrop-filter: blur(12px) !important;
         }
         .user-card:hover {
-          background-color: var(--spotify-hover-grey) !important;
+          background-color: var(--card-hover) !important;
           border-color: var(--border-hi) !important;
-          transform: none !important;
-          box-shadow: 0 10px 30px rgba(0,0,0,0.15) !important;
+          transform: scale(1.02) !important;
         }
 
         .btn-card.edit {
-          background-color: transparent !important;
+          background-color: var(--card) !important;
           border: 1px solid var(--border) !important;
           color: var(--text) !important;
-          border-radius: 500px !important;
+          border-radius: var(--radius-sm) !important;
+          font-family: 'Inter', sans-serif !important;
+          font-size: 10px !important;
+          font-weight: 700 !important;
+          text-transform: uppercase !important;
+          letter-spacing: 0.2em !important;
         }
         .btn-card.edit:hover {
-          border-color: var(--accent) !important;
-          background-color: var(--accent-glow2) !important;
+          border-color: var(--emerald) !important;
+          background-color: var(--emerald) !important;
+          color: #000000 !important;
         }
         .btn-card.delete {
-          border-radius: 500px !important;
+          border-radius: var(--radius-sm) !important;
+          font-family: 'Inter', sans-serif !important;
+          font-size: 10px !important;
+          font-weight: 700 !important;
+          text-transform: uppercase !important;
+          letter-spacing: 0.2em !important;
         }
 
         .btn-back {
-          border-radius: 500px !important;
+          border-radius: var(--radius-sm) !important;
+          font-family: 'Inter', sans-serif !important;
+          font-size: 10px !important;
           font-weight: 700 !important;
+          text-transform: uppercase !important;
+          letter-spacing: 0.2em !important;
         }
 
         .btn-timeframe {
-          border-radius: 500px !important;
+          border-radius: var(--radius-sm) !important;
+          font-family: 'Inter', sans-serif !important;
+          font-size: 10px !important;
           font-weight: 700 !important;
-          border: 1px solid var(--border) !important;
+          text-transform: uppercase !important;
+          letter-spacing: 0.2em !important;
+          border: 1px solid transparent !important;
           color: var(--text-sub) !important;
         }
         .btn-timeframe.active {
-          background-color: var(--accent) !important;
-          color: #fff !important;
-          border-color: var(--accent) !important;
-          box-shadow: none !important;
+          background-color: var(--emerald) !important;
+          color: #000000 !important;
+          border-color: var(--emerald) !important;
         }
 
         .timeframe-bar {
-          background-color: var(--spotify-dark-grey) !important;
+          background-color: var(--card) !important;
           border: 1px solid var(--border) !important;
-          border-radius: 8px !important;
+          border-radius: var(--radius-sm) !important;
         }
 
         .user-profile-header {
-          background-color: var(--spotify-card-grey) !important;
+          background-color: var(--card) !important;
           border: 1px solid var(--border) !important;
-          border-radius: 8px !important;
+          border-radius: var(--radius-md) !important;
+          backdrop-filter: blur(12px) !important;
         }
 
         .graph-panel {
-          background-color: var(--spotify-card-grey) !important;
+          background-color: var(--card) !important;
           border: 1px solid var(--border) !important;
-          border-radius: 8px !important;
+          border-radius: var(--radius-md) !important;
+          backdrop-filter: blur(12px) !important;
         }
 
         /* Live Badge style */
@@ -609,53 +654,44 @@ export default function AdminDashboard({
         }
         
         .live-badge {
-          background: var(--accent-glow2);
-          border: 1px solid var(--spotify-green);
-          color: var(--spotify-green);
-          padding: 2px 8px;
-          border-radius: 4px;
-          font-size: 0.65rem;
-          font-weight: 800;
-          letter-spacing: 0.8px;
+          background: rgba(52, 211, 153, 0.15);
+          border: 1px solid var(--emerald);
+          color: var(--emerald);
+          padding: 3px 8px;
+          border-radius: var(--radius-sm);
+          font-family: 'Inter', sans-serif;
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.2em;
+          text-transform: uppercase;
           display: inline-flex;
           align-items: center;
-          gap: 4px;
+          gap: 6px;
         }
 
         .live-pulse-dot {
           width: 6px;
           height: 6px;
           border-radius: 50%;
-          background-color: var(--spotify-green);
-          box-shadow: 0 0 0 0 var(--accent-glow);
+          background-color: var(--emerald);
+          box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7);
           animation: pulseGreen 1.5s infinite;
         }
 
-        @keyframes pulseGreen {
-          0% {
-            transform: scale(0.95);
-            box-shadow: 0 0 0 0 var(--accent-glow);
-          }
-          70% {
-            transform: scale(1);
-            box-shadow: 0 0 0 6px rgba(255, 255, 255, 0);
-          }
-          100% {
-            transform: scale(0.95);
-            box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
-          }
-        }
-
         .session-history-panel {
-          background-color: var(--spotify-card-grey) !important;
+          background-color: var(--card) !important;
           border: 1px solid var(--border) !important;
-          border-radius: 8px !important;
+          border-radius: var(--radius-md) !important;
+          backdrop-filter: blur(12px) !important;
         }
 
         .history-table th {
-          border-bottom: 1.5px solid var(--border) !important;
-          font-size: 0.72rem !important;
-          letter-spacing: 1px !important;
+          border-bottom: 1px solid var(--border) !important;
+          font-family: 'Inter', sans-serif !important;
+          font-size: 10px !important;
+          font-weight: 700 !important;
+          text-transform: uppercase !important;
+          letter-spacing: 0.2em !important;
           color: var(--text-dim) !important;
         }
         .history-table td {
@@ -663,7 +699,7 @@ export default function AdminDashboard({
           color: var(--text-sub) !important;
         }
         .history-table tr:hover td {
-          background-color: var(--spotify-hover-grey) !important;
+          background-color: var(--card-hover) !important;
           color: var(--text) !important;
         }
 
@@ -672,12 +708,11 @@ export default function AdminDashboard({
           border: 1px solid var(--border);
           width: 40px;
           height: 40px;
-          border-radius: 4px;
+          border-radius: var(--radius-sm);
           display: flex;
           align-items: center;
           justify-content: center;
-          color: var(--text-dim);
-          box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+          color: var(--emerald);
         }
 
         .chart-bar-group:hover rect {
