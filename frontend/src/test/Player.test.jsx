@@ -199,4 +199,55 @@ describe('Player Component & Controls', () => {
 
     expect(handleToggleFavorite).toHaveBeenCalledWith(mockTrack.path)
   })
+
+  it('renders synchronized timestamp and active device name when playing on a remote device', () => {
+    const handleSendRemote = vi.fn()
+    const handleClaimDevice = vi.fn()
+
+    render(
+      <Player
+        track={mockTrack}
+        playlist="Rock Classics"
+        isPlaying={true}
+        isShuffle={false}
+        isLoop={false}
+        onTogglePlay={vi.fn()}
+        onNext={vi.fn()}
+        onPrev={vi.fn()}
+        onToggleShuffle={vi.fn()}
+        onToggleLoop={vi.fn()}
+        currentTime={125}
+        duration={354}
+        onSeek={vi.fn()}
+        volume={80}
+        onVolumeChange={vi.fn()}
+        formatTime={(s) => `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`}
+        isActiveDevice={false}
+        activeDeviceName="Chrome on Living Room TV"
+        syncState={{
+          activeDeviceId: 'dev-2',
+          trackId: mockTrack.path,
+          positionMs: 125000,
+          durationMs: 354000,
+          isPlaying: true,
+          updatedAt: Date.now(),
+        }}
+        onClaimDevice={handleClaimDevice}
+        onSendRemote={handleSendRemote}
+        devices={[{ deviceId: 'dev-2', deviceName: 'Chrome on Living Room TV' }]}
+        myDeviceId="dev-1"
+        onOpenDevices={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Playing on')).toBeInTheDocument()
+    expect(screen.getByText('Chrome on Living Room TV')).toBeInTheDocument()
+    expect(screen.getByText('2:05')).toBeInTheDocument()
+    expect(screen.getByText('5:54')).toBeInTheDocument()
+
+    // Clicking "Play here" triggers onClaimDevice
+    const claimBtn = screen.getByText('Play here')
+    fireEvent.click(claimBtn)
+    expect(handleClaimDevice).toHaveBeenCalledTimes(1)
+  })
 })

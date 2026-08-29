@@ -111,7 +111,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
         positionMs: Math.floor(audioRef.current.currentTime * 1000),
         durationMs: isFinite(audioRef.current.duration) ? Math.floor(audioRef.current.duration * 1000) : 0,
       });
-    }, 5_000);
+    }, 1_000);
     return () => clearInterval(posReportRef.current);
   }, [isActiveDevice, isPlaying]); 
 
@@ -121,10 +121,23 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
   }, []);
   const transferPlayback = useCallback((targetDeviceId) => {
     console.log('[transferPlayback] target:', targetDeviceId, 'myId:', deviceId.current);
-    setIsActiveDevice(targetDeviceId === deviceId.current);
+    const isBecomingActive = targetDeviceId === deviceId.current;
+    setIsActiveDevice(isBecomingActive);
+
+    // Extract exact current playback position if this device was active
+    let currentPosMs = undefined;
+    let currentDurMs = undefined;
+    if (audioRef.current && isActiveRef.current) {
+      if (!isNaN(audioRef.current.currentTime) && audioRef.current.currentTime >= 0) {
+        currentPosMs = Math.floor(audioRef.current.currentTime * 1000);
+      }
+      if (isFinite(audioRef.current.duration) && audioRef.current.duration > 0) {
+        currentDurMs = Math.floor(audioRef.current.duration * 1000);
+      }
+    }
     
-    // Warm up/unlock the audio element with a user gesture
-    if (targetDeviceId === deviceId.current && audioRef.current) {
+    // Warm up/unlock the audio element with a user gesture if becoming active
+    if (isBecomingActive && audioRef.current) {
       const origMuted = audioRef.current.muted;
       audioRef.current.muted = true;
       const p = audioRef.current.play();
@@ -142,19 +155,24 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
     }
 
     if (socketRef.current) {
-      socketRef.current.emit('TRANSFER_PLAYBACK', { targetDeviceId });
+      socketRef.current.emit('TRANSFER_PLAYBACK', {
+        targetDeviceId,
+        positionMs: currentPosMs,
+        durationMs: currentDurMs,
+      });
       setSyncState(prev => {
         const base = prev || {
           activeDeviceId: targetDeviceId,
           trackId: null,
-          positionMs: 0,
-          durationMs: 0,
+          positionMs: currentPosMs ?? 0,
+          durationMs: currentDurMs ?? 0,
           isPlaying: false,
           volume: 0.8,
           isLoop: false,
           isShuffle: false,
         };
-        return { ...base, activeDeviceId: targetDeviceId, updatedAt: Date.now() };
+        const updatedPos = currentPosMs !== undefined ? currentPosMs : base.positionMs;
+        return { ...base, activeDeviceId: targetDeviceId, positionMs: updatedPos, updatedAt: Date.now() };
       });
     }
   }, [audioRef]);

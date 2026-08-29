@@ -98,7 +98,16 @@ export default function App() {
   const [favorites,       setFavorites]       = useState([])
   const [currentPlaylist, setCurrentPlaylist] = useState('')
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null)
-  const [view,            setView]            = useState(() => window.location.pathname.startsWith('/admin') ? 'admin' : 'music')
+  const [view,            setView]            = useState(() => {
+    const isAdminPath = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')
+    const savedRole = typeof window !== 'undefined' ? localStorage.getItem('sangita_role') : ''
+    if (isAdminPath) {
+      if (savedRole === 'admin') return 'admin'
+      if (typeof window !== 'undefined') window.history.replaceState({}, '', '/')
+      return 'music'
+    }
+    return 'music'
+  })
   const [searchQuery,     setSearchQuery]     = useState('')
   const [dataLoading,     setDataLoading]     = useState(false)
   const [mobileMenuOpen,  setMobileMenuOpen]  = useState(false)
@@ -185,13 +194,19 @@ export default function App() {
   }, [])
 
   const handleViewChange = useCallback((newView) => {
-    setView(newView);
     if (newView === 'admin') {
-      window.history.pushState({}, '', '/admin');
+      if (role === 'admin') {
+        setView('admin');
+        window.history.pushState({}, '', '/admin');
+      } else {
+        setView('music');
+        window.history.replaceState({}, '', '/');
+      }
     } else {
+      setView(newView);
       window.history.pushState({}, '', '/');
     }
-  }, []);
+  }, [role]);
 
   const handleLogin = useCallback((tok, user, userRole) => {
     localStorage.setItem('sangita_token', tok)
@@ -293,11 +308,21 @@ export default function App() {
   // Sync view history with browser back/forward buttons
   useEffect(() => {
     const handlePopState = () => {
-      setView(window.location.pathname.startsWith('/admin') ? 'admin' : 'music');
+      const isAdminPath = window.location.pathname.startsWith('/admin');
+      if (isAdminPath) {
+        if (role === 'admin') {
+          setView('admin');
+        } else {
+          setView('music');
+          window.history.replaceState({}, '', '/');
+        }
+      } else {
+        setView('music');
+      }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [role]);
 
   // Redirect users who try to view /admin without admin permissions
   useEffect(() => {
@@ -421,21 +446,54 @@ export default function App() {
 
       if (trackChanged || justClaimed) {
         console.log('[SyncEffect] Loading track on active device', { trackChanged, justClaimed, targetPath })
-        const drift     = syncState.isPlaying ? Math.max(0, Date.now() - syncState.updatedAt) : 0
-        const targetSec = (syncState.positionMs + drift) / 1000
-        const applySeek = () => {
-          if (!audioRef.current) return
-          applyVolume();
-          audioRef.current.currentTime = Math.min(targetSec, audioRef.current.duration || 0)
-          if (syncState.isPlaying) audioRef.current.play().catch(console.error)
-          else audioRef.current.pause()
+        const drift     = syncState.isPlaying ? Math.max(0, Date.now() - (syncState.updatedAt || Date.now())) : 0
+        const targetSec = Math.max(0, ((syncState.positionMs || 0) + drift) / 1000)
+        
+        const applySeekAndPlay = () => {
+          const audio = audioRef.current
+          if (!audio) return
+          applyVolume()
+
+          const maxDur = isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Infinity
+          const seekTime = Math.min(targetSec, maxDur)
+          try {
+            audio.currentTime = seekTime
+          } catch (e) {
+            console.warn('[SyncEffect] Initial seek error:', e)
+          }
+
+          if (syncState.isPlaying) {
+            const p = audio.play()
+            if (p !== undefined) {
+              p.catch(err => {
+                console.warn('[SyncEffect] Auto-play prevented (gesture unlock needed):', err.message)
+                setIsLocalPlaying(false)
+              })
+            }
+          } else {
+            audio.pause()
+          }
         }
-        loadedTrackIdRef.current = targetPath;
+
+        loadedTrackIdRef.current = targetPath
         const t = localStorage.getItem('sangita_token') || ''
-        audioRef.current.src = `/api/stream/${encodeURIComponent(targetPath)}?token=${t}`
-        audioRef.current.addEventListener('loadedmetadata', applySeek, { once: true })
+        const expectedSrc = `/api/stream/${encodeURIComponent(targetPath)}?token=${t}`
+
+        if (audioRef.current.src && audioRef.current.src.endsWith(encodeURIComponent(targetPath) + `?token=${t}`)) {
+          applySeekAndPlay()
+        } else {
+          audioRef.current.src = expectedSrc
+          audioRef.current.addEventListener('loadedmetadata', applySeekAndPlay, { once: true })
+          audioRef.current.addEventListener('canplay', () => {
+            if (audioRef.current && Math.abs(audioRef.current.currentTime - targetSec) > 1.5 && targetSec > 0) {
+              try {
+                audioRef.current.currentTime = Math.min(targetSec, audioRef.current.duration || targetSec)
+              } catch (e) {}
+            }
+          }, { once: true })
+        }
       } else {
-        applyVolume();
+        applyVolume()
       }
     } else {
       wasActiveRef.current = false;
@@ -636,20 +694,37 @@ export default function App() {
   useEffect(() => {
     const tick = () => {
       const audio = audioRef.current
-      if (audio) {
-        const t = audio.currentTime || 0
-        const d = isFinite(audio.duration) ? audio.duration : 0
-        setCurrentTime(t); setDuration(d); setIsLocalPlaying(!audio.paused && !audio.ended)
-        if (d > 0) {
-          const track = indexRef.current >= 0 ? queueRef.current[indexRef.current] : null
-          if (track) setDurations(prev => prev[track.path] === d ? prev : { ...prev, [track.path]: d })
+      if (isActiveRef.current) {
+        if (audio) {
+          const t = audio.currentTime || 0
+          const d = isFinite(audio.duration) ? audio.duration : 0
+          setCurrentTime(t)
+          setDuration(d)
+          setIsLocalPlaying(!audio.paused && !audio.ended)
+          if (d > 0) {
+            const track = indexRef.current >= 0 ? queueRef.current[indexRef.current] : null
+            if (track) setDurations(prev => prev[track.path] === d ? prev : { ...prev, [track.path]: d })
+          }
+        }
+      } else {
+        // Remote/inactive device: smoothly interpolate position in real time
+        const s = syncStateRef.current
+        if (s) {
+          const drift = s.isPlaying ? Math.max(0, Date.now() - (s.updatedAt || Date.now())) : 0
+          const curMs = (s.positionMs || 0) + drift
+          const durMs = s.durationMs || 0
+          const t = Math.max(0, durMs > 0 ? Math.min(curMs, durMs) : curMs) / 1000
+          const d = durMs > 0 ? durMs / 1000 : (durations[s.trackId] || 0)
+          setCurrentTime(t)
+          if (d > 0) setDuration(d)
+          setIsLocalPlaying(false)
         }
       }
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-  }, [])
+  }, [durations])
 
 
   useEffect(() => {

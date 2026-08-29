@@ -237,13 +237,16 @@ io.on('connection', async (socket) => {
     }
   });
 
-  socket.on('TRANSFER_PLAYBACK', async ({ targetDeviceId }) => {
+  socket.on('TRANSFER_PLAYBACK', async ({ targetDeviceId, positionMs, durationMs }) => {
     if (!targetDeviceId) return;
     let state = await getState(userId) || {
       activeDeviceId: null, trackId: null,
       positionMs: 0, durationMs: 0, isPlaying: false, volume: 0.8, updatedAt: Date.now(),
     };
-    if (state.isPlaying && state.updatedAt) {
+    if (typeof positionMs === 'number' && !isNaN(positionMs) && positionMs >= 0) {
+      state.positionMs = positionMs;
+      if (typeof durationMs === 'number' && durationMs > 0) state.durationMs = durationMs;
+    } else if (state.isPlaying && state.updatedAt) {
       state.positionMs = Math.max(0, state.positionMs + (Date.now() - state.updatedAt));
     }
     state.activeDeviceId = targetDeviceId;

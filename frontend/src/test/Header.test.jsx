@@ -81,13 +81,13 @@ describe('Header Component & Theme Toggle', () => {
     expect(handleSearch).toHaveBeenCalledWith('')
   })
 
-  it('opens user profile dropdown and triggers logout', () => {
+  it('opens user profile dropdown and triggers logout without admin button', () => {
     const handleLogout = vi.fn()
     render(
       <Header
         view="music"
         onSelectView={vi.fn()}
-        isAdmin={false}
+        isAdmin={true}
         searchQuery=""
         onSearchChange={vi.fn()}
         theme="dark"
@@ -105,6 +105,7 @@ describe('Header Component & Theme Toggle', () => {
 
     const logoutBtn = screen.getByText('Sign Out')
     expect(logoutBtn).toBeInTheDocument()
+    expect(screen.queryByText('Admin Panel')).not.toBeInTheDocument()
 
     fireEvent.click(logoutBtn)
     expect(handleLogout).toHaveBeenCalledTimes(1)

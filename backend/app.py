@@ -1159,6 +1159,650 @@ def stats_ping():
     conn.close()
     return jsonify({"status": "ok"})
 
+@app.route("/api/admin/analytics", methods=["GET"])
+@require_admin
+def admin_get_analytics():
+    timeframe = request.args.get("timeframe", "7d")  # 24h, 7d, 30d, 90d, all, custom
+    start_str = request.args.get("start_date", "")
+    end_str = request.args.get("end_date", "")
+    
+    conn = get_db()
+    try:
+        now = datetime.now()
+        
+        # 1. Determine date range
+        if timeframe == "24h":
+            start_dt = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+            end_dt = now
+            group_type = "hourly"
+            num_slots = 24
+        elif timeframe == "7d":
+            start_dt = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end_dt = now
+            group_type = "daily"
+            num_slots = 7
+        elif timeframe == "30d":
+            start_dt = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end_dt = now
+            group_type = "daily"
+            num_slots = 30
+        elif timeframe == "90d":
+            start_dt = (now - timedelta(days=89)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end_dt = now
+            group_type = "daily"
+            num_slots = 90
+        elif timeframe == "all":
+            row_min = conn.execute("SELECT MIN(timestamp) as min_ts FROM play_events").fetchone()
+            if row_min and row_min["min_ts"]:
+                try:
+                    start_dt = datetime.strptime(row_min["min_ts"].split(".")[0], '%Y-%m-%d %H:%M:%S').replace(hour=0, minute=0, second=0)
+                except Exception:
+                    start_dt = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0)
+            else:
+                start_dt = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0)
+            end_dt = now
+            group_type = "daily"
+            num_slots = min((end_dt - start_dt).days + 1, 365)
+        else:  # custom
+            try:
+                if start_str and end_str:
+                    start_dt = datetime.strptime(start_str, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
+                    end_dt = datetime.strptime(end_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+                else:
+                    start_dt = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0)
+                    end_dt = now
+            except Exception:
+                start_dt = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0)
+                end_dt = now
+            if start_dt > end_dt:
+                start_dt, end_dt = end_dt, start_dt
+            days_diff = (end_dt - start_dt).days + 1
+            if days_diff <= 2:
+                group_type = "hourly"
+                num_slots = days_diff * 24
+            else:
+                group_type = "daily"
+                num_slots = min(days_diff, 365)
+
+        start_query_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+        end_query_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+        date_params = [start_query_str, end_query_str]
+
+        # 2. Executive KPIs
+        kpi_row = conn.execute("""
+            SELECT COALESCE(SUM(duration_sec), 0) as total_seconds,
+                   COUNT(id) as total_plays,
+                   COUNT(DISTINCT username) as unique_listeners,
+                   COUNT(DISTINCT device_id) as active_devices,
+                   COALESCE(AVG(duration_sec), 0) as avg_session_sec
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+        """, date_params).fetchone()
+
+        total_seconds = kpi_row["total_seconds"]
+        total_plays = kpi_row["total_plays"]
+        unique_listeners = kpi_row["unique_listeners"]
+        active_devices = kpi_row["active_devices"]
+        avg_session_sec = round(kpi_row["avg_session_sec"], 1)
+
+        # Average daily listening time per user
+        avg_daily_row = conn.execute("""
+            SELECT COALESCE(AVG(daily_user_sec), 0) as avg_daily_sec
+            FROM (
+                SELECT date(timestamp) as day, username, SUM(duration_sec) as daily_user_sec
+                FROM play_events
+                WHERE timestamp >= ? AND timestamp <= ?
+                GROUP BY day, username
+            )
+        """, date_params).fetchone()
+        avg_daily_seconds = round(avg_daily_row["avg_daily_sec"], 1)
+
+        # 3. Timeline Time-Series
+        timeline = []
+        if group_type == "hourly":
+            rows = conn.execute("""
+                SELECT strftime('%Y-%m-%d %H', timestamp) as slot_key,
+                       COALESCE(SUM(duration_sec), 0) as sec,
+                       COUNT(id) as plays,
+                       COUNT(DISTINCT username) as users
+                FROM play_events
+                WHERE timestamp >= ? AND timestamp <= ?
+                GROUP BY slot_key
+            """, date_params).fetchall()
+            row_dict = {r["slot_key"]: (r["sec"], r["plays"], r["users"]) for r in rows}
+
+            for i in range(num_slots):
+                slot_time = start_dt + timedelta(hours=i)
+                if slot_time > end_dt + timedelta(hours=1):
+                    break
+                slot_key = slot_time.strftime('%Y-%m-%d %H')
+                sec, plays, users = row_dict.get(slot_key, (0, 0, 0))
+                h = slot_time.hour
+                am_pm = "AM" if h < 12 else "PM"
+                h12 = 12 if h % 12 == 0 else h % 12
+                timeline.append({
+                    "key": slot_key,
+                    "label": f"{h12} {am_pm}",
+                    "full_label": slot_time.strftime('%b %d, %I:%M %p'),
+                    "seconds": sec,
+                    "minutes": round(sec / 60.0, 1),
+                    "hours": round(sec / 3600.0, 2),
+                    "plays": plays,
+                    "active_users": users
+                })
+        else:
+            rows = conn.execute("""
+                SELECT strftime('%Y-%m-%d', timestamp) as slot_key,
+                       COALESCE(SUM(duration_sec), 0) as sec,
+                       COUNT(id) as plays,
+                       COUNT(DISTINCT username) as users
+                FROM play_events
+                WHERE timestamp >= ? AND timestamp <= ?
+                GROUP BY slot_key
+            """, date_params).fetchall()
+            row_dict = {r["slot_key"]: (r["sec"], r["plays"], r["users"]) for r in rows}
+
+            for i in range(num_slots):
+                slot_time = start_dt + timedelta(days=i)
+                if slot_time > end_dt + timedelta(days=1):
+                    break
+                slot_key = slot_time.strftime('%Y-%m-%d')
+                sec, plays, users = row_dict.get(slot_key, (0, 0, 0))
+                timeline.append({
+                    "key": slot_key,
+                    "label": slot_time.strftime('%b %d') if num_slots > 7 else slot_time.strftime('%a'),
+                    "full_label": slot_time.strftime('%A, %b %d, %Y'),
+                    "seconds": sec,
+                    "minutes": round(sec / 60.0, 1),
+                    "hours": round(sec / 3600.0, 2),
+                    "plays": plays,
+                    "active_users": users
+                })
+
+        # 4. 24-Hour Diurnal Heatmap (Hourly Distribution across all days in timeframe)
+        hour_rows = conn.execute("""
+            SELECT CAST(strftime('%H', timestamp) AS INTEGER) as hr,
+                   COALESCE(SUM(duration_sec), 0) as total_sec,
+                   COUNT(id) as play_count
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+            GROUP BY hr
+        """, date_params).fetchall()
+        hour_dict = {r["hr"]: (r["total_sec"], r["play_count"]) for r in hour_rows}
+
+        hourly_distribution = []
+        max_hour_sec = 0
+        peak_hour_index = 0
+        for h in range(24):
+            sec, cnt = hour_dict.get(h, (0, 0))
+            if sec > max_hour_sec:
+                max_hour_sec = sec
+                peak_hour_index = h
+            am_pm = "AM" if h < 12 else "PM"
+            h12 = 12 if h % 12 == 0 else h % 12
+            pct = round((sec / total_seconds * 100), 1) if total_seconds > 0 else 0
+            hourly_distribution.append({
+                "hour": h,
+                "label": f"{h12} {am_pm}",
+                "full_label": f"{h12}:00 {am_pm} - {(h12 % 12) + 1}:00 {'PM' if (h + 1) >= 12 and (h + 1) < 24 else 'AM'}",
+                "seconds": sec,
+                "minutes": round(sec / 60.0, 1),
+                "hours": round(sec / 3600.0, 2),
+                "plays": cnt,
+                "percentage": pct
+            })
+
+        peak_h = peak_hour_index
+        peak_am_pm = "AM" if peak_h < 12 else "PM"
+        peak_h12 = 12 if peak_h % 12 == 0 else peak_h % 12
+        next_h = (peak_h + 1) % 24
+        next_am_pm = "AM" if next_h < 12 else "PM"
+        next_h12 = 12 if next_h % 12 == 0 else next_h % 12
+        
+        peak_hour_info = {
+            "hour": peak_h,
+            "label": f"{peak_h12}:00 {peak_am_pm} – {next_h12}:00 {next_am_pm}",
+            "seconds": max_hour_sec,
+            "hours": round(max_hour_sec / 3600.0, 2),
+            "percentage": round((max_hour_sec / total_seconds * 100), 1) if total_seconds > 0 else 0
+        }
+
+        # 5. Day of the Week Distribution (Mon to Sun)
+        # SQLite strftime('%w') returns 0=Sunday, 1=Monday... 6=Saturday
+        dow_rows = conn.execute("""
+            SELECT CAST(strftime('%w', timestamp) AS INTEGER) as dow,
+                   COALESCE(SUM(duration_sec), 0) as total_sec,
+                   COUNT(id) as play_count
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+            GROUP BY dow
+        """, date_params).fetchall()
+        dow_dict = {r["dow"]: (r["total_sec"], r["play_count"]) for r in dow_rows}
+
+        dow_order = [(1, "Mon", "Monday"), (2, "Tue", "Tuesday"), (3, "Wed", "Wednesday"),
+                     (4, "Thu", "Thursday"), (5, "Fri", "Friday"), (6, "Sat", "Saturday"), (0, "Sun", "Sunday")]
+        weekday_distribution = []
+        for dow_num, short_lbl, full_lbl in dow_order:
+            sec, cnt = dow_dict.get(dow_num, (0, 0))
+            pct = round((sec / total_seconds * 100), 1) if total_seconds > 0 else 0
+            weekday_distribution.append({
+                "dow": dow_num,
+                "label": short_lbl,
+                "full_label": full_lbl,
+                "seconds": sec,
+                "minutes": round(sec / 60.0, 1),
+                "hours": round(sec / 3600.0, 2),
+                "plays": cnt,
+                "percentage": pct
+            })
+
+        # 6. Peak vs Average Summary
+        total_timeframe_hours = max(1, int((end_dt - start_dt).total_seconds() / 3600.0))
+        avg_hourly_seconds = round(total_seconds / total_timeframe_hours, 1)
+        peak_vs_avg = {
+            "peak_hour_seconds": max_hour_sec,
+            "avg_hourly_seconds": avg_hourly_seconds,
+            "peak_vs_avg_ratio": round(max_hour_sec / max(1, avg_hourly_seconds), 2),
+            "total_active_hours": sum(1 for dp in hourly_distribution if dp["seconds"] > 0)
+        }
+
+        # 7. Top 20 Most Played Songs in Period
+        top_song_rows = conn.execute("""
+            SELECT track_id, playlist,
+                   SUM(duration_sec) as total_seconds,
+                   COUNT(id) as play_count,
+                   COUNT(DISTINCT username) as unique_listeners,
+                   MAX(timestamp) as last_played
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+            GROUP BY track_id, playlist
+            ORDER BY total_seconds DESC, play_count DESC
+            LIMIT 20
+        """, date_params).fetchall()
+
+        top_tracks = []
+        for r in top_song_rows:
+            track_path = r["track_id"]
+            base = os.path.basename(track_path)
+            clean_name = os.path.splitext(base)[0]
+            artist = "Unknown Artist"
+            if " - " in clean_name:
+                parts = clean_name.split(" - ", 1)
+                artist = parts[0].strip()
+                name = parts[1].strip()
+            else:
+                name = clean_name
+            top_tracks.append({
+                "track_id": track_path,
+                "name": name,
+                "artist": artist,
+                "playlist": r["playlist"] or "Library",
+                "total_seconds": r["total_seconds"],
+                "hours": round(r["total_seconds"] / 3600.0, 2),
+                "play_count": r["play_count"],
+                "unique_listeners": r["unique_listeners"],
+                "last_played": r["last_played"]
+            })
+
+        # 8. Top Artists Leaderboard in Period
+        artist_map = {}
+        all_period_events = conn.execute("""
+            SELECT track_id, duration_sec
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+        """, date_params).fetchall()
+        
+        for r in all_period_events:
+            base = os.path.basename(r["track_id"])
+            clean_name = os.path.splitext(base)[0]
+            art = clean_name.split(" - ", 1)[0].strip() if " - " in clean_name else "Unknown Artist"
+            if art not in artist_map:
+                artist_map[art] = {"artist": art, "total_seconds": 0, "play_count": 0, "tracks": set()}
+            artist_map[art]["total_seconds"] += r["duration_sec"]
+            artist_map[art]["play_count"] += 1
+            artist_map[art]["tracks"].add(r["track_id"])
+
+        top_artists = []
+        for art, data in sorted(artist_map.items(), key=lambda x: (x[1]["total_seconds"], x[1]["play_count"]), reverse=True)[:10]:
+            top_artists.append({
+                "artist": art,
+                "total_seconds": data["total_seconds"],
+                "hours": round(data["total_seconds"] / 3600.0, 2),
+                "play_count": data["play_count"],
+                "track_count": len(data["tracks"]),
+                "percentage": round((data["total_seconds"] / total_seconds * 100), 1) if total_seconds > 0 else 0
+            })
+
+        # 9. Top Playlists in Period
+        top_playlist_rows = conn.execute("""
+            SELECT COALESCE(playlist, 'Library') as playlist,
+                   SUM(duration_sec) as total_seconds,
+                   COUNT(id) as play_count,
+                   COUNT(DISTINCT track_id) as unique_tracks,
+                   COUNT(DISTINCT username) as unique_listeners
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+            GROUP BY playlist
+            ORDER BY total_seconds DESC
+            LIMIT 10
+        """, date_params).fetchall()
+        
+        top_playlists = [{
+            "playlist": r["playlist"],
+            "total_seconds": r["total_seconds"],
+            "hours": round(r["total_seconds"] / 3600.0, 2),
+            "play_count": r["play_count"],
+            "unique_tracks": r["unique_tracks"],
+            "unique_listeners": r["unique_listeners"],
+            "percentage": round((r["total_seconds"] / total_seconds * 100), 1) if total_seconds > 0 else 0
+        } for r in top_playlist_rows]
+
+        # 10. Platform & Device Breakdowns
+        device_rows = conn.execute("""
+            SELECT COALESCE(device_type, 'desktop') as device_type,
+                   SUM(duration_sec) as total_seconds,
+                   COUNT(id) as count
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+            GROUP BY device_type
+            ORDER BY total_seconds DESC
+        """, date_params).fetchall()
+        device_stats = [{
+            "device_type": r["device_type"],
+            "total_seconds": r["total_seconds"],
+            "count": r["count"],
+            "percentage": round((r["total_seconds"] / total_seconds * 100), 1) if total_seconds > 0 else 0
+        } for r in device_rows]
+
+        os_rows = conn.execute("""
+            SELECT COALESCE(os, 'Unknown') as os,
+                   SUM(duration_sec) as total_seconds,
+                   COUNT(id) as count
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+            GROUP BY os
+            ORDER BY total_seconds DESC
+        """, date_params).fetchall()
+        os_stats = [{
+            "os": r["os"],
+            "total_seconds": r["total_seconds"],
+            "count": r["count"],
+            "percentage": round((r["total_seconds"] / total_seconds * 100), 1) if total_seconds > 0 else 0
+        } for r in os_rows]
+
+        browser_rows = conn.execute("""
+            SELECT COALESCE(browser, 'Unknown') as browser,
+                   SUM(duration_sec) as total_seconds,
+                   COUNT(id) as count
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+            GROUP BY browser
+            ORDER BY total_seconds DESC
+        """, date_params).fetchall()
+        browser_stats = [{
+            "browser": r["browser"],
+            "total_seconds": r["total_seconds"],
+            "count": r["count"],
+            "percentage": round((r["total_seconds"] / total_seconds * 100), 1) if total_seconds > 0 else 0
+        } for r in browser_rows]
+
+        # 11. Audio Format Distribution from Music Directory & Cache
+        format_counts = {}
+        total_audio_files = 0
+        total_library_seconds = 0
+        for root, _, files in os.walk(MUSIC_DIR) if os.path.exists(MUSIC_DIR) else []:
+            for f in files:
+                ext = os.path.splitext(f)[1].lower()
+                if ext in AUDIO_EXTS:
+                    total_audio_files += 1
+                    format_name = ext.replace(".", "").upper()
+                    format_counts[format_name] = format_counts.get(format_name, 0) + 1
+
+        format_stats = []
+        for fmt, cnt in sorted(format_counts.items(), key=lambda x: x[1], reverse=True):
+            format_stats.append({
+                "format": fmt,
+                "count": cnt,
+                "percentage": round((cnt / total_audio_files * 100), 1) if total_audio_files > 0 else 0
+            })
+
+        # Cache duration aggregate
+        cache_dur_row = conn.execute("SELECT COUNT(*) as cache_cnt, COALESCE(SUM(duration), 0) as total_dur FROM track_cache").fetchone()
+        total_library_seconds = cache_dur_row["total_dur"] if cache_dur_row else 0
+
+        # 12. Real-time Live Sessions (Active in last 120s)
+        live_rows = conn.execute("""
+            SELECT id, username, track_id, playlist, device_id, device_name, device_type, browser, os, timestamp, duration_sec
+            FROM play_events
+            WHERE timestamp >= datetime('now', '-120 seconds')
+            ORDER BY timestamp DESC
+        """).fetchall()
+
+        live_sessions = []
+        for r in live_rows:
+            track_path = r["track_id"]
+            base = os.path.basename(track_path)
+            clean_name = os.path.splitext(base)[0]
+            artist = "Unknown Artist"
+            if " - " in clean_name:
+                parts = clean_name.split(" - ", 1)
+                artist = parts[0].strip()
+                name = parts[1].strip()
+            else:
+                name = clean_name
+
+            live_sessions.append({
+                "id": r["id"],
+                "username": r["username"],
+                "track_id": track_path,
+                "name": name,
+                "artist": artist,
+                "playlist": r["playlist"] or "Library",
+                "device_id": r["device_id"],
+                "device_name": r["device_name"],
+                "device_type": r["device_type"],
+                "browser": r["browser"],
+                "os": r["os"],
+                "timestamp": r["timestamp"],
+                "duration_sec": r["duration_sec"]
+            })
+
+        # 13. System Metrics
+        db_size = os.path.getsize(STATS_DB) if os.path.exists(STATS_DB) else 0
+        music_size = 0
+        if os.path.exists(MUSIC_DIR):
+            for root, _, files in os.walk(MUSIC_DIR):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    try:
+                        music_size += os.path.getsize(fp)
+                    except Exception:
+                        pass
+
+        users_count = len(load_users())
+        event_count = conn.execute("SELECT COUNT(*) as cnt FROM play_events").fetchone()["cnt"]
+
+        system_metrics = {
+            "total_tracks": total_audio_files,
+            "total_playlists": len(os.listdir(MUSIC_DIR)) if os.path.exists(MUSIC_DIR) else 0,
+            "total_library_seconds": round(total_library_seconds, 1),
+            "total_library_hours": round(total_library_seconds / 3600.0, 1),
+            "registered_users": users_count,
+            "recorded_events": event_count,
+            "db_size_bytes": db_size,
+            "music_size_bytes": music_size,
+            "cache_entries": cache_dur_row["cache_cnt"] if cache_dur_row else 0
+        }
+
+        return jsonify({
+            "timeframe": timeframe,
+            "start_date": start_query_str,
+            "end_date": end_query_str,
+            "kpis": {
+                "total_seconds": total_seconds,
+                "total_hours": round(total_seconds / 3600.0, 2),
+                "total_plays": total_plays,
+                "unique_listeners": unique_listeners,
+                "active_devices": active_devices,
+                "avg_daily_seconds": avg_daily_seconds,
+                "avg_daily_minutes": round(avg_daily_seconds / 60.0, 1),
+                "avg_session_seconds": avg_session_sec,
+                "avg_session_minutes": round(avg_session_sec / 60.0, 1),
+                "peak_hour": peak_hour_info,
+                "peak_vs_avg": peak_vs_avg
+            },
+            "timeline": timeline,
+            "hourly_distribution": hourly_distribution,
+            "weekday_distribution": weekday_distribution,
+            "top_tracks": top_tracks,
+            "top_artists": top_artists,
+            "top_playlists": top_playlists,
+            "device_stats": device_stats,
+            "os_stats": os_stats,
+            "browser_stats": browser_stats,
+            "format_stats": format_stats,
+            "live_sessions": live_sessions,
+            "system_metrics": system_metrics
+        })
+    finally:
+        conn.close()
+
+@app.route("/api/admin/logs", methods=["GET"])
+@require_admin
+def admin_get_logs():
+    page = max(1, int(request.args.get("page", 1)))
+    limit = min(200, max(10, int(request.args.get("limit", 50))))
+    offset = (page - 1) * limit
+    username_filter = request.args.get("username", "").strip()
+    playlist_filter = request.args.get("playlist", "").strip()
+    search = request.args.get("search", "").strip()
+
+    conn = get_db()
+    try:
+        where_clauses = ["1=1"]
+        params = []
+
+        if username_filter:
+            where_clauses.append("username = ?")
+            params.append(username_filter)
+        if playlist_filter:
+            where_clauses.append("playlist = ?")
+            params.append(playlist_filter)
+        if search:
+            where_clauses.append("(track_id LIKE ? OR device_name LIKE ? OR browser LIKE ? OR os LIKE ?)")
+            pattern = f"%{search}%"
+            params.extend([pattern, pattern, pattern, pattern])
+
+        where_sql = " AND ".join(where_clauses)
+        
+        count_row = conn.execute(f"SELECT COUNT(*) as cnt FROM play_events WHERE {where_sql}", params).fetchone()
+        total_count = count_row["cnt"] if count_row else 0
+
+        rows = conn.execute(f"""
+            SELECT id, username, track_id, playlist, device_id, device_name, device_type, browser, os, timestamp, duration_sec
+            FROM play_events
+            WHERE {where_sql}
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+        """, params + [limit, offset]).fetchall()
+
+        events = []
+        for r in rows:
+            track_path = r["track_id"]
+            base = os.path.basename(track_path)
+            clean_name = os.path.splitext(base)[0]
+            artist = "Unknown Artist"
+            if " - " in clean_name:
+                parts = clean_name.split(" - ", 1)
+                artist = parts[0].strip()
+                name = parts[1].strip()
+            else:
+                name = clean_name
+
+            events.append({
+                "id": r["id"],
+                "username": r["username"],
+                "track_id": track_path,
+                "name": name,
+                "artist": artist,
+                "playlist": r["playlist"] or "Library",
+                "device_id": r["device_id"],
+                "device_name": r["device_name"],
+                "device_type": r["device_type"],
+                "browser": r["browser"],
+                "os": r["os"],
+                "timestamp": r["timestamp"],
+                "duration_sec": r["duration_sec"]
+            })
+
+        return jsonify({
+            "events": events,
+            "total": total_count,
+            "page": page,
+            "limit": limit,
+            "total_pages": max(1, (total_count + limit - 1) // limit)
+        })
+    finally:
+        conn.close()
+
+@app.route("/api/admin/export", methods=["GET"])
+@require_admin
+def admin_export_csv():
+    import io
+    import csv
+    from flask import Response
+
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT id, timestamp, username, track_id, playlist, device_name, device_type, browser, os, duration_sec
+            FROM play_events
+            ORDER BY id DESC
+        """).fetchall()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Event ID", "Timestamp (UTC)", "Username", "Track Path", "Song Title", "Artist", "Playlist", "Device Name", "Device Type", "Browser", "Operating System", "Duration (Seconds)"])
+
+        for r in rows:
+            track_path = r["track_id"]
+            base = os.path.basename(track_path)
+            clean_name = os.path.splitext(base)[0]
+            artist = "Unknown Artist"
+            if " - " in clean_name:
+                parts = clean_name.split(" - ", 1)
+                artist = parts[0].strip()
+                name = parts[1].strip()
+            else:
+                name = clean_name
+
+            writer.writerow([
+                r["id"],
+                r["timestamp"],
+                r["username"],
+                track_path,
+                name,
+                artist,
+                r["playlist"] or "Library",
+                r["device_name"],
+                r["device_type"],
+                r["browser"],
+                r["os"],
+                r["duration_sec"]
+            ])
+
+        csv_data = output.getvalue()
+        return Response(
+            csv_data,
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=sangita_telemetry_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "Content-Type": "text/csv; charset=utf-8"
+            }
+        )
+    finally:
+        conn.close()
+
 @app.route("/api/admin/stats", methods=["GET"])
 @require_admin
 def admin_get_stats():
@@ -1286,17 +1930,21 @@ def get_user_stats(username):
         time_filter = "AND timestamp >= datetime('now', '-7 days')"
     elif timeframe == "30d":
         time_filter = "AND timestamp >= datetime('now', '-30 days')"
+    elif timeframe == "90d":
+        time_filter = "AND timestamp >= datetime('now', '-90 days')"
     elif timeframe == "custom" and start_date and end_date:
         time_filter = "AND timestamp >= ? AND timestamp <= ?"
         params.extend([f"{start_date} 00:00:00", f"{end_date} 23:59:59"])
         
     # 1. Total usage time in period
     total_time_row = conn.execute(f"""
-        SELECT SUM(duration_sec) as total_seconds
+        SELECT COALESCE(SUM(duration_sec), 0) as total_seconds,
+               COUNT(id) as total_plays
         FROM play_events
         WHERE username = ? {time_filter}
     """, params).fetchone()
     total_seconds = total_time_row["total_seconds"] or 0
+    total_plays = total_time_row["total_plays"] or 0
     
     # 2. Last activity / login
     last_login_row = conn.execute("""
@@ -1308,7 +1956,7 @@ def get_user_stats(username):
     
     # 3. Average daily use in period
     avg_daily_row = conn.execute(f"""
-        SELECT AVG(daily_sum) as avg_seconds
+        SELECT COALESCE(AVG(daily_sum), 0) as avg_seconds
         FROM (
             SELECT date(timestamp) as day, SUM(duration_sec) as daily_sum
             FROM play_events
@@ -1319,21 +1967,59 @@ def get_user_stats(username):
     avg_daily_seconds = avg_daily_row["avg_seconds"] or 0
     
     # 4. Most listened tracks in period
-    most_played = conn.execute(f"""
+    most_played_rows = conn.execute(f"""
         SELECT track_id, playlist, SUM(duration_sec) as total_seconds, COUNT(*) as pings
         FROM play_events
         WHERE username = ? {time_filter}
         GROUP BY track_id, playlist
         ORDER BY total_seconds DESC
-        LIMIT 5
+        LIMIT 10
     """, params).fetchall()
+
+    most_played = []
+    for r in most_played_rows:
+        track_path = r["track_id"]
+        base = os.path.basename(track_path)
+        clean_name = os.path.splitext(base)[0]
+        artist = "Unknown Artist"
+        if " - " in clean_name:
+            parts = clean_name.split(" - ", 1)
+            artist = parts[0].strip()
+            name = parts[1].strip()
+        else:
+            name = clean_name
+        most_played.append({
+            "track_id": track_path,
+            "name": name,
+            "artist": artist,
+            "playlist": r["playlist"] or "Library",
+            "total_seconds": r["total_seconds"],
+            "pings": r["pings"]
+        })
     
-    # 5. Graph Data: usage grouped by day or hour
+    # 5. Top artists for this user in period
+    user_artist_map = {}
+    user_period_events = conn.execute(f"""
+        SELECT track_id, duration_sec
+        FROM play_events
+        WHERE username = ? {time_filter}
+    """, params).fetchall()
+    for r in user_period_events:
+        base = os.path.basename(r["track_id"])
+        clean_name = os.path.splitext(base)[0]
+        art = clean_name.split(" - ", 1)[0].strip() if " - " in clean_name else "Unknown Artist"
+        if art not in user_artist_map:
+            user_artist_map[art] = {"artist": art, "total_seconds": 0, "play_count": 0}
+        user_artist_map[art]["total_seconds"] += r["duration_sec"]
+        user_artist_map[art]["play_count"] += 1
+
+    top_artists = sorted(user_artist_map.values(), key=lambda x: (x["total_seconds"], x["play_count"]), reverse=True)[:6]
+
+    # 6. Graph Data: usage grouped by day or hour
     graph_data = []
     if timeframe == "24h":
-        # Group by hour for the last 24 hours
         rows = conn.execute(f"""
-            SELECT strftime('%H:00', timestamp) as label, SUM(duration_sec) as seconds
+            SELECT strftime('%H:00', timestamp) as label, SUM(duration_sec) as seconds, COUNT(id) as plays
             FROM play_events
             WHERE username = ? {time_filter}
             GROUP BY label
@@ -1341,15 +2027,22 @@ def get_user_stats(username):
         """, params).fetchall()
         graph_data = [dict(r) for r in rows]
     else:
-        # Group by day
         rows = conn.execute(f"""
-            SELECT date(timestamp) as label, SUM(duration_sec) as seconds
+            SELECT date(timestamp) as label, SUM(duration_sec) as seconds, COUNT(id) as plays
             FROM play_events
             WHERE username = ? {time_filter}
             GROUP BY label
             ORDER BY label ASC
         """, params).fetchall()
         graph_data = [dict(r) for r in rows]
+
+    # 7. Device History
+    devices = conn.execute("""
+        SELECT device_id, device_name, device_type, browser, os, last_seen, total_seconds
+        FROM user_device_totals
+        WHERE username = ?
+        ORDER BY last_seen DESC
+    """, (username,)).fetchall()
         
     conn.close()
     
@@ -1358,10 +2051,13 @@ def get_user_stats(username):
         "role": u.get("role", "user"),
         "rules": u.get("rules", {"allowed_playlists": ["*"]}),
         "total_seconds": total_seconds,
+        "total_plays": total_plays,
         "avg_daily_seconds": avg_daily_seconds,
         "last_seen": last_seen,
-        "most_played": [dict(r) for r in most_played],
-        "graph_data": graph_data
+        "most_played": most_played,
+        "top_artists": top_artists,
+        "graph_data": graph_data,
+        "devices": [dict(r) for r in devices]
     })
 
 @app.route("/", defaults={"path": ""})
@@ -1374,3 +2070,4 @@ def serve_frontend(path):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
+

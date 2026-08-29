@@ -92,9 +92,8 @@ export default function Player({
 
   if (isRemote) {
     const remoteIsPlaying = !!syncState.isPlaying
-    const drift = remoteIsPlaying ? Math.max(0, Date.now() - (syncState.updatedAt || Date.now())) : 0
-    const remotePositionSec = ((syncState.positionMs || 0) + drift) / 1000
-    const remoteDurationSec = (syncState.durationMs || 0) / 1000
+    const remotePositionSec = currentTime
+    const remoteDurationSec = duration > 0 ? duration : ((syncState.durationMs || 0) / 1000)
     const remotePct = remoteDurationSec > 0 ? Math.min(100, (remotePositionSec / remoteDurationSec) * 100) : 0
 
     return (
