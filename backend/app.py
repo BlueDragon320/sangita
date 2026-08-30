@@ -5,7 +5,8 @@ import time
 import json
 import base64
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, abort, g
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -17,6 +18,34 @@ USERNAME   = os.environ.get("SANGITA_USER", "admin")
 PASSWORD   = os.environ.get("SANGITA_PASS", "sangita123")
 SECRET_KEY = os.environ.get("SECRET_KEY", "change-this-secret")
 TOKEN_TTL  = 86400 * 7
+
+DEFAULT_TIMEZONE = "Asia/Kolkata"
+
+def get_tz_from_request():
+    tz_name = request.args.get("tz") or request.headers.get("X-Timezone") or DEFAULT_TIMEZONE
+    try:
+        return ZoneInfo(tz_name), tz_name
+    except Exception:
+        return ZoneInfo(DEFAULT_TIMEZONE), DEFAULT_TIMEZONE
+
+def get_tz_offset_minutes(tz_obj, dt=None):
+    if dt is None:
+        dt = datetime.now(tz_obj)
+    offset = dt.utcoffset()
+    return int(offset.total_seconds() / 60) if offset else 0
+
+def format_tz_offset_sql(offset_minutes):
+    return f"{offset_minutes:+d} minutes"
+
+def format_timestamp_tz(ts_str, tz_obj):
+    if not ts_str:
+        return ""
+    try:
+        dt_utc = datetime.strptime(ts_str.split(".")[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        dt_local = dt_utc.astimezone(tz_obj)
+        return dt_local.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return ts_str
 
 AUDIO_EXTS = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus")
 
@@ -584,22 +613,26 @@ def get_user_listening_history():
     start_str = request.args.get("start", "")
     end_str = request.args.get("end", "")
     
+    tz_obj, tz_name = get_tz_from_request()
     conn = get_db()
     try:
-        now = datetime.now()
+        now = datetime.now(tz_obj)
+        offset_minutes = get_tz_offset_minutes(tz_obj, now)
+        offset_sql = format_tz_offset_sql(offset_minutes)
         data_points = []
         total_range_seconds = 0
         
         if range_type == "24h":
             cutoff = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+            cutoff_utc = cutoff.astimezone(timezone.utc)
             rows = conn.execute("""
-                SELECT strftime('%Y-%m-%d %H', timestamp) as hour_key,
+                SELECT strftime('%Y-%m-%d %H', datetime(timestamp, ?)) as hour_key,
                        SUM(duration_sec) as total_sec,
                        COUNT(id) as play_count
                 FROM play_events
                 WHERE username = ? AND timestamp >= ?
                 GROUP BY hour_key
-            """, (username, cutoff.strftime('%Y-%m-%d %H:%M:%S'))).fetchall()
+            """, (offset_sql, username, cutoff_utc.strftime('%Y-%m-%d %H:%M:%S'))).fetchall()
             
             row_dict = {r["hour_key"]: (r["total_sec"], r["play_count"]) for r in rows}
             
@@ -625,14 +658,15 @@ def get_user_listening_history():
                 
         elif range_type == "7d":
             cutoff = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+            cutoff_utc = cutoff.astimezone(timezone.utc)
             rows = conn.execute("""
-                SELECT strftime('%Y-%m-%d', timestamp) as day_key,
+                SELECT strftime('%Y-%m-%d', datetime(timestamp, ?)) as day_key,
                        SUM(duration_sec) as total_sec,
                        COUNT(id) as play_count
                 FROM play_events
                 WHERE username = ? AND timestamp >= ?
                 GROUP BY day_key
-            """, (username, cutoff.strftime('%Y-%m-%d %H:%M:%S'))).fetchall()
+            """, (offset_sql, username, cutoff_utc.strftime('%Y-%m-%d %H:%M:%S'))).fetchall()
             
             row_dict = {r["day_key"]: (r["total_sec"], r["play_count"]) for r in rows}
             
@@ -654,8 +688,8 @@ def get_user_listening_history():
         else: # custom or 30d
             try:
                 if start_str and end_str:
-                    start_dt = datetime.strptime(start_str, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
-                    end_dt = datetime.strptime(end_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+                    start_dt = datetime.strptime(start_str, '%Y-%m-%d').replace(hour=0, minute=0, second=0, tzinfo=tz_obj)
+                    end_dt = datetime.strptime(end_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59, tzinfo=tz_obj)
                 else:
                     start_dt = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0)
                     end_dt = now
@@ -667,15 +701,17 @@ def get_user_listening_history():
                 start_dt, end_dt = end_dt, start_dt
                 
             days_diff = min((end_dt - start_dt).days + 1, 90)
+            start_utc = start_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            end_utc = end_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             
             rows = conn.execute("""
-                SELECT strftime('%Y-%m-%d', timestamp) as day_key,
+                SELECT strftime('%Y-%m-%d', datetime(timestamp, ?)) as day_key,
                        SUM(duration_sec) as total_sec,
                        COUNT(id) as play_count
                 FROM play_events
                 WHERE username = ? AND timestamp >= ? AND timestamp <= ?
                 GROUP BY day_key
-            """, (username, start_dt.strftime('%Y-%m-%d %H:%M:%S'), end_dt.strftime('%Y-%m-%d %H:%M:%S'))).fetchall()
+            """, (offset_sql, username, start_utc, end_utc)).fetchall()
             
             row_dict = {r["day_key"]: (r["total_sec"], r["play_count"]) for r in rows}
             
@@ -696,6 +732,7 @@ def get_user_listening_history():
                 
         return jsonify({
             "range": range_type,
+            "timezone": tz_name,
             "total_seconds": total_range_seconds,
             "data": data_points
         })
@@ -1166,9 +1203,12 @@ def admin_get_analytics():
     start_str = request.args.get("start_date", "")
     end_str = request.args.get("end_date", "")
     
+    tz_obj, tz_name = get_tz_from_request()
     conn = get_db()
     try:
-        now = datetime.now()
+        now = datetime.now(tz_obj)
+        offset_minutes = get_tz_offset_minutes(tz_obj, now)
+        offset_sql = format_tz_offset_sql(offset_minutes)
         
         # 1. Determine date range
         if timeframe == "24h":
@@ -1195,7 +1235,8 @@ def admin_get_analytics():
             row_min = conn.execute("SELECT MIN(timestamp) as min_ts FROM play_events").fetchone()
             if row_min and row_min["min_ts"]:
                 try:
-                    start_dt = datetime.strptime(row_min["min_ts"].split(".")[0], '%Y-%m-%d %H:%M:%S').replace(hour=0, minute=0, second=0)
+                    dt_utc = datetime.strptime(row_min["min_ts"].split(".")[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                    start_dt = dt_utc.astimezone(tz_obj).replace(hour=0, minute=0, second=0)
                 except Exception:
                     start_dt = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0)
             else:
@@ -1206,8 +1247,8 @@ def admin_get_analytics():
         else:  # custom
             try:
                 if start_str and end_str:
-                    start_dt = datetime.strptime(start_str, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
-                    end_dt = datetime.strptime(end_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+                    start_dt = datetime.strptime(start_str, '%Y-%m-%d').replace(hour=0, minute=0, second=0, tzinfo=tz_obj)
+                    end_dt = datetime.strptime(end_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59, tzinfo=tz_obj)
                 else:
                     start_dt = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0)
                     end_dt = now
@@ -1224,9 +1265,11 @@ def admin_get_analytics():
                 group_type = "daily"
                 num_slots = min(days_diff, 365)
 
+        start_utc = start_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        end_utc = end_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         start_query_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
         end_query_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
-        date_params = [start_query_str, end_query_str]
+        date_params = [start_utc, end_utc]
 
         # 2. Executive KPIs
         kpi_row = conn.execute("""
@@ -1249,26 +1292,26 @@ def admin_get_analytics():
         avg_daily_row = conn.execute("""
             SELECT COALESCE(AVG(daily_user_sec), 0) as avg_daily_sec
             FROM (
-                SELECT date(timestamp) as day, username, SUM(duration_sec) as daily_user_sec
+                SELECT date(datetime(timestamp, ?)) as day, username, SUM(duration_sec) as daily_user_sec
                 FROM play_events
                 WHERE timestamp >= ? AND timestamp <= ?
                 GROUP BY day, username
             )
-        """, date_params).fetchone()
+        """, [offset_sql, start_utc, end_utc]).fetchone()
         avg_daily_seconds = round(avg_daily_row["avg_daily_sec"], 1)
 
         # 3. Timeline Time-Series
         timeline = []
         if group_type == "hourly":
             rows = conn.execute("""
-                SELECT strftime('%Y-%m-%d %H', timestamp) as slot_key,
+                SELECT strftime('%Y-%m-%d %H', datetime(timestamp, ?)) as slot_key,
                        COALESCE(SUM(duration_sec), 0) as sec,
                        COUNT(id) as plays,
                        COUNT(DISTINCT username) as users
                 FROM play_events
                 WHERE timestamp >= ? AND timestamp <= ?
                 GROUP BY slot_key
-            """, date_params).fetchall()
+            """, [offset_sql, start_utc, end_utc]).fetchall()
             row_dict = {r["slot_key"]: (r["sec"], r["plays"], r["users"]) for r in rows}
 
             for i in range(num_slots):
@@ -1292,14 +1335,14 @@ def admin_get_analytics():
                 })
         else:
             rows = conn.execute("""
-                SELECT strftime('%Y-%m-%d', timestamp) as slot_key,
+                SELECT strftime('%Y-%m-%d', datetime(timestamp, ?)) as slot_key,
                        COALESCE(SUM(duration_sec), 0) as sec,
                        COUNT(id) as plays,
                        COUNT(DISTINCT username) as users
                 FROM play_events
                 WHERE timestamp >= ? AND timestamp <= ?
                 GROUP BY slot_key
-            """, date_params).fetchall()
+            """, [offset_sql, start_utc, end_utc]).fetchall()
             row_dict = {r["slot_key"]: (r["sec"], r["plays"], r["users"]) for r in rows}
 
             for i in range(num_slots):
@@ -1321,13 +1364,62 @@ def admin_get_analytics():
 
         # 4. 24-Hour Diurnal Heatmap (Hourly Distribution across all days in timeframe)
         hour_rows = conn.execute("""
-            SELECT CAST(strftime('%H', timestamp) AS INTEGER) as hr,
+            SELECT CAST(strftime('%H', datetime(timestamp, ?)) AS INTEGER) as hr,
                    COALESCE(SUM(duration_sec), 0) as total_sec,
                    COUNT(id) as play_count
             FROM play_events
             WHERE timestamp >= ? AND timestamp <= ?
             GROUP BY hr
-        """, date_params).fetchall()
+        """, [offset_sql, start_utc, end_utc]).fetchall()
+        hour_dict = {r["hr"]: (r["total_sec"], r["play_count"]) for r in hour_rows}
+
+        hourly_distribution = []
+        max_hour_sec = 0
+        peak_hour_index = 0
+        for h in range(24):
+            sec, cnt = hour_dict.get(h, (0, 0))
+            if sec > max_hour_sec:
+                max_hour_sec = sec
+                peak_hour_index = h
+            am_pm = "AM" if h < 12 else "PM"
+            h12 = 12 if h % 12 == 0 else h % 12
+            pct = round((sec / total_seconds * 100), 1) if total_seconds > 0 else 0
+            hourly_distribution.append({
+                "hour": h,
+                "label": f"{h12} {am_pm}",
+                "full_label": f"{h12}:00 {am_pm} - {(h12 % 12) + 1}:00 {'PM' if (h + 1) >= 12 and (h + 1) < 24 else 'AM'}",
+                "seconds": sec,
+                "minutes": round(sec / 60.0, 1),
+                "hours": round(sec / 3600.0, 2),
+                "plays": cnt,
+                "percentage": pct
+            })
+
+        peak_h = peak_hour_index
+        peak_am_pm = "AM" if peak_h < 12 else "PM"
+        peak_h12 = 12 if peak_h % 12 == 0 else peak_h % 12
+        next_h = (peak_h + 1) % 24
+        next_am_pm = "AM" if next_h < 12 else "PM"
+        next_h12 = 12 if next_h % 12 == 0 else next_h % 12
+        
+        peak_hour_info = {
+            "hour": peak_h,
+            "label": f"{peak_h12}:00 {peak_am_pm} – {next_h12}:00 {next_am_pm}",
+            "seconds": max_hour_sec,
+            "hours": round(max_hour_sec / 3600.0, 2),
+            "percentage": round((max_hour_sec / total_seconds * 100), 1) if total_seconds > 0 else 0
+        }
+
+        # 5. Day of the Week Distribution (Mon to Sun)
+        # SQLite strftime('%w') returns 0=Sunday, 1=Monday... 6=Saturday
+        dow_rows = conn.execute("""
+            SELECT CAST(strftime('%w', datetime(timestamp, ?)) AS INTEGER) as dow,
+                   COALESCE(SUM(duration_sec), 0) as total_sec,
+                   COUNT(id) as play_count
+            FROM play_events
+            WHERE timestamp >= ? AND timestamp <= ?
+            GROUP BY dow
+        """, [offset_sql, start_utc, end_utc]).fetchall()
         hour_dict = {r["hr"]: (r["total_sec"], r["play_count"]) for r in hour_rows}
 
         hourly_distribution = []
@@ -1662,7 +1754,8 @@ def admin_get_analytics():
             "browser_stats": browser_stats,
             "format_stats": format_stats,
             "live_sessions": live_sessions,
-            "system_metrics": system_metrics
+            "system_metrics": system_metrics,
+            "timezone": tz_name
         })
     finally:
         conn.close()
@@ -1752,6 +1845,7 @@ def admin_export_csv():
     import csv
     from flask import Response
 
+    tz_obj, tz_name = get_tz_from_request()
     conn = get_db()
     try:
         rows = conn.execute("""
@@ -1762,7 +1856,7 @@ def admin_export_csv():
 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["Event ID", "Timestamp (UTC)", "Username", "Track Path", "Song Title", "Artist", "Playlist", "Device Name", "Device Type", "Browser", "Operating System", "Duration (Seconds)"])
+        writer.writerow(["Event ID", f"Timestamp ({tz_name})", "Username", "Track Path", "Song Title", "Artist", "Playlist", "Device Name", "Device Type", "Browser", "Operating System", "Duration (Seconds)"])
 
         for r in rows:
             track_path = r["track_id"]
@@ -1778,7 +1872,7 @@ def admin_export_csv():
 
             writer.writerow([
                 r["id"],
-                r["timestamp"],
+                format_timestamp_tz(r["timestamp"], tz_obj),
                 r["username"],
                 track_path,
                 name,
@@ -1796,7 +1890,7 @@ def admin_export_csv():
             csv_data,
             mimetype="text/csv",
             headers={
-                "Content-Disposition": f"attachment; filename=sangita_telemetry_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "Content-Disposition": f"attachment; filename=sangita_telemetry_{datetime.now(tz_obj).strftime('%Y%m%d_%H%M%S')}.csv",
                 "Content-Type": "text/csv; charset=utf-8"
             }
         )
@@ -1828,40 +1922,37 @@ def admin_get_stats():
     # 2. Most Played Songs (by listening time)
     if username:
         most_played = conn.execute("""
-            SELECT track_id, playlist, total_seconds, play_count as pings
+            SELECT track_id, playlist, total_seconds, play_count
             FROM user_track_totals
             WHERE username = ?
-            ORDER BY total_seconds DESC
+            ORDER BY total_seconds DESC, play_count DESC
             LIMIT 10
         """, (username,)).fetchall()
     else:
         most_played = conn.execute("""
-            SELECT track_id, playlist, SUM(total_seconds) as total_seconds, SUM(play_count) as pings
+            SELECT track_id, playlist, SUM(total_seconds) as total_seconds, SUM(play_count) as play_count
             FROM user_track_totals
             GROUP BY track_id, playlist
-            ORDER BY total_seconds DESC
+            ORDER BY total_seconds DESC, play_count DESC
             LIMIT 10
         """).fetchall()
     
-    # 3. Usage by Device Type / Browser / OS
+    # 3. Platform and Browser Breakdown
     if username:
         device_stats = conn.execute("""
-            SELECT device_type, SUM(total_seconds) as total_seconds
+            SELECT device_type, total_seconds
             FROM user_device_totals
             WHERE username = ?
-            GROUP BY device_type
         """, (username,)).fetchall()
         browser_stats = conn.execute("""
-            SELECT browser, SUM(total_seconds) as total_seconds
+            SELECT browser, total_seconds
             FROM user_device_totals
             WHERE username = ?
-            GROUP BY browser
         """, (username,)).fetchall()
         os_stats = conn.execute("""
-            SELECT os, SUM(total_seconds) as total_seconds
+            SELECT os, total_seconds
             FROM user_device_totals
             WHERE username = ?
-            GROUP BY os
         """, (username,)).fetchall()
     else:
         device_stats = conn.execute("""
@@ -1920,21 +2011,42 @@ def get_user_stats(username):
     start_date = request.args.get("start_date", "")
     end_date = request.args.get("end_date", "")
     
+    tz_obj, tz_name = get_tz_from_request()
+    now = datetime.now(tz_obj)
+    offset_minutes = get_tz_offset_minutes(tz_obj, now)
+    offset_sql = format_tz_offset_sql(offset_minutes)
+
     conn = get_db()
     time_filter = ""
     params = [username]
     
     if timeframe == "24h":
-        time_filter = "AND timestamp >= datetime('now', '-24 hours')"
+        start_dt = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+        start_utc = start_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        time_filter = "AND timestamp >= ?"
+        params.append(start_utc)
     elif timeframe == "7d":
-        time_filter = "AND timestamp >= datetime('now', '-7 days')"
+        start_dt = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_utc = start_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        time_filter = "AND timestamp >= ?"
+        params.append(start_utc)
     elif timeframe == "30d":
-        time_filter = "AND timestamp >= datetime('now', '-30 days')"
+        start_dt = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_utc = start_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        time_filter = "AND timestamp >= ?"
+        params.append(start_utc)
     elif timeframe == "90d":
-        time_filter = "AND timestamp >= datetime('now', '-90 days')"
+        start_dt = (now - timedelta(days=89)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_utc = start_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        time_filter = "AND timestamp >= ?"
+        params.append(start_utc)
     elif timeframe == "custom" and start_date and end_date:
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d').replace(hour=0, minute=0, second=0, tzinfo=tz_obj)
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59, tzinfo=tz_obj)
+        start_utc = start_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        end_utc = end_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         time_filter = "AND timestamp >= ? AND timestamp <= ?"
-        params.extend([f"{start_date} 00:00:00", f"{end_date} 23:59:59"])
+        params.extend([start_utc, end_utc])
         
     # 1. Total usage time in period
     total_time_row = conn.execute(f"""
@@ -1958,12 +2070,12 @@ def get_user_stats(username):
     avg_daily_row = conn.execute(f"""
         SELECT COALESCE(AVG(daily_sum), 0) as avg_seconds
         FROM (
-            SELECT date(timestamp) as day, SUM(duration_sec) as daily_sum
+            SELECT date(datetime(timestamp, ?)) as day, SUM(duration_sec) as daily_sum
             FROM play_events
             WHERE username = ? {time_filter}
-            GROUP BY date(timestamp)
+            GROUP BY day
         )
-    """, params).fetchone()
+    """, [offset_sql] + params).fetchone()
     avg_daily_seconds = avg_daily_row["avg_seconds"] or 0
     
     # 4. Most listened tracks in period
@@ -2019,21 +2131,21 @@ def get_user_stats(username):
     graph_data = []
     if timeframe == "24h":
         rows = conn.execute(f"""
-            SELECT strftime('%H:00', timestamp) as label, SUM(duration_sec) as seconds, COUNT(id) as plays
-            FROM play_events
-            WHERE username = ? {time_filter}
-            GROUP BY label
-            ORDER BY timestamp ASC
-        """, params).fetchall()
-        graph_data = [dict(r) for r in rows]
-    else:
-        rows = conn.execute(f"""
-            SELECT date(timestamp) as label, SUM(duration_sec) as seconds, COUNT(id) as plays
+            SELECT strftime('%H:00', datetime(timestamp, ?)) as label, SUM(duration_sec) as seconds, COUNT(id) as plays
             FROM play_events
             WHERE username = ? {time_filter}
             GROUP BY label
             ORDER BY label ASC
-        """, params).fetchall()
+        """, [offset_sql] + params).fetchall()
+        graph_data = [dict(r) for r in rows]
+    else:
+        rows = conn.execute(f"""
+            SELECT date(datetime(timestamp, ?)) as label, SUM(duration_sec) as seconds, COUNT(id) as plays
+            FROM play_events
+            WHERE username = ? {time_filter}
+            GROUP BY label
+            ORDER BY label ASC
+        """, [offset_sql] + params).fetchall()
         graph_data = [dict(r) for r in rows]
 
     # 7. Device History
@@ -2050,6 +2162,7 @@ def get_user_stats(username):
         "username": username,
         "role": u.get("role", "user"),
         "rules": u.get("rules", {"allowed_playlists": ["*"]}),
+        "timezone": tz_name,
         "total_seconds": total_seconds,
         "total_plays": total_plays,
         "avg_daily_seconds": avg_daily_seconds,

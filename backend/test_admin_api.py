@@ -61,12 +61,34 @@ class TestAdminAPI(unittest.TestCase):
         self.assertIn('total', data)
         self.assertIn('page', data)
 
+    def test_timezone_analytics(self):
+        headers = {'Authorization': f'Bearer {self.admin_token}'}
+        
+        # Default IST
+        res = self.client.get('/api/admin/analytics?timeframe=24h', headers=headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data.get('timezone'), 'Asia/Kolkata')
+        
+        # Explicit UTC
+        res = self.client.get('/api/admin/analytics?timeframe=24h&tz=UTC', headers=headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data.get('timezone'), 'UTC')
+
+        # User listening history with timezone
+        user_headers = {'Authorization': f'Bearer {self.user_token}'}
+        res = self.client.get('/api/user/listening-history?range=24h&tz=Asia/Kolkata', headers=user_headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data.get('timezone'), 'Asia/Kolkata')
+
     def test_export_endpoint(self):
         headers = {'Authorization': f'Bearer {self.admin_token}'}
-        res = self.client.get('/api/admin/export', headers=headers)
+        res = self.client.get('/api/admin/export?tz=Asia/Kolkata', headers=headers)
         self.assertEqual(res.status_code, 200)
         self.assertIn('text/csv', res.content_type)
-        self.assertIn(b'Event ID,Timestamp', res.data)
+        self.assertIn(b'Timestamp (Asia/Kolkata)', res.data)
 
     def test_user_management(self):
         headers = {'Authorization': f'Bearer {self.admin_token}'}

@@ -75,10 +75,22 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
       });
     });
     socket.on('connect_error', (err) => console.warn('[Sync] connect error:', err.message));
-    socket.on('DEVICE_LIST_UPDATED', ({ devices: list }) => setDevices(list || []));
+    socket.on('DEVICE_LIST_UPDATED', ({ devices: list }) => {
+      const curList = list || [];
+      setDevices(curList);
+      setSyncState(prev => {
+        if (!prev) return prev;
+        const activeOnline = curList.some(d => d.deviceId === prev.activeDeviceId);
+        if ((!activeOnline || curList.length === 1) && curList.some(d => d.deviceId === deviceId.current)) {
+          setIsActiveDevice(true);
+          return { ...prev, activeDeviceId: deviceId.current, updatedAt: Date.now() };
+        }
+        return prev;
+      });
+    });
     socket.on('PLAYBACK_STATE_CHANGED', (state) => {
       setSyncState(state);
-      const amActive = state.activeDeviceId === deviceId.current;
+      const amActive = !state?.activeDeviceId || state.activeDeviceId === deviceId.current;
       setIsActiveDevice(amActive);
       if (!amActive && audioRef.current && !audioRef.current.paused) {
         audioRef.current.pause();

@@ -786,7 +786,7 @@ export default function App() {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
     const devs = devicesRef.current || [];
-    const isRemoteOnline = sState?.activeDeviceId && devs.some(d => d.deviceId === sState.activeDeviceId);
+    const isRemoteOnline = sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId() && devs.some(d => d.deviceId === sState.activeDeviceId);
     console.log('[internalPlayTrack] isAct:', isAct, 'isRemoteOnline:', isRemoteOnline, 'track:', track.path, 'index:', index, 'forceLocal:', forceLocal);
 
     const isLocal = forceLocal === true;
@@ -863,7 +863,7 @@ export default function App() {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
     const devs = devicesRef.current || [];
-    const isRemoteOnline = sState?.activeDeviceId && devs.some(d => d.deviceId === sState.activeDeviceId);
+    const isRemoteOnline = sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId() && devs.some(d => d.deviceId === sState.activeDeviceId);
     
     // Ensure we only force play/pause if forcePlay is explicitly a boolean (ignores React click event objects)
     const shouldForce = typeof forcePlay === 'boolean' ? forcePlay : undefined;

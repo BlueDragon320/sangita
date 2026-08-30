@@ -45,17 +45,17 @@
 }
 
 [data-theme="light"] {
-  --bg:           #F4F4F5;
-  --surface:      #FFFFFF;
-  --surface-hi:   #FAFAFA;
-  --card:         #F4F4F5;
-  --card-hover:   #E4E4E7;
+  --bg:           #e4e5f1;
+  --surface:      #d2d3db;
+  --surface-hi:   #dbdce5;
+  --card:         #d2d3db;
+  --card-hover:   #c4c5cf;
   --border:       rgba(0, 0, 0, 0.08);
   --border-hi:    rgba(0, 0, 0, 0.16);
-  --zinc-accent:  #E4E4E7;
-  --zinc-500:     #52525B;
-  --zinc-400:     #71717A;
-  --zinc-300:     #A1A1AA;
+  --zinc-accent:  #c4c5cf;
+  --zinc-500:     #4b4c53;
+  --zinc-400:     #676870;
+  --zinc-300:     #888992;
   --emerald:      #059669;
   --emerald-hi:   #10B981;
   --emerald-dim:  #047857;
@@ -64,11 +64,11 @@
   --accent-dim:   #047857;
   --accent-glow:  rgba(0, 0, 0, 0.06);
   --text:         #18181B;
-  --text-sub:     #52525B;
-  --text-dim:     #71717A;
+  --text-sub:     #4b4c53;
+  --text-dim:     #676870;
   --red:          #DC2626;
-  --player-bg:    #FFFFFF;
-  --shadow-main:  0 20px 40px -15px rgba(0, 0, 0, 0.08);
+  --player-bg:    #d2d3db;
+  --shadow-main:  0 20px 40px -15px rgba(0, 0, 0, 0.12);
 }
 
 :root {
@@ -887,7 +887,7 @@ input, button, select, textarea {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: var(--emerald);
+  background: #FFFFFF;
   color: #000000;
   border: none;
   display: flex;
@@ -896,7 +896,7 @@ input, button, select, textarea {
   opacity: 0;
   transform: scale(0.85);
   transition: all 0.3s var(--ease-smooth);
-  box-shadow: 0 4px 12px var(--accent-glow);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
   cursor: pointer;
 }
 
@@ -906,7 +906,7 @@ input, button, select, textarea {
 }
 
 .quick-card-play:hover {
-  background: var(--emerald-hi);
+  background: #F4F4F5;
   transform: scale(1.1);
 }
 
@@ -1103,7 +1103,7 @@ input, button, select, textarea {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: #1ed760;
+  background: #FFFFFF;
   border: none;
   color: #000000;
   display: flex;
@@ -1116,7 +1116,7 @@ input, button, select, textarea {
 
 .btn-hero-play:hover {
   transform: scale(1.06);
-  background: #1fdf64;
+  background: #F4F4F5;
 }
 
 .btn-action-icon {

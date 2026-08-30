@@ -317,4 +317,37 @@ describe('AdminDashboard Component', () => {
     fireEvent.click(screen.getByTestId('metric-btn-plays'))
     expect(screen.getByTestId('metric-btn-plays')).toHaveClass('active')
   })
+
+  it('allows selecting timezone preference and persists to localStorage', async () => {
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-tz-select')).toBeInTheDocument()
+    })
+
+    const tzSelect = screen.getByTestId('admin-tz-select')
+    expect(tzSelect.value).toBe('Asia/Kolkata')
+
+    // Change to UTC
+    fireEvent.change(tzSelect, { target: { value: 'UTC' } })
+    expect(tzSelect.value).toBe('UTC')
+    expect(localStorage.getItem('sangita_timezone')).toBe('UTC')
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('tz=UTC'),
+        expect.anything()
+      )
+    })
+  })
 })

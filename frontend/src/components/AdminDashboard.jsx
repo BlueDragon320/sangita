@@ -28,6 +28,29 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`
 }
 
+function formatTimestamp(ts, tz = 'Asia/Kolkata') {
+  if (!ts) return 'Never'
+  try {
+    const raw = ts.endsWith('Z') ? ts : ts + 'Z'
+    return new Date(raw).toLocaleString('en-US', {
+      timeZone: tz,
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    })
+  } catch (e) {
+    try {
+      return new Date(ts).toLocaleString('en-US', { timeZone: tz })
+    } catch {
+      return ts
+    }
+  }
+}
+
 // Icons
 const BackIcon = () => (
   <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
@@ -102,6 +125,21 @@ export default function AdminDashboard({
   // Navigation Tabs: 'analytics', 'music', 'live', 'users', 'system'
   const [activeTab, setActiveTab] = useState('analytics')
   
+  // Timezone State (defaults to 'Asia/Kolkata' = IST)
+  const [timezone, setTimezone] = useState(() => localStorage.getItem('sangita_timezone') || 'Asia/Kolkata')
+  const browserTz = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+    } catch {
+      return 'Asia/Kolkata'
+    }
+  }, [])
+  const effectiveTz = timezone === 'auto' ? browserTz : (timezone || 'Asia/Kolkata')
+
+  useEffect(() => {
+    localStorage.setItem('sangita_timezone', timezone)
+  }, [timezone])
+
   // Analytics State
   const [timeframe, setTimeframe] = useState('7d')
   const [customStartDate, setCustomStartDate] = useState('')
@@ -155,7 +193,7 @@ export default function AdminDashboard({
     setAnalyticsLoading(true)
     setError('')
     try {
-      let url = `/api/admin/analytics?timeframe=${timeframe}`
+      let url = `/api/admin/analytics?timeframe=${timeframe}&tz=${encodeURIComponent(effectiveTz)}`
       if (timeframe === 'custom' && customStartDate && customEndDate) {
         url += `&start_date=${customStartDate}&end_date=${customEndDate}`
       }
@@ -168,7 +206,7 @@ export default function AdminDashboard({
     } finally {
       setAnalyticsLoading(false)
     }
-  }, [token, timeframe, customStartDate, customEndDate])
+  }, [token, timeframe, customStartDate, customEndDate, effectiveTz])
 
   // Fetch Users
   const fetchUsers = useCallback(async () => {
@@ -213,7 +251,7 @@ export default function AdminDashboard({
     if (!token || !username) return
     setAnalyticsLoading(true)
     try {
-      let url = `/api/admin/users/${encodeURIComponent(username)}/stats?timeframe=${tf}`
+      let url = `/api/admin/users/${encodeURIComponent(username)}/stats?timeframe=${tf}&tz=${encodeURIComponent(effectiveTz)}`
       if (tf === 'custom' && start && end) {
         url += `&start_date=${start}&end_date=${end}`
       }
@@ -226,7 +264,7 @@ export default function AdminDashboard({
     } finally {
       setAnalyticsLoading(false)
     }
-  }, [token])
+  }, [token, effectiveTz])
 
   // Initial and reactive effects
   useEffect(() => {
@@ -378,7 +416,7 @@ export default function AdminDashboard({
   }
 
   const handleExportCSV = () => {
-    window.open(`/api/admin/export?token=${encodeURIComponent(token)}`, '_blank')
+    window.open(`/api/admin/export?token=${encodeURIComponent(token)}&tz=${encodeURIComponent(effectiveTz)}`, '_blank')
   }
 
   // Interactive Primary Time-Series Chart Component
@@ -605,12 +643,30 @@ export default function AdminDashboard({
       {/* Styles */}
       <style>{`
         .admin-layout {
+          height: 100vh;
           min-height: 100vh;
+          overflow-y: auto;
+          overflow-x: hidden;
           background-color: var(--bg);
           color: var(--text);
           font-family: 'Inter', sans-serif;
           display: flex;
           flex-direction: column;
+          scroll-behavior: smooth;
+        }
+
+        .admin-layout::-webkit-scrollbar {
+          width: 8px;
+        }
+        .admin-layout::-webkit-scrollbar-track {
+          background: var(--bg);
+        }
+        .admin-layout::-webkit-scrollbar-thumb {
+          background: var(--border);
+          border-radius: 4px;
+        }
+        .admin-layout::-webkit-scrollbar-thumb:hover {
+          background: var(--border-hi);
         }
 
         .admin-navbar {
@@ -1274,6 +1330,8 @@ export default function AdminDashboard({
           border-radius: var(--radius-card);
           width: 100%;
           max-width: 520px;
+          max-height: 90vh;
+          overflow-y: auto;
           padding: 28px;
           box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
         }
@@ -1336,6 +1394,31 @@ export default function AdminDashboard({
         </div>
 
         <div className="admin-navbar-actions">
+          <div className="admin-tz-wrapper" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>TZ:</span>
+            <select
+              value={timezone}
+              onChange={e => setTimezone(e.target.value)}
+              className="admin-select-input admin-tz-select"
+              style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, height: 34 }}
+              title="Select Timezone (Default: IST / Asia/Kolkata)"
+              data-testid="admin-tz-select"
+            >
+              <option value="Asia/Kolkata">IST · Kolkata (+5:30)</option>
+              <option value="UTC">UTC · GMT (0:00)</option>
+              <option value="auto">Auto (Browser: {browserTz})</option>
+              <option value="America/New_York">EST · New York</option>
+              <option value="America/Los_Angeles">PST · Los Angeles</option>
+              <option value="America/Chicago">CST · Chicago</option>
+              <option value="Europe/London">GMT/BST · London</option>
+              <option value="Europe/Paris">CET · Paris</option>
+              <option value="Europe/Berlin">CET · Berlin</option>
+              <option value="Asia/Dubai">GST · Dubai (+4:00)</option>
+              <option value="Asia/Singapore">SGT · Singapore (+8:00)</option>
+              <option value="Asia/Tokyo">JST · Tokyo (+9:00)</option>
+              <option value="Australia/Sydney">AEST · Sydney (+10:00)</option>
+            </select>
+          </div>
           <button className="admin-nav-btn primary" onClick={onBackToPlayer} title="Return to Music Player" data-testid="admin-back-btn">
             <BackIcon />
             <span>Back to Player</span>
@@ -1516,7 +1599,7 @@ export default function AdminDashboard({
                       <DeviceIcon />
                     </div>
                     <div className="kpi-value" style={{ fontSize: '1.2rem', height: '2rem', display: 'flex', alignItems: 'center' }}>
-                      {userDetailStats.last_seen ? new Date(userDetailStats.last_seen + "Z").toLocaleString() : 'Never'}
+                      {userDetailStats.last_seen ? formatTimestamp(userDetailStats.last_seen, effectiveTz) : 'Never'}
                     </div>
                     <div className="kpi-subtext">Most recent heartbeat</div>
                   </div>
@@ -1859,7 +1942,7 @@ export default function AdminDashboard({
                             </td>
                             <td>{t.play_count}</td>
                             <td>{t.unique_listeners}</td>
-                            <td>{t.last_played ? new Date(t.last_played + "Z").toLocaleDateString() : 'N/A'}</td>
+                            <td>{t.last_played ? formatTimestamp(t.last_played, effectiveTz) : 'N/A'}</td>
                           </tr>
                         )
                       })}
@@ -2057,7 +2140,7 @@ export default function AdminDashboard({
                         {logs.map(log => (
                           <tr key={log.id}>
                             <td style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
-                              {log.timestamp ? new Date(log.timestamp + "Z").toLocaleString() : 'N/A'}
+                              {log.timestamp ? formatTimestamp(log.timestamp, effectiveTz) : 'N/A'}
                             </td>
                             <td><strong>{log.username}</strong></td>
                             <td>

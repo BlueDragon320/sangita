@@ -31,7 +31,12 @@ export default function ListeningGraph({ token }) {
     if (!token) return
     setLoading(true)
     try {
-      let url = `/api/user/listening-history?range=${encodeURIComponent(selectedRange)}`
+      const storedTz = localStorage.getItem('sangita_timezone') || 'Asia/Kolkata'
+      let effectiveTz = storedTz
+      if (storedTz === 'auto' && typeof Intl !== 'undefined') {
+        effectiveTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+      }
+      let url = `/api/user/listening-history?range=${encodeURIComponent(selectedRange)}&tz=${encodeURIComponent(effectiveTz)}`
       if (selectedRange === 'custom' && start && end) {
         url += `&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
       }

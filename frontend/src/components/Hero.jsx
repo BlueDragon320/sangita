@@ -215,7 +215,7 @@ export default function Hero({
             onClick={onPlay}
             title={isPlaying ? "Pause" : "Play"}
             data-testid="hero-play-btn"
-            style={{ width: 56, height: 56, borderRadius: '50%', background: '#1ed760', border: 'none', color: '#000000', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 8px 24px rgba(30, 215, 96, 0.4)', flexShrink: 0 }}
+            style={{ width: 56, height: 56, borderRadius: '50%', background: '#FFFFFF', border: 'none', color: '#000000', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)', flexShrink: 0 }}
           >
             {isPlaying ? (
               <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor">

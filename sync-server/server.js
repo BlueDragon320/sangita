@@ -213,9 +213,24 @@ io.on('connection', async (socket) => {
     await saveDevice(userId, deviceData);
     const devices = await getDevices(userId);
     io.to(userRoom).emit('DEVICE_LIST_UPDATED', { devices });
-    const state = await getState(userId);
-    if (state) {
-      if (!state.activeDeviceId) {
+    let state = await getState(userId);
+    if (!state) {
+      state = {
+        activeDeviceId: deviceId,
+        trackId: null,
+        positionMs: 0,
+        durationMs: 0,
+        isPlaying: false,
+        volume: 0.8,
+        isLoop: false,
+        isShuffle: false,
+        updatedAt: Date.now(),
+      };
+      await saveState(userId, state);
+      io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state);
+    } else {
+      const activeOnline = devices.some(d => d.deviceId === state.activeDeviceId);
+      if (!state.activeDeviceId || !activeOnline || devices.length === 1) {
         state.activeDeviceId = deviceId;
         state.updatedAt = Date.now();
         await saveState(userId, state);
@@ -224,7 +239,7 @@ io.on('connection', async (socket) => {
         socket.emit('PLAYBACK_STATE_CHANGED', state);
       }
     }
-    console.log(`[Register] user=${userId} device=${deviceId} name="${deviceName}"`);
+    console.log(`[Register] user=${userId} device=${deviceId} name="${deviceName}" active=${state.activeDeviceId}`);
   });
 
   socket.on('HEARTBEAT', async ({ deviceId }) => {
@@ -289,6 +304,22 @@ io.on('connection', async (socket) => {
     await removeDevice(userId, deviceId);
     const devices = await getDevices(userId);
     io.to(userRoom).emit('DEVICE_LIST_UPDATED', { devices });
+
+    const state = await getState(userId);
+    if (state && state.activeDeviceId === deviceId) {
+      if (devices.length > 0) {
+        state.activeDeviceId = devices[0].deviceId;
+        state.isPlaying = false;
+        state.updatedAt = Date.now();
+        await saveState(userId, state);
+        io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state);
+      } else {
+        state.activeDeviceId = null;
+        state.isPlaying = false;
+        state.updatedAt = Date.now();
+        await saveState(userId, state);
+      }
+    }
   });
 });
 
