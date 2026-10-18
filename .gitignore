@@ -17,3 +17,7 @@ backend/.venv/
 
 # Reference documentation
 CODEBASE.md
+markdown_files/
+
+# Testing & cache
+.pytest_cache/

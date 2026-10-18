@@ -2,3 +2,6 @@ Flask==3.0.0
 gunicorn==21.2.0
 mutagen==1.48.1
 Pillow==12.3.0
+faster-whisper>=1.0.3
+psutil>=5.9.8
+requests>=2.31.0

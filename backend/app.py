@@ -1,4 +1,8 @@
 import os
+import sys
+import subprocess
+import signal
+import csv
 import hmac
 import hashlib
 import time
@@ -52,7 +56,11 @@ AUDIO_EXTS = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus")
 # User Database Persistence setup
 DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 if not os.path.exists(DATA_DIR):
-    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    cand_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+    if os.path.exists(cand_root):
+        DATA_DIR = cand_root
+    else:
+        DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 STATS_DB = os.path.join(DATA_DIR, "stats.db")
@@ -2172,6 +2180,285 @@ def get_user_stats(username):
         "graph_data": graph_data,
         "devices": [dict(r) for r in devices]
     })
+
+# ---------------------------------------------------------------------------
+# Synced Lyrics Endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/api/lyrics/<path:filepath>", methods=["GET"])
+@require_auth
+def get_track_lyrics(filepath):
+    import urllib.parse
+    safe = os.path.normpath(urllib.parse.unquote(filepath))
+    if safe.startswith("..") or safe.startswith("/"):
+        abort(403)
+
+    allowed = g.user.get("rules", {}).get("allowed_playlists", ["*"])
+    if "*" not in allowed:
+        parts = safe.split(os.sep)
+        playlist_name = parts[0] if len(parts) > 1 else "Library"
+        if playlist_name not in allowed:
+            abort(403)
+
+    full_audio = os.path.join(MUSIC_DIR, safe)
+    lrc_path = os.path.splitext(full_audio)[0] + ".lrc"
+
+    if os.path.isfile(lrc_path) and os.path.getsize(lrc_path) > 0:
+        try:
+            with open(lrc_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            resp = jsonify({"has_lyrics": True, "raw": content, "filepath": safe})
+            resp.headers["Cache-Control"] = "public, max-age=300"
+            return resp
+        except Exception as e:
+            return jsonify({"has_lyrics": False, "raw": "", "error": str(e)}), 200
+
+    return jsonify({"has_lyrics": False, "raw": "", "filepath": safe}), 200
+
+
+@app.route("/api/admin/lyrics/status", methods=["GET"])
+@require_admin
+def admin_lyrics_status():
+    status_file = os.path.join(DATA_DIR, "lyrics_status.json")
+    status_data = {
+        "state": "idle",
+        "pid": None,
+        "current_index": 0,
+        "total_songs": 0,
+        "current_song": "",
+        "current_stage": "idle",
+        "eta_seconds": 0,
+        "counts": {"skipped_existing": 0, "embedded": 0, "lrclib": 0, "whisper": 0, "failed": 0}
+    }
+
+    if os.path.isfile(status_file):
+        try:
+            with open(status_file, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    status_data = loaded
+        except Exception:
+            pass
+
+    # Verify process liveness
+    worker_pid = status_data.get("pid")
+    is_alive = False
+    worker_cpu = 0.0
+    worker_ram_mb = 0.0
+
+    try:
+        import psutil
+        if worker_pid and psutil.pid_exists(worker_pid):
+            try:
+                proc = psutil.Process(worker_pid)
+                if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                    is_alive = True
+                    worker_cpu = proc.cpu_percent(interval=None)
+                    worker_ram_mb = round(proc.memory_info().rss / (1024 * 1024), 1)
+            except Exception:
+                is_alive = False
+
+        if not is_alive and status_data.get("state") == "running":
+            status_data["state"] = "stopped"
+            status_data["current_stage"] = "stopped"
+
+        # Host system metrics
+        mem = psutil.virtual_memory()
+        cpu_perc = psutil.cpu_percent(interval=None)
+        per_core = psutil.cpu_percent(interval=None, percpu=True)
+        cpu_count = psutil.cpu_count(logical=True) or 1
+
+        resources = {
+            "host_cpu_percent": cpu_perc,
+            "per_core_percent": per_core,
+            "host_ram_used_mb": round(mem.used / (1024 * 1024), 1),
+            "host_ram_total_mb": round(mem.total / (1024 * 1024), 1),
+            "host_ram_percent": mem.percent,
+            "cpu_count": cpu_count,
+            "worker_is_alive": is_alive,
+            "worker_cpu_percent": worker_cpu,
+            "worker_ram_mb": worker_ram_mb
+        }
+    except Exception as e:
+        resources = {
+            "host_cpu_percent": 0,
+            "per_core_percent": [],
+            "host_ram_used_mb": 0,
+            "host_ram_total_mb": 4096,
+            "host_ram_percent": 0,
+            "cpu_count": 4,
+            "worker_is_alive": is_alive,
+            "worker_cpu_percent": 0,
+            "worker_ram_mb": 0,
+            "error": str(e)
+        }
+
+    return jsonify({"job": status_data, "resources": resources})
+
+
+@app.route("/api/admin/lyrics/start", methods=["POST"])
+@require_admin
+def admin_lyrics_start():
+    import psutil
+    status_file = os.path.join(DATA_DIR, "lyrics_status.json")
+    if os.path.isfile(status_file):
+        try:
+            with open(status_file, "r") as f:
+                cur = json.load(f)
+                pid = cur.get("pid")
+                if pid and psutil.pid_exists(pid):
+                    p = psutil.Process(pid)
+                    if p.is_running() and p.status() != psutil.STATUS_ZOMBIE and cur.get("state") == "running":
+                        return jsonify({"error": "Lyrics worker is already running", "pid": pid}), 409
+        except Exception:
+            pass
+
+    data = request.get_json(silent=True) or {}
+    model = data.get("model", "small")
+    language = data.get("language", "auto")
+    cores = int(data.get("cores", 2))
+    max_ram_mb = int(data.get("max_ram_mb", 4096))
+    limit = int(data.get("limit", 0))
+    song = data.get("song")
+    playlist = data.get("playlist")
+    force = bool(data.get("force", False))
+    demucs = bool(data.get("demucs", False))
+    api = bool(data.get("api", True))
+
+    worker_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lyrics_worker.py")
+    cmd = [
+        sys.executable,
+        worker_script,
+        "--music-dir", MUSIC_DIR,
+        "--data-dir", DATA_DIR,
+        "--model", model,
+        "--language", language,
+        "--cores", str(cores),
+        "--max-ram-mb", str(max_ram_mb)
+    ]
+    if limit > 0:
+        cmd.extend(["--limit", str(limit)])
+    if song:
+        cmd.extend(["--song", str(song).strip()])
+    elif playlist:
+        cmd.extend(["--playlist", str(playlist).strip()])
+    if force:
+        cmd.append("--force")
+    if demucs:
+        cmd.append("--demucs")
+    if not api:
+        cmd.append("--no-api")
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        return jsonify({
+            "status": "started",
+            "pid": proc.pid,
+            "config": {
+                "api": api, "model": model, "language": language, "cores": cores,
+                "max_ram_mb": max_ram_mb, "limit": limit, "song": song, "playlist": playlist, "force": force, "demucs": demucs
+            }
+        }), 202
+    except Exception as e:
+        return jsonify({"error": f"Failed to start worker: {e}"}), 500
+
+
+@app.route("/api/admin/lyrics/stop", methods=["POST"])
+@require_admin
+def admin_lyrics_stop():
+    status_file = os.path.join(DATA_DIR, "lyrics_status.json")
+    pid = None
+    if os.path.isfile(status_file):
+        try:
+            with open(status_file, "r") as f:
+                cur = json.load(f)
+                pid = cur.get("pid")
+        except Exception:
+            pass
+
+    if pid:
+        try:
+            import psutil
+            if psutil.pid_exists(pid):
+                p = psutil.Process(pid)
+                p.terminate()
+                try:
+                    p.wait(timeout=3)
+                except psutil.TimeoutExpired:
+                    p.kill()
+        except Exception as e:
+            print(f"[Worker Stop Error] {e}")
+
+    # Mark status as stopped
+    if os.path.isfile(status_file):
+        try:
+            with open(status_file, "r") as f:
+                cur = json.load(f)
+            cur["state"] = "stopped"
+            cur["current_stage"] = "stopped"
+            with open(status_file, "w") as f:
+                json.dump(cur, f, indent=2)
+        except Exception:
+            pass
+
+    return jsonify({"status": "stopped"})
+
+
+@app.route("/api/admin/lyrics/logs", methods=["GET"])
+@require_admin
+def admin_lyrics_logs():
+    limit = min(500, max(10, int(request.args.get("limit", 100))))
+    report_file = os.path.join(DATA_DIR, "lyrics_report.csv")
+    if not os.path.isfile(report_file):
+        return jsonify({"logs": [], "total": 0})
+
+    rows = []
+    try:
+        with open(report_file, "r", encoding="utf-8", errors="replace") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(row)
+    except Exception as e:
+        return jsonify({"logs": [], "error": str(e)})
+
+    rows.reverse()
+    return jsonify({
+        "logs": rows[:limit],
+        "total": len(rows)
+    })
+
+
+@app.route("/api/admin/lyrics/edit", methods=["PUT"])
+@require_admin
+def admin_lyrics_edit():
+    import urllib.parse
+    data = request.get_json(silent=True) or {}
+    filepath = data.get("filepath", "").strip()
+    content = data.get("content", "")
+
+    if not filepath:
+        return jsonify({"error": "filepath is required"}), 400
+
+    safe = os.path.normpath(urllib.parse.unquote(filepath))
+    if safe.startswith("..") or safe.startswith("/"):
+        abort(403)
+
+    full_audio = os.path.join(MUSIC_DIR, safe)
+    lrc_path = os.path.splitext(full_audio)[0] + ".lrc"
+
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(lrc_path)), exist_ok=True)
+        with open(lrc_path, "w", encoding="utf-8") as f:
+            f.write(content.strip() + "\n")
+        return jsonify({"status": "saved", "filepath": safe, "bytes": len(content)})
+    except Exception as e:
+        return jsonify({"error": f"Failed to save lyrics: {e}"}), 500
+
 
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")

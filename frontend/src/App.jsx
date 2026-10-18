@@ -89,6 +89,7 @@ import RightPanel from './components/RightPanel.jsx'
 import AddToPlaylistModal from './components/AddToPlaylistModal.jsx'
 import HomeDashboard from './components/HomeDashboard.jsx'
 import CreatePlaylistModal from './components/CreatePlaylistModal.jsx'
+import LyricsView from './components/LyricsView.jsx'
 
 export default function App() {
   const [token,           setToken]           = useState(() => localStorage.getItem('sangita_token') || '')
@@ -132,6 +133,9 @@ export default function App() {
   const [userStats,       setUserStats]       = useState(null)
   const [statsLoading,    setStatsLoading]    = useState(false)
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false)
+  const [showLyrics,         setShowLyrics]         = useState(false)
+  const [lyricsData,         setLyricsData]         = useState(null)
+  const [lyricsLoading,      setLyricsLoading]      = useState(false)
 
   const audioRef     = useRef(null)
   const queueRef     = useRef([])
@@ -287,6 +291,31 @@ export default function App() {
     }
     return null;
   })();
+
+  useEffect(() => {
+    if (!currentTrack?.path || !token) {
+      setLyricsData(null)
+      return
+    }
+    let isMounted = true
+    setLyricsLoading(true)
+    fetch(`/api/lyrics/${encodeURIComponent(currentTrack.path)}?token=${encodeURIComponent(token)}`)
+      .then(res => res.ok ? res.json() : { has_lyrics: false, raw: '' })
+      .then(data => {
+        if (isMounted) {
+          setLyricsData(data)
+          setLyricsLoading(false)
+        }
+      })
+      .catch(err => {
+        console.warn('Error fetching lyrics:', err)
+        if (isMounted) {
+          setLyricsData({ has_lyrics: false, raw: '' })
+          setLyricsLoading(false)
+        }
+      })
+    return () => { isMounted = false }
+  }, [currentTrack?.path, token])
 
   const getActiveQueueAndIndex = useCallback(() => {
     const curPath = isActiveDevice ? loadedTrackIdRef.current : (syncState?.trackId || loadedTrackIdRef.current);
@@ -916,6 +945,21 @@ export default function App() {
     })
   }, [broadcastState, getMyDeviceId])
 
+  const handleSeekFromLyrics = useCallback((timeInSec) => {
+    const isAct = isActiveRef.current
+    const dur = duration > 0 ? duration : (audioRef.current?.duration || 0)
+    if (dur <= 0) return
+    const pct = Math.max(0, Math.min(100, (timeInSec / dur) * 100))
+    if (isAct) {
+      seekTo(pct)
+    } else {
+      sendRemoteRef.current?.({
+        action: 'seek',
+        payload: { pct, positionMs: Math.floor(timeInSec * 1000) }
+      })
+    }
+  }, [duration, seekTo])
+
   const changeVolume = useCallback((v) => {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
@@ -1227,7 +1271,20 @@ export default function App() {
           />
 
           <div className="main-scroll-body">
-            {dataLoading ? (
+            {showLyrics && currentTrack ? (
+              <LyricsView
+                track={currentTrack}
+                currentTime={currentTime}
+                duration={duration}
+                lyricsData={lyricsData}
+                loading={lyricsLoading}
+                onSeek={handleSeekFromLyrics}
+                onClose={() => setShowLyrics(false)}
+                isPlaying={isPlaying}
+                onTogglePlay={togglePlay}
+                token={token}
+              />
+            ) : dataLoading ? (
               <div className="loading-state"><div className="spinner" /><p>Loading your music library…</p></div>
             ) : view === 'home' ? (
               <HomeDashboard
@@ -1369,6 +1426,9 @@ export default function App() {
           isFavorite={currentTrack ? favorites.includes(currentTrack.path) : false}
           onToggleFavorite={toggleFavorite}
           onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+          hasLyrics={!!lyricsData?.has_lyrics}
+          showLyrics={showLyrics}
+          onToggleLyrics={() => setShowLyrics(v => !v)}
         />
       )}
 

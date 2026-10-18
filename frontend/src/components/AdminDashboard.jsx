@@ -112,6 +112,36 @@ const ActivityIcon = () => (
     <path d="M3 13h4l3-9 4 18 3-9h4v-2h-5l-3 9-4-18-3 9H3v2z"/>
   </svg>
 )
+const LyricsDocIcon = ({ width = 18, height = 18, className = '' }) => (
+  <svg
+    viewBox="0 0 24 24"
+    width={width}
+    height={height}
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+  >
+    {/* Under-sheet / offset layer */}
+    <path d="M6 21h12a2 2 0 0 0 2-2V7" strokeOpacity="0.4" strokeWidth="1.5" />
+    {/* Main front page with folded corner */}
+    <path d="M4 3a1.5 1.5 0 0 1 1.5-1.5h8.5l5 5V18a1.5 1.5 0 0 1-1.5 1.5H5.5A1.5 1.5 0 0 1 4 18V3z" />
+    <polyline points="14 1.5 14 6.5 19 6.5" />
+    {/* Horizontal lyrics text lines */}
+    <line x1="6.8" y1="7" x2="10.5" y2="7" strokeWidth="1.6" />
+    <line x1="6.8" y1="9.6" x2="10.5" y2="9.6" strokeWidth="1.6" />
+    <line x1="6.8" y1="12.2" x2="9.5" y2="12.2" strokeWidth="1.6" />
+    <line x1="6.8" y1="14.8" x2="16" y2="14.8" strokeWidth="1.6" />
+    {/* Beamed music notes */}
+    <path d="M12.8 11.5V5.2l4.8-1.2v6.2" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
+    <path d="M12.8 7.4l4.8-1.2" stroke="currentColor" strokeWidth="1.6" />
+    <ellipse cx="11.4" cy="11.5" rx="1.6" ry="1.2" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
+    <ellipse cx="16.4" cy="10.3" rx="1.6" ry="1.2" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
+  </svg>
+)
 
 export default function AdminDashboard({
   token,
@@ -180,6 +210,252 @@ export default function AdminDashboard({
   const [logsTotalCount, setLogsTotalCount] = useState(0)
   const [logsSearch, setLogsSearch] = useState('')
   const [logsUserFilter, setLogsUserFilter] = useState('')
+
+  // Lyrics Engine State
+  const [lyricsStatus, setLyricsStatus] = useState(null)
+  const [lyricsLogs, setLyricsLogs] = useState([])
+  const [lyricsLogsLoading, setLyricsLogsLoading] = useState(false)
+  const [internalPlaylists, setInternalPlaylists] = useState({})
+  const [lyricsConfig, setLyricsConfig] = useState({
+    api: true, // ON: Queries online API first + local model fallback; OFF: direct local Whisper models
+    model: 'small',
+    language: 'auto',
+    cores: 2,
+    max_ram_mb: 4096,
+    limit: 0,
+    demucs: false,
+    force: false,
+    scope: 'all', // 'all' | 'playlist' | 'song'
+    playlist: '',
+    song: ''
+  })
+  const [lyricsActionLoading, setLyricsActionLoading] = useState(false)
+  const [lyricsEditModal, setLyricsEditModal] = useState({
+    open: false,
+    filepath: '',
+    content: '',
+    loading: false,
+    saving: false
+  })
+  const [lyricsLogFilter, setLyricsLogFilter] = useState('all')
+  const [lyricsLogSearch, setLyricsLogSearch] = useState('')
+
+  useEffect(() => {
+    if ((!playlists || Object.keys(playlists).length === 0) && token) {
+      fetch('/api/playlists', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then(data => {
+          if (data && typeof data === 'object') setInternalPlaylists(data)
+        })
+        .catch(() => {})
+    }
+  }, [playlists, token])
+
+  const availablePlaylists = useMemo(() => {
+    const plSource = (playlists && Object.keys(playlists).length > 0) ? playlists : internalPlaylists
+    if (!plSource) return []
+    if (Array.isArray(plSource)) {
+      return plSource.map(p => ({
+        name: typeof p === 'string' ? p : p.name,
+        count: Array.isArray(p.tracks) ? p.tracks.length : 0
+      })).filter(p => p.name)
+    }
+    return Object.entries(plSource).map(([name, tracks]) => ({
+      name,
+      count: Array.isArray(tracks) ? tracks.length : 0
+    })).filter(p => p.count > 0)
+  }, [playlists, internalPlaylists])
+
+  const availableSongList = useMemo(() => {
+    const plSource = (playlists && Object.keys(playlists).length > 0) ? playlists : internalPlaylists
+    if (!plSource) return []
+    const list = []
+    const seen = new Set()
+
+    const addTrack = (rawPath, plName) => {
+      const path = typeof rawPath === 'string' ? rawPath : rawPath?.path || rawPath?.filepath
+      if (path && !seen.has(path)) {
+        seen.add(path)
+        const filename = path.split('/').pop().replace(/\.[^/.]+$/, '')
+        list.push({ path, title: filename, playlist: plName })
+      }
+    }
+
+    if (Array.isArray(plSource)) {
+      plSource.forEach(pl => {
+        (pl.tracks || []).forEach(t => addTrack(t, pl.name || ''))
+      })
+    } else {
+      Object.entries(plSource).forEach(([plName, tracks]) => {
+        if (Array.isArray(tracks)) {
+          tracks.forEach(t => addTrack(t, plName))
+        }
+      })
+    }
+    return list.sort((a, b) => a.title.localeCompare(b.title))
+  }, [playlists, internalPlaylists])
+
+  const fetchLyricsStatus = useCallback(async () => {
+    if (!token) return
+    try {
+      const res = await fetch('/api/admin/lyrics/status', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLyricsStatus(data)
+      }
+    } catch (err) {
+      console.warn('Error fetching lyrics status:', err)
+    }
+  }, [token])
+
+  const fetchLyricsLogs = useCallback(async () => {
+    if (!token) return
+    try {
+      setLyricsLogsLoading(true)
+      const res = await fetch('/api/admin/lyrics/logs?limit=100', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLyricsLogs(data.logs || [])
+      }
+    } catch (err) {
+      console.warn('Error fetching lyrics logs:', err)
+    } finally {
+      setLyricsLogsLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (activeTab === 'lyrics') {
+      fetchLyricsStatus()
+      fetchLyricsLogs()
+      const pollRate = lyricsStatus?.job?.state === 'running' ? 1000 : 3000
+      const interval = setInterval(() => {
+        fetchLyricsStatus()
+        if (lyricsStatus?.job?.state === 'running') {
+          fetchLyricsLogs()
+        }
+      }, pollRate)
+      return () => clearInterval(interval)
+    }
+  }, [activeTab, fetchLyricsStatus, fetchLyricsLogs, lyricsStatus?.job?.state])
+
+  const handleStartLyricsWorker = async (overrideParams = null) => {
+    try {
+      setLyricsActionLoading(true)
+      let payload = overrideParams ? { ...lyricsConfig, ...overrideParams } : { ...lyricsConfig }
+      if (payload.scope === 'playlist') {
+        if (!payload.playlist) {
+          alert('Please select a playlist to generate lyrics for.')
+          setLyricsActionLoading(false)
+          return
+        }
+        payload.song = null
+      } else if (payload.scope === 'song') {
+        if (!payload.song) {
+          alert('Please select a particular song to generate lyrics for.')
+          setLyricsActionLoading(false)
+          return
+        }
+        payload.playlist = null
+      } else {
+        payload.playlist = null
+        payload.song = null
+      }
+      const res = await fetch('/api/admin/lyrics/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      })
+      if (res.ok) {
+        setTimeout(fetchLyricsStatus, 500)
+      } else {
+        const err = await res.json()
+        alert(`Failed to start lyrics worker: ${err.error || res.statusText}`)
+      }
+    } catch (e) {
+      alert(`Error starting worker: ${e.message}`)
+    } finally {
+      setLyricsActionLoading(false)
+    }
+  }
+
+  const handleStopLyricsWorker = async () => {
+    if (!window.confirm('Are you sure you want to stop the lyrics generation process?')) return
+    try {
+      setLyricsActionLoading(true)
+      const res = await fetch('/api/admin/lyrics/stop', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        setTimeout(fetchLyricsStatus, 500)
+      }
+    } catch (e) {
+      alert(`Error stopping worker: ${e.message}`)
+    } finally {
+      setLyricsActionLoading(false)
+    }
+  }
+
+  const handleRetrySong = (filepath, withDemucs = false) => {
+    handleStartLyricsWorker({
+      song: filepath,
+      demucs: withDemucs,
+      force: true
+    })
+  }
+
+  const handleOpenEditLyrics = async (filepath) => {
+    setLyricsEditModal({ open: true, filepath, content: '', loading: true, saving: false })
+    try {
+      const res = await fetch(`/api/lyrics/${encodeURIComponent(filepath)}?token=${encodeURIComponent(token)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setLyricsEditModal(prev => ({ ...prev, content: data.raw || '', loading: false }))
+      } else {
+        setLyricsEditModal(prev => ({ ...prev, loading: false }))
+      }
+    } catch {
+      setLyricsEditModal(prev => ({ ...prev, loading: false }))
+    }
+  }
+
+  const handleSaveLyrics = async (e) => {
+    if (e) e.preventDefault()
+    try {
+      setLyricsEditModal(prev => ({ ...prev, saving: true }))
+      const res = await fetch('/api/admin/lyrics/edit', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          filepath: lyricsEditModal.filepath,
+          content: lyricsEditModal.content
+        })
+      })
+      if (res.ok) {
+        setLyricsEditModal({ open: false, filepath: '', content: '', loading: false, saving: false })
+        fetchLyricsLogs()
+        fetchLyricsStatus()
+      } else {
+        const err = await res.json()
+        alert(`Failed to save lyrics: ${err.error || res.statusText}`)
+        setLyricsEditModal(prev => ({ ...prev, saving: false }))
+      }
+    } catch (err) {
+      alert(`Error saving lyrics: ${err.message}`)
+      setLyricsEditModal(prev => ({ ...prev, saving: false }))
+    }
+  }
 
   // Notifications
   const [error, setError] = useState('')
@@ -1468,6 +1744,14 @@ export default function AdminDashboard({
             <span>User Accounts</span>
           </button>
           <button
+            className={`admin-tab-btn ${activeTab === 'lyrics' && !selectedUser ? 'active' : ''}`}
+            onClick={() => { setActiveTab('lyrics'); setSelectedUser(null); }}
+            data-testid="admin-tab-lyrics"
+          >
+            <LyricsDocIcon />
+            <span>Lyrics Engine</span>
+          </button>
+          <button
             className={`admin-tab-btn ${activeTab === 'system' && !selectedUser ? 'active' : ''}`}
             onClick={() => { setActiveTab('system'); setSelectedUser(null); }}
             data-testid="admin-tab-system"
@@ -2313,6 +2597,706 @@ export default function AdminDashboard({
               )}
             </div>
           </div>
+        ) : activeTab === 'lyrics' ? (
+          /* =========================================================================
+              TAB 6: LYRICS ENGINE
+             ========================================================================= */
+          <div className="lyrics-engine-view" data-testid="lyrics-engine-content">
+            {/* 1. Live Telemetry KPI Cards */}
+            <div className="kpi-grid">
+              {/* Host CPU & Per-Core */}
+              <div className="kpi-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Host CPU Utilization</span>
+                  <ActivityIcon />
+                </div>
+                <div className="kpi-value">
+                  {lyricsStatus?.resources?.host_cpu_percent !== undefined
+                    ? `${lyricsStatus.resources.host_cpu_percent.toFixed(1)}%`
+                    : '—'}
+                </div>
+                <div className="kpi-subtext">
+                  {lyricsStatus?.resources?.cpu_count || 4} Cores Pinning Engine
+                </div>
+                {/* Per-Core mini visualizer */}
+                {Array.isArray(lyricsStatus?.resources?.per_core_percent) && (
+                  <div className="per-core-grid" title="Per-Core Load" style={{ marginTop: 8 }}>
+                    {lyricsStatus.resources.per_core_percent.map((pct, idx) => (
+                      <div key={idx} className="core-bar-wrapper">
+                        <span className="core-label">C{idx}</span>
+                        <div className="core-bar-track">
+                          <div
+                            className="core-bar-fill"
+                            style={{
+                              width: `${Math.min(100, Math.max(0, pct))}%`,
+                              background: pct > 80 ? '#EF4444' : pct > 50 ? '#F59E0B' : 'var(--emerald)'
+                            }}
+                          />
+                        </div>
+                        <span className="core-pct">{Math.round(pct)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Host Memory */}
+              <div className="kpi-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Host Memory (RAM)</span>
+                  <DeviceIcon />
+                </div>
+                <div className="kpi-value">
+                  {lyricsStatus?.resources?.host_ram_used_mb !== undefined
+                    ? `${(lyricsStatus.resources.host_ram_used_mb / 1024).toFixed(2)} GB`
+                    : '—'}
+                </div>
+                <div className="kpi-subtext">
+                  of {lyricsStatus?.resources?.host_ram_total_mb ? `${(lyricsStatus.resources.host_ram_total_mb / 1024).toFixed(1)} GB Total (${lyricsStatus.resources.host_ram_percent?.toFixed(0)}%)` : '—'}
+                </div>
+                <div className="resource-bar-track" style={{ marginTop: 8 }}>
+                  <div
+                    className="resource-bar-fill"
+                    style={{
+                      width: `${Math.min(100, lyricsStatus?.resources?.host_ram_percent || 0)}%`,
+                      background: (lyricsStatus?.resources?.host_ram_percent || 0) > 85 ? '#EF4444' : 'var(--emerald)'
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Worker Process Resource Telemetry */}
+              <div className="kpi-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Worker Process Status</span>
+                  <span className={`status-pill ${lyricsStatus?.job?.state || 'idle'}`}>
+                    {lyricsStatus?.job?.state === 'running' && <span className="live-dot-pulse" />}
+                    {(lyricsStatus?.job?.state || 'IDLE').toUpperCase()}
+                  </span>
+                </div>
+                <div className="kpi-value" style={{ fontSize: '1.4rem' }}>
+                  {lyricsStatus?.resources?.worker_cpu_percent !== undefined
+                    ? `${lyricsStatus.resources.worker_cpu_percent.toFixed(1)}% CPU`
+                    : 'Inactive'}
+                </div>
+                <div className="kpi-subtext">
+                  {lyricsStatus?.resources?.worker_ram_mb !== undefined
+                    ? `${lyricsStatus.resources.worker_ram_mb.toFixed(1)} MB RSS (PID: ${lyricsStatus.job?.pid})`
+                    : 'No worker process running'}
+                </div>
+              </div>
+
+              {/* Overall Coverage / Summary */}
+              <div className="kpi-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Catalog Coverage</span>
+                  <MusicIcon />
+                </div>
+                <div className="kpi-value">
+                  {lyricsStatus?.job?.current_index !== undefined && lyricsStatus?.job?.total_songs
+                    ? `${lyricsStatus.job.current_index} / ${lyricsStatus.job.total_songs}`
+                    : `${lyricsLogs.filter(l => l.status === 'success' || l.source).length} Processed`}
+                </div>
+                <div className="kpi-subtext">
+                  {lyricsStatus?.job?.eta_seconds ? `ETA: ${formatDuration(lyricsStatus.job.eta_seconds)}` : 'Ready for batch runs'}
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Active Job Progress Tracker or Last Run Summary */}
+            {lyricsStatus?.job?.state === 'running' ? (
+              <div className="admin-panel lyrics-progress-panel">
+                <div className="admin-panel-header" style={{ alignItems: 'flex-start' }}>
+                  <div>
+                    <div className="admin-panel-title" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <span>Active Lyrics Caption Generation</span>
+                      {lyricsStatus.job.config?.api === false && (
+                        <span className="source-pill whisper" style={{ fontSize: '10px' }}>
+                          ⚡ API OFF (Direct Local)
+                        </span>
+                      )}
+                      {lyricsStatus.job.current_source_type === 'api' ? (
+                        <span className="engine-badge api">🌐 Online API (LRCLIB)</span>
+                      ) : lyricsStatus.job.current_source_type === 'local_machine' ? (
+                        <span className="engine-badge local">⚡ Local Machine (Whisper 500MB Model)</span>
+                      ) : lyricsStatus.job.current_source_type === 'local_demucs' ? (
+                        <span className="engine-badge demucs">🎙️ Local Demucs Isolation</span>
+                      ) : lyricsStatus.job.current_source_type === 'embedded' ? (
+                        <span className="engine-badge embedded">🏷️ Embedded Tags</span>
+                      ) : (
+                        <span className="engine-badge checking">🔍 Checking Cache</span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--emerald)' }}>
+                      {lyricsStatus.job.total_songs > 0
+                        ? `${Math.round((lyricsStatus.job.current_index / lyricsStatus.job.total_songs) * 100)}%`
+                        : '0%'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                      {lyricsStatus.job.eta_seconds ? `${formatDuration(lyricsStatus.job.eta_seconds)} remaining` : `${lyricsStatus.job.current_index || 0} of ${lyricsStatus.job.total_songs || 0} songs`}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Highly visible Currently Processing Song box */}
+                <div className="currently-processing-box">
+                  <div className="currently-processing-header">
+                    <span className="currently-processing-label">
+                      <span className="live-dot-pulse" />
+                      Currently Processing
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-dim)', fontWeight: 600 }}>
+                      Song {lyricsStatus.job.current_index || 1} of {lyricsStatus.job.total_songs || 1}
+                    </span>
+                  </div>
+
+                  <div className="currently-processing-title-row">
+                    <span style={{ fontSize: '16px' }}>🎧</span>
+                    <span className="currently-processing-title">
+                      {lyricsStatus.job.current_title || lyricsStatus.job.current_song?.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Processing Song...'}
+                    </span>
+                    {lyricsStatus.job.current_artist && (
+                      <span className="currently-processing-artist">
+                        by {lyricsStatus.job.current_artist}
+                      </span>
+                    )}
+                  </div>
+
+                  {lyricsStatus.job.current_song && (
+                    <div className="currently-processing-path">
+                      📁 {lyricsStatus.job.current_song}
+                    </div>
+                  )}
+
+                  <div className="currently-processing-action">
+                    <span className="action-spinner" />
+                    <strong>Current Engine Action:</strong> {lyricsStatus.job.current_action || (
+                      lyricsStatus.job.current_source_type === 'api'
+                        ? 'Querying Online API (LRCLIB database)...'
+                        : lyricsStatus.job.current_source_type === 'local_machine'
+                          ? 'Transcribing locally via 500MB Whisper AI model...'
+                          : 'Processing track...'
+                    )}
+                  </div>
+                </div>
+
+                <div className="resource-bar-track" style={{ height: 8, borderRadius: 4, margin: '14px 0' }}>
+                  <div
+                    className="resource-bar-fill"
+                    style={{
+                      height: '100%',
+                      width: `${lyricsStatus.job.total_songs > 0 ? (lyricsStatus.job.current_index / lyricsStatus.job.total_songs) * 100 : 0}%`,
+                      background: 'linear-gradient(90deg, var(--emerald) 0%, #10B981 100%)',
+                      borderRadius: 4,
+                      transition: 'width 0.4s ease'
+                    }}
+                  />
+                </div>
+
+                {/* Counters breakdown badges */}
+                <div className="lyrics-counters-bar">
+                  <div className="counter-pill">
+                    <span className="counter-name">Skipped (Existing):</span>
+                    <span className="counter-val">{lyricsStatus.job.counts?.skipped_existing || 0}</span>
+                  </div>
+                  <div className="counter-pill">
+                    <span className="counter-name">Embedded Tags:</span>
+                    <span className="counter-val">{lyricsStatus.job.counts?.embedded || 0}</span>
+                  </div>
+                  <div className="counter-pill">
+                    <span className="counter-name">🌐 Online API:</span>
+                    <span className="counter-val" style={{ color: '#60A5FA' }}>{lyricsStatus.job.counts?.lrclib || 0}</span>
+                  </div>
+                  <div className="counter-pill">
+                    <span className="counter-name">⚡ Local Whisper:</span>
+                    <span className="counter-val" style={{ color: '#C084FC' }}>{lyricsStatus.job.counts?.whisper || 0}</span>
+                  </div>
+                  <div className="counter-pill danger">
+                    <span className="counter-name">Failed:</span>
+                    <span className="counter-val">{lyricsStatus.job.counts?.failed || 0}</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              lyricsStatus?.job?.last_processed && (
+                <div className="last-processed-summary-box" style={{ marginBottom: 16 }}>
+                  <div className="last-processed-info">
+                    <span style={{ fontWeight: 700, color: 'var(--emerald)', textTransform: 'uppercase', fontSize: '11px' }}>
+                      ✓ Last Processed Song:
+                    </span>
+                    <span style={{ fontWeight: 700, color: '#FFFFFF', fontSize: '13px' }}>
+                      {lyricsStatus.job.last_processed.title || lyricsStatus.job.last_processed.song}
+                    </span>
+                    {lyricsStatus.job.last_processed.artist && (
+                      <span style={{ color: 'var(--text-sub)' }}>
+                        by {lyricsStatus.job.last_processed.artist}
+                      </span>
+                    )}
+                    <span className={`source-pill ${lyricsStatus.job.last_processed.source_type === 'api' ? 'lrclib' : lyricsStatus.job.last_processed.source_type === 'local_machine' ? 'whisper' : 'default'}`}>
+                      {lyricsStatus.job.last_processed.source_label || lyricsStatus.job.last_processed.source}
+                    </span>
+                  </div>
+                  <div style={{ color: 'var(--text-dim)', fontSize: '11px' }}>
+                    Completed in {lyricsStatus.job.last_processed.processing_time_sec}s · {lyricsStatus.job.last_processed.status?.toUpperCase()}
+                  </div>
+                </div>
+              )
+            )}
+
+            {/* 3. Resource Governance & Generator Controls */}
+            <div className="admin-panel lyrics-generator-panel">
+              <div className="admin-panel-header">
+                <div>
+                  <div className="admin-panel-title">Lyrics Caption Generation Controls</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 2 }}>
+                    Capped background worker running with CPU affinity, OS nice(10) priority, and memory watchdogs.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  {lyricsStatus?.job?.state === 'running' ? (
+                    <button
+                      className="admin-nav-btn danger"
+                      onClick={handleStopLyricsWorker}
+                      disabled={lyricsActionLoading}
+                      data-testid="btn-stop-lyrics-worker"
+                    >
+                      <TrashIcon />
+                      <span>{lyricsActionLoading ? 'Stopping…' : 'Stop Lyrics Generation'}</span>
+                    </button>
+                  ) : (
+                    <button
+                      className="admin-nav-btn primary"
+                      onClick={() => handleStartLyricsWorker()}
+                      disabled={lyricsActionLoading}
+                      data-testid="btn-start-lyrics-worker"
+                    >
+                      <LyricsDocIcon />
+                      <span>
+                        {lyricsActionLoading
+                          ? 'Starting…'
+                          : lyricsConfig.scope === 'playlist' && lyricsConfig.playlist
+                          ? `Start Lyrics Caption Generation (${lyricsConfig.playlist})`
+                          : lyricsConfig.scope === 'song' && lyricsConfig.song
+                          ? 'Start Lyrics Caption Generation (1 Song)'
+                          : 'Start Lyrics Caption Generation'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Controls Grid */}
+              <div className="lyrics-controls-grid">
+                {/* 1. Target Scope Selection: All Songs, Select Playlist, Select Particular Song */}
+                <div className="form-group">
+                  <label className="form-label">Generate For</label>
+                  <select
+                    className="form-input-text"
+                    value={lyricsConfig.scope}
+                    onChange={e => setLyricsConfig(c => ({ ...c, scope: e.target.value }))}
+                    disabled={lyricsStatus?.job?.state === 'running'}
+                  >
+                    <option value="all">All Songs (Entire Library)</option>
+                    <option value="playlist">Select Playlist</option>
+                    <option value="song">Select Particular Song</option>
+                  </select>
+                  <span className="field-hint">Target scope for lyrics generation</span>
+                </div>
+
+                {lyricsConfig.scope === 'playlist' && (
+                  <div className="form-group">
+                    <label className="form-label">Choose Playlist</label>
+                    <select
+                      className="form-input-text"
+                      value={lyricsConfig.playlist}
+                      onChange={e => setLyricsConfig(c => ({ ...c, playlist: e.target.value }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      <option value="">-- Choose a Playlist --</option>
+                      {availablePlaylists.map(pl => (
+                        <option key={pl.name} value={pl.name}>
+                          {pl.name} ({pl.count} {pl.count === 1 ? 'song' : 'songs'})
+                        </option>
+                      ))}
+                    </select>
+                    <span className="field-hint">Generates lyrics only for tracks in this playlist</span>
+                  </div>
+                )}
+
+                {lyricsConfig.scope === 'song' && (
+                  <div className="form-group" style={{ minWidth: 260 }}>
+                    <label className="form-label">Choose Particular Song</label>
+                    <select
+                      className="form-input-text"
+                      value={lyricsConfig.song}
+                      onChange={e => setLyricsConfig(c => ({ ...c, song: e.target.value }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      <option value="">-- Choose a Song ({availableSongList.length} total) --</option>
+                      {availableSongList.map(s => (
+                        <option key={s.path} value={s.path}>
+                          {s.title} {s.playlist ? `(${s.playlist})` : ''} — {s.path}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="field-hint">Generates lyrics for this single chosen track</span>
+                  </div>
+                )}
+
+                {/* 2. Online API Engine Toggle Button */}
+                <div className="form-group lyrics-api-group">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>API</span>
+                    <span className={`lyrics-api-pill ${lyricsConfig.api ? 'on' : 'off'}`}>
+                      {lyricsConfig.api ? 'API ON' : 'API OFF'}
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    className={`lyrics-api-button ${lyricsConfig.api ? 'active-api' : 'active-local'}`}
+                    onClick={() => setLyricsConfig(c => ({ ...c, api: !c.api }))}
+                    disabled={lyricsStatus?.job?.state === 'running'}
+                    title={lyricsConfig.api ? 'Online API enabled (LRCLIB with automatic local model fallback)' : 'Online API disabled (transcribe with local Whisper models directly)'}
+                    data-testid="lyrics-api-toggle-button"
+                  >
+                    <div className="lyrics-api-btn-content">
+                      <div className="lyrics-api-btn-left">
+                        <span className="lyrics-api-btn-icon">{lyricsConfig.api ? '🌐' : '⚡'}</span>
+                        <div className="lyrics-api-btn-titles">
+                          <span className="lyrics-api-btn-main">API: {lyricsConfig.api ? 'ON' : 'OFF'}</span>
+                          <span className="lyrics-api-btn-sub">
+                            {lyricsConfig.api ? 'Online API + Local Fallback' : 'Direct Local Models (Whisper)'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className={`lyrics-api-switch ${lyricsConfig.api ? 'checked' : ''}`}>
+                        <div className="lyrics-api-switch-thumb" />
+                      </div>
+                    </div>
+                  </button>
+                  <span className="field-hint">
+                    {lyricsConfig.api
+                      ? 'Queries online LRCLIB first; falls back to local model if not found.'
+                      : 'Bypasses online API completely. Generates lyrics locally using Whisper.'}
+                  </span>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Batch Limit</label>
+                  <select
+                    className="form-input-text"
+                    value={lyricsConfig.limit}
+                    onChange={e => setLyricsConfig(c => ({ ...c, limit: parseInt(e.target.value, 10) }))}
+                    disabled={lyricsStatus?.job?.state === 'running' || lyricsConfig.scope === 'song'}
+                  >
+                    <option value="0">All Songs in Scope</option>
+                    <option value="5">Benchmark 5 Songs</option>
+                    <option value="10">Test 10 Songs</option>
+                    <option value="25">Test 25 Songs</option>
+                  </select>
+                  <span className="field-hint">Max songs processed per run</span>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">
+                    CTranslate2 Model {lyricsConfig.api ? '(Local Fallback)' : '(Primary Engine)'}
+                  </label>
+                  <select
+                    className="form-input-text"
+                    value={lyricsConfig.model}
+                    onChange={e => setLyricsConfig(c => ({ ...c, model: e.target.value }))}
+                    disabled={lyricsStatus?.job?.state === 'running'}
+                  >
+                    <option value="small">Small (int8, ~460MB - Recommended CPU)</option>
+                    <option value="medium">Medium (int8, ~1.5GB - Highest Accuracy)</option>
+                    <option value="base">Base (int8, ~140MB - Fast)</option>
+                    <option value="tiny">Tiny (int8, ~75MB - Ultra Fast)</option>
+                  </select>
+                  <span className="field-hint">
+                    {lyricsConfig.api
+                      ? 'Used automatically if online API has no lyrics'
+                      : 'Whisper model used for direct local transcription'}
+                  </span>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Language Detection</label>
+                  <select
+                    className="form-input-text"
+                    value={lyricsConfig.language}
+                    onChange={e => setLyricsConfig(c => ({ ...c, language: e.target.value }))}
+                    disabled={lyricsStatus?.job?.state === 'running'}
+                  >
+                    <option value="auto">Auto-detect (Multilingual Hindi/English/Punjabi)</option>
+                    <option value="hi">Hindi (hi)</option>
+                    <option value="en">English (en)</option>
+                    <option value="pa">Punjabi (pa)</option>
+                    <option value="kn">Kannada (kn)</option>
+                    <option value="ta">Tamil (ta)</option>
+                    <option value="te">Telugu (te)</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">CPU Cores Cap</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={lyricsStatus?.resources?.cpu_count || 8}
+                    className="form-input-text"
+                    value={lyricsConfig.cores}
+                    onChange={e => setLyricsConfig(c => ({ ...c, cores: parseInt(e.target.value, 10) || 1 }))}
+                    disabled={lyricsStatus?.job?.state === 'running'}
+                  />
+                  <span className="field-hint">Pins worker affinity to N cores</span>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Max RAM Limit (MB)</label>
+                  <input
+                    type="number"
+                    min="512"
+                    step="256"
+                    className="form-input-text"
+                    value={lyricsConfig.max_ram_mb}
+                    onChange={e => setLyricsConfig(c => ({ ...c, max_ram_mb: parseInt(e.target.value, 10) || 2048 }))}
+                    disabled={lyricsStatus?.job?.state === 'running'}
+                  />
+                  <span className="field-hint">Watchdog GC ceiling</span>
+                </div>
+
+                <div className="form-group" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={lyricsConfig.demucs}
+                      onChange={e => setLyricsConfig(c => ({ ...c, demucs: e.target.checked }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    />
+                    <span><strong>HTDemucs Vocal Separation</strong></span>
+                  </label>
+                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={lyricsConfig.force}
+                      onChange={e => setLyricsConfig(c => ({ ...c, force: e.target.checked }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    />
+                    <span>Force regenerate existing .lrc</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* 4. Audit Log Table */}
+            <div className="admin-panel lyrics-audit-panel">
+              <div className="admin-panel-header lyrics-audit-header">
+                <div>
+                  <div className="admin-panel-title">Lyrics Audit & History Logs</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 4 }}>
+                    Real-time waterfall results from embedded tags, LRCLIB, and Whisper int8 transcription.
+                  </div>
+                </div>
+                <div className="lyrics-audit-controls">
+                  <input
+                    type="text"
+                    placeholder="Search song, artist, source…"
+                    className="form-input-text"
+                    style={{ width: 190, padding: '5px 10px', fontSize: '11px' }}
+                    value={lyricsLogSearch}
+                    onChange={e => setLyricsLogSearch(e.target.value)}
+                  />
+                  <select
+                    className="form-input-text"
+                    style={{ width: 120, padding: '5px 10px', fontSize: '11px' }}
+                    value={lyricsLogFilter}
+                    onChange={e => setLyricsLogFilter(e.target.value)}
+                  >
+                    <option value="all">All Sources</option>
+                    <option value="lrclib">LRCLIB API</option>
+                    <option value="whisper">Whisper AI</option>
+                    <option value="embedded">Embedded Tags</option>
+                    <option value="failed">Failed Only</option>
+                  </select>
+                  <button
+                    className="admin-nav-btn"
+                    onClick={fetchLyricsLogs}
+                    title="Refresh logs"
+                    disabled={lyricsLogsLoading}
+                    style={{ padding: '5px 10px', fontSize: '11px' }}
+                  >
+                    <RefreshIcon />
+                  </button>
+                </div>
+              </div>
+
+              {/* Table */}
+              {lyricsLogsLoading && lyricsLogs.length === 0 ? (
+                <div className="loading-state" style={{ padding: 36 }}><div className="spinner" /><p>Loading audit records…</p></div>
+              ) : lyricsLogs.length === 0 ? (
+                <div className="empty-state" style={{ padding: 36 }}>
+                  <LyricsDocIcon width={44} height={44} />
+                  <h3 style={{ marginTop: 10, fontSize: '14px' }}>No Lyrics Generation Logs Yet</h3>
+                  <p style={{ fontSize: '12px' }}>Start lyrics caption generation or retry a song to see audit rows here.</p>
+                </div>
+              ) : (
+                <div className="lyrics-audit-table-wrap">
+                  <table className="lyrics-audit-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '13%' }}>Time</th>
+                        <th style={{ width: '38%' }}>Track / Audio File</th>
+                        <th style={{ width: '10%' }}>Source</th>
+                        <th style={{ width: '8%' }}>Duration</th>
+                        <th style={{ width: '8%' }}>Proc Time</th>
+                        <th style={{ width: '9%' }}>Status</th>
+                        <th style={{ width: '14%', textAlign: 'right' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lyricsLogs
+                        .filter(row => {
+                          if (lyricsLogFilter === 'failed') return row.status === 'failed'
+                          if (lyricsLogFilter !== 'all') return row.source?.includes(lyricsLogFilter)
+                          return true
+                        })
+                        .filter(row => {
+                          if (!lyricsLogSearch.trim()) return true
+                          const q = lyricsLogSearch.toLowerCase()
+                          return (
+                            (row.filepath || '').toLowerCase().includes(q) ||
+                            (row.title || '').toLowerCase().includes(q) ||
+                            (row.artist || '').toLowerCase().includes(q) ||
+                            (row.source || '').toLowerCase().includes(q)
+                          )
+                        })
+                        .slice(0, 100)
+                        .map((row, idx) => {
+                          const isSuccess = row.status === 'success' || (!row.error && row.source)
+                          const srcClass = row.source === 'lrclib' ? 'lrclib' : row.source?.startsWith('whisper') ? 'whisper' : row.source === 'embedded' ? 'embedded' : 'default'
+                          const cleanStr = (s) => {
+                            if (!s) return ''
+                            let str = String(s).trim()
+                            if ((str.startsWith("['") && str.endsWith("']")) || (str.startsWith('["') && str.endsWith('"]'))) {
+                              str = str.slice(2, -2)
+                            }
+                            return str.trim()
+                          }
+                          const rawTitle = cleanStr(row.title)
+                          const rawArtist = cleanStr(row.artist)
+                          const songTitle = rawTitle || row.filepath?.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Untitled'
+
+                          const formatCompactLogTime = (ts) => {
+                            if (!ts) return '—'
+                            try {
+                              const raw = ts.endsWith('Z') ? ts : ts + 'Z'
+                              const d = new Date(raw)
+                              const t = d.toLocaleTimeString('en-US', { timeZone: effectiveTz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+                              const m = d.toLocaleDateString('en-US', { timeZone: effectiveTz, month: 'short', day: 'numeric' })
+                              return `${m}, ${t}`
+                            } catch (e) {
+                              return ts.replace(/^\d{4}-/, '')
+                            }
+                          }
+
+                          return (
+                            <tr key={idx} data-testid={`lyrics-log-row-${idx}`}>
+                              <td className="lyrics-time-col" title={formatTimestamp(row.timestamp, effectiveTz)}>
+                                {formatCompactLogTime(row.timestamp)}
+                              </td>
+                              <td className="lyrics-track-col">
+                                <div className="lyrics-track-main">
+                                  <div className="lyrics-track-title-row">
+                                    <span className="lyrics-audio-icon">🎧</span>
+                                    <span className="lyrics-track-title-text" title={songTitle}>
+                                      {songTitle}
+                                    </span>
+                                    {rawArtist && (
+                                      <span className="lyrics-track-artist-text" title={`by ${rawArtist}`}>by {rawArtist}</span>
+                                    )}
+                                  </div>
+                                  <div className="lyrics-track-path-text" title={row.filepath}>
+                                    📁 {row.filepath}
+                                  </div>
+                                  {row.error && (
+                                    <div className="lyrics-track-error-text" title={row.error}>
+                                      ⚠️ {row.error}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                              <td>
+                                {row.source === 'lrclib' ? (
+                                  <span className="source-pill lrclib" title="Retrieved from LRCLIB online synchronized lyrics database">
+                                    🌐 Online API
+                                  </span>
+                                ) : row.source?.startsWith('whisper') ? (
+                                  <span className="source-pill whisper" title="Transcribed on Local Machine using 500MB Whisper AI model">
+                                    ⚡ Local Machine (Whisper)
+                                  </span>
+                                ) : row.source === 'embedded' ? (
+                                  <span className="source-pill embedded" title="Extracted from audio file embedded tags">
+                                    🏷️ Embedded Tag
+                                  </span>
+                                ) : row.source === 'skipped_existing' ? (
+                                  <span className="source-pill default" title="Already exists (.lrc file)">
+                                    ⏭️ Cached
+                                  </span>
+                                ) : (
+                                  <span className={`source-pill ${srcClass}`}>
+                                    {row.source || 'None'}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="lyrics-meta-col">
+                                {formatDuration(row.duration_sec)}
+                              </td>
+                              <td className="lyrics-meta-col">
+                                {row.processing_time_sec ? `${Number(row.processing_time_sec).toFixed(1)}s` : '—'}
+                              </td>
+                              <td>
+                                <span className={`status-pill ${isSuccess ? 'success' : 'failed'}`}>
+                                  {isSuccess ? 'SUCCESS' : 'FAILED'}
+                                </span>
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <div className="lyrics-action-btns">
+                                  <button
+                                    className="lyrics-action-btn"
+                                    onClick={() => handleRetrySong(row.filepath, false)}
+                                    title="Retry single song with Whisper"
+                                    disabled={lyricsStatus?.job?.state === 'running'}
+                                  >
+                                    Retry
+                                  </button>
+                                  <button
+                                    className="lyrics-action-btn demucs"
+                                    onClick={() => handleRetrySong(row.filepath, true)}
+                                    title="Retry single song with Demucs vocal isolation"
+                                    disabled={lyricsStatus?.job?.state === 'running'}
+                                  >
+                                    +Demucs
+                                  </button>
+                                  <button
+                                    className="lyrics-action-btn edit"
+                                    onClick={() => handleOpenEditLyrics(row.filepath)}
+                                    title="Manually edit or inspect .lrc file"
+                                  >
+                                    Edit
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
         ) : (
           /* =========================================================================
               TAB 5: SYSTEM & SERVER HEALTH
@@ -2470,6 +3454,68 @@ export default function AdminDashboard({
                 </button>
                 <button type="submit" className="admin-nav-btn primary" data-testid="btn-save-user">
                   {isEditingUser ? 'Save Changes' : 'Create User'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Manual LRC Editor Modal */}
+      {lyricsEditModal.open && (
+        <div className="admin-modal-backdrop" onClick={() => setLyricsEditModal(m => ({ ...m, open: false }))} data-testid="lyrics-edit-modal">
+          <div className="admin-modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Edit Synced Lyrics (.lrc)</h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 4, wordBreak: 'break-all' }}>
+                {lyricsEditModal.filepath}
+              </p>
+            </div>
+
+            <form onSubmit={handleSaveLyrics}>
+              <div className="form-row">
+                <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>LRC Content (UTF-8)</span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Format: <code>[mm:ss.xx] Lyric line</code></span>
+                </label>
+                {lyricsEditModal.loading ? (
+                  <div className="loading-state" style={{ padding: 30 }}><div className="spinner" /><p>Fetching existing lyrics…</p></div>
+                ) : (
+                  <textarea
+                    className="form-input-text lrc-editor-textarea"
+                    rows={14}
+                    placeholder="[00:01.00] Line one of lyrics&#10;[00:05.50] Line two of lyrics..."
+                    value={lyricsEditModal.content}
+                    onChange={e => setLyricsEditModal(m => ({ ...m, content: e.target.value }))}
+                    style={{
+                      fontFamily: 'monospace',
+                      fontSize: '13px',
+                      lineHeight: '1.5',
+                      whiteSpace: 'pre',
+                      resize: 'vertical'
+                    }}
+                    required
+                    data-testid="textarea-lrc-content"
+                  />
+                )}
+              </div>
+
+              <div className="modal-btn-row">
+                <button
+                  type="button"
+                  className="admin-nav-btn"
+                  onClick={() => setLyricsEditModal(m => ({ ...m, open: false }))}
+                  disabled={lyricsEditModal.saving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="admin-nav-btn primary"
+                  disabled={lyricsEditModal.loading || lyricsEditModal.saving}
+                  data-testid="btn-save-lrc"
+                >
+                  {lyricsEditModal.saving ? 'Saving .lrc…' : 'Save Lyrics File'}
                 </button>
               </div>
             </form>

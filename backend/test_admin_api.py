@@ -119,5 +119,84 @@ class TestAdminAPI(unittest.TestCase):
         res = self.client.delete('/api/admin/users/dj_producer', headers=headers)
         self.assertEqual(res.status_code, 200)
 
+    def test_lyrics_endpoints(self):
+        # 1. Unauthorized
+        res = self.client.get('/api/lyrics/nonexistent.mp3')
+        self.assertEqual(res.status_code, 401)
+
+        # 2. Authorized query for missing lyrics
+        res = self.client.get('/api/lyrics/nonexistent.mp3', headers={'Authorization': f'Bearer {self.user_token}'})
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertFalse(data.get('has_lyrics'))
+
+        # 3. Path traversal protection
+        res = self.client.get('/api/lyrics/../../etc/passwd', headers={'Authorization': f'Bearer {self.user_token}'})
+        self.assertEqual(res.status_code, 403)
+
+    def test_admin_lyrics_control(self):
+        admin_headers = {'Authorization': f'Bearer {self.admin_token}'}
+        user_headers = {'Authorization': f'Bearer {self.user_token}'}
+
+        # Non-admin forbidden
+        res = self.client.get('/api/admin/lyrics/status', headers=user_headers)
+        self.assertEqual(res.status_code, 403)
+
+        # Admin status
+        res = self.client.get('/api/admin/lyrics/status', headers=admin_headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertIn('job', data)
+        self.assertIn('resources', data)
+
+        # Admin logs
+        res = self.client.get('/api/admin/lyrics/logs', headers=admin_headers)
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('logs', res.get_json())
+
+        # Admin edit / create .lrc
+        test_content = "[00:01.00] Hello Sangita\n[00:03.50] Synced Lyrics Test"
+        res = self.client.put('/api/admin/lyrics/edit', headers=admin_headers, json={
+            'filepath': 'test_song.mp3',
+            'content': test_content
+        })
+        self.assertEqual(res.status_code, 200)
+
+        # Verify lyrics can be read back via /api/lyrics
+        res = self.client.get('/api/lyrics/test_song.mp3', headers=user_headers)
+        self.assertEqual(res.status_code, 200)
+        lyrics_data = res.get_json()
+        self.assertTrue(lyrics_data.get('has_lyrics'))
+        self.assertIn('Hello Sangita', lyrics_data.get('raw', ''))
+
+        # Clean up test .lrc
+        test_lrc = os.path.join(app_mod.MUSIC_DIR, 'test_song.lrc')
+        if os.path.isfile(test_lrc):
+            try:
+                os.remove(test_lrc)
+            except Exception:
+                pass
+
+    def test_admin_lyrics_start_api_flag(self):
+        from unittest.mock import patch
+        admin_headers = {'Authorization': f'Bearer {self.admin_token}'}
+
+        with patch('subprocess.Popen') as mock_popen, patch('psutil.pid_exists', return_value=False):
+            mock_proc = mock_popen.return_value
+            mock_proc.pid = 99999
+
+            # 1. API: True (default)
+            res = self.client.post('/api/admin/lyrics/start', headers=admin_headers, json={'api': True})
+            self.assertEqual(res.status_code, 202)
+            cmd_args = mock_popen.call_args[0][0]
+            self.assertNotIn('--no-api', cmd_args)
+
+            # 2. API: False (Direct Local Models)
+            res = self.client.post('/api/admin/lyrics/start', headers=admin_headers, json={'api': False})
+            self.assertEqual(res.status_code, 202)
+            cmd_args = mock_popen.call_args[0][0]
+            self.assertIn('--no-api', cmd_args)
+
 if __name__ == '__main__':
     unittest.main()
+

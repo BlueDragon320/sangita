@@ -1,195 +1,216 @@
-# Sangita — Self-Hosted Music Player
+# Sangita — Self-Hosted Music Streaming & Synced Lyrics Platform
 
-**Sangita Meaning [Music in Kannada]**
+**Sangita [ಸಂಗೀತ] — Meaning "Music" in Kannada**
 
-Sangita is a music player you run on your own server or computer. Drop in your audio files, open the browser, and stream your music from anywhere.
-
-## What it does
-- Login page with username and password
-- Each subfolder inside `music/` becomes a playlist
-- Play, pause, skip, seek, volume control, shuffle
-- Shows track duration for every song
-- Three themes: Blue Dark, Dark, Light — toggle in the sidebar
-- Works on desktop and mobile browser
-- Runs in Docker — one command to start
-- Multi-device real-time synchronization (use your phone as a remote to control playback on your PC)
+Sangita is a modern, self-hosted, full-stack music streaming platform designed to run smoothly on your own server or home computer. Drop your music files into a folder, open your browser, and enjoy high-fidelity streaming, multi-device synchronization, and automated time-synced lyrics with zero subscription fees.
 
 ---
 
-## HOW ANYONE CAN INSTALL AND RUN IT
+## Key Features
 
-**Requirements:**
-- Docker installed
-- Docker Compose installed
-- That's it. Nothing else needed.
+- **Self-Hosted Audio Streaming**:
+  - Direct, fast streaming with HTTP 206 partial-content range support for instantaneous seeking.
+  - Automatic playlist generation from directory structures (`music/<PlaylistName>/...`).
+  - Wide format support: `.mp3`, `.flac`, `.wav`, `.ogg`, `.m4a`, `.aac`, `.opus`.
+- **Center-Stage Synced Lyrics (`.lrc`)**:
+  - Immersive synced lyrics overlay with auto-scroll and 150ms lookahead highlighting.
+  - Interactive click-to-seek directly to any lyric line.
+  - Seamless full Unicode/UTF-8 support across scripts (Devanagari, Gurmukhi, Kannada, Latin, etc.).
+- **Automated Lyrics Engine (Online API + Local AI Model Fallback)**:
+  - **Online API Mode (Default)**: Rapidly fetches synced lyrics from LRCLIB; if missing, automatically falls back to local Whisper AI models.
+  - **Direct Local Model Mode**: Offline and privacy-first transcription directly on machine CPU via CTranslate2 / `faster-whisper` (`small` int8 ~460MB, `base`, `tiny`, `medium`).
+  - **Admin Web Controls & CLI**: Interactive **API Toggle**, Target Scope selection (All Library, Specific Playlist, or Single Song), CPU core affinity, RAM limiters, and optional HTDemucs vocal separation.
+- **Multi-Device Real-Time Synchronization**:
+  - Spotify Connect-style real-time control via WebSockets and Redis.
+  - Use your smartphone or secondary browser tab as a remote control for your desktop or stereo playback.
+- **Modern Responsive Design**:
+  - Three curated themes: Blue Dark, Sleek Dark, and Clean Light.
+  - Mobile, tablet, and desktop optimized responsive layouts.
+  - Personalized Home Dashboard with listening history, Top 10 tracks, and diurnal SVG activity charts.
+- **Docker-Ready**:
+  - One-command startup via `docker compose`.
+  - Optional Cloudflare Tunnel integration for zero-trust public access without opening router ports.
 
-### STEP 1 — Download the project
+---
+
+## Quick Start with Docker
+
+### Requirements
+- Docker and Docker Compose installed.
+
+### Step 1: Clone the Repository
 ```bash
 git clone https://github.com/bluedragon320/sangita.git
 cd sangita
 ```
 
-### STEP 2 — Set username and password
+### Step 2: Configure Environment
+Copy the example configuration:
 ```bash
 cp .env.example .env
 ```
-Then open `.env` and change the values:
+Edit `.env` to configure your credentials and secrets:
 ```env
 SANGITA_USER=admin
 SANGITA_PASS=yourpassword
-SECRET_KEY=anylongrandomstring
+SECRET_KEY=generate-a-secure-random-secret-here
 ```
-Change the user name, password as well as the secret_key. Save the file.
 
-### STEP 3 — Add your music
-Create folders inside the `music/` folder. Each folder becomes a playlist in the app.
+### Step 3: Add Your Audio Library
+Add music folders inside the `music/` directory. Each subfolder automatically becomes a playlist in Sangita:
 ```bash
-mkdir -p music/Rock
-mkdir -p music/Jazz
+mkdir -p music/Rock music/Electronic music/Main
 cp /path/to/your/songs/*.mp3 music/Rock/
 ```
-Supported formats: `mp3`, `flac`, `wav`, `ogg`, `m4a`, `aac`, `opus`
 
-### STEP 4 — Start the app
+### Step 4: Launch
 ```bash
 docker compose up --build -d
 ```
-Wait for it to finish. Then open your browser:
-http://localhost:5000
+Open your browser and navigate to:
+**http://localhost:5000**
 
-Login with the username and password you set in `.env`
-
----
-
-## PART 4 — EVERYDAY COMMANDS
-
-**Start the app:**
-```bash
-docker compose up -d
-```
-
-**Stop the app:**
-```bash
-docker compose down
-```
-
-**View logs (if something is wrong):**
-```bash
-docker compose logs -f
-```
-
-**Add new music and restart:**
-```bash
-cp newsong.mp3 music/PlaylistName/
-docker compose restart
-```
-
-**Update the app after code changes:**
-```bash
-docker compose down -v
-docker compose up --build -d
-```
+Log in using the credentials defined in your `.env` file.
 
 ---
 
-## PART 5 — ACCESS FROM OTHER DEVICES
+## Daily Operational Commands
 
-From another phone or computer on the same wifi:
-1. Find your computer's local IP:
-   - Linux: `ip a`
-   - Windows: `ipconfig`
-2. Open this on the other device: `http://YOUR_IP:5000`
-   *(Example: `http://192.168.1.10:5000`)*
+| Action | Command |
+| :--- | :--- |
+| **Start services** | `docker compose up -d` |
+| **Stop services** | `docker compose down` |
+| **View live logs** | `docker compose logs -f` |
+| **Restart backend after adding music** | `docker compose restart sangita` |
+| **Rebuild after code changes** | `docker compose down && docker compose up --build -d` |
 
 ---
 
-## PART 6 — ACCESS FROM ANYWHERE (Cloudflare Tunnel)
+## Synced Lyrics Generation
 
-This lets you open Sangita from your phone on mobile data, from another country, from anywhere — no port forwarding needed.
+Sangita includes an automated, resource-aware lyrics generation engine that pairs `.lrc` sidecar files with your audio tracks.
 
-**Step 1** — Go to https://one.dash.cloudflare.com
-**Step 2** — Networks → Tunnels → Create a tunnel
-**Step 3** — Copy the tunnel token shown on screen
-**Step 4** — Add it to your `.env` file:
-```env
-CLOUDFLARE_TUNNEL_TOKEN=paste-your-token-here
-```
+### 1. From the Web Admin Dashboard
+1. Log in as an administrator and navigate to **Admin Dashboard -> Lyrics Engine**.
+2. **API Toggle**:
+   - **API: ON (Online + Fallback)**: Queries LRCLIB online database; if not found, automatically falls back to your local Whisper AI model.
+   - **API: OFF (Direct Local)**: Skips all online lookups and transcribes directly using the local machine model.
+3. **Target Scope**: Select **All Songs**, **Select Playlist**, or **Select Particular Song**.
+4. **CTranslate2 Model**: Choose between `Small` (recommended ~460MB), `Base`, `Tiny`, or `Medium`.
+5. **Resource Limits**: Set CPU core cap and watchdog RAM limit (default: 4096MB).
+6. Click **Start Lyrics Caption Generation**. Monitor progress live via the real-time processing card, engine badges, and source counters.
 
-**Step 5** — Add the `tunnel` service and adjust ports in your `docker-compose.yml` like this:
-```yaml
-services:
-  redis:
-    image: redis:7-alpine
-    container_name: sangita-redis
-    command: redis-server --appendonly yes
-    volumes:
-      - ./redis-data:/data
-    restart: unless-stopped
-
-  sangita:
-    build: .
-    container_name: sangita-backend
-    expose:
-      - "5000"
-    volumes:
-      - ./music:/app/music
-      - ./data:/app/data
-    environment:
-      - MUSIC_DIR=/app/music
-      - SANGITA_USER=${SANGITA_USER:-admin}
-      - SANGITA_PASS=${SANGITA_PASS:-sangita123}
-      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
-      - SYNC_SERVER_URL=http://sync-server:3001
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-  sync-server:
-    image: node:20-alpine
-    container_name: sangita-sync-server
-    working_dir: /app
-    volumes:
-      - ./sync-server:/app
-    expose:
-      - "3001"
-    environment:
-      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
-      - REDIS_URL=redis://redis:6379
-      - SYNC_PORT=3001
-      - CORS_ORIGIN=*
-    command: sh -c "npm install && npm start"
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-  proxy:
-    image: nginx:alpine
-    container_name: sangita-proxy
-    ports:
-      - "5000:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - sangita
-      - sync-server
-    restart: unless-stopped
-
-  tunnel:
-    image: cloudflare/cloudflared:latest
-    container_name: sangita-tunnel
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    depends_on:
-      - proxy
-```
-
-**Step 6** — In your Cloudflare dashboard, point the tunnel to the Nginx proxy container:
-`http://proxy:80`
-
-**Step 7** — Start the services:
+### 2. From the Command Line (Background / Resumable)
+You can also run the worker directly via CLI inside the container or on your host:
 ```bash
-docker compose up --build -d
+# Process entire library using online API with local fallback
+docker exec -it sangita-backend python3 backend/lyrics_worker.py --cores 2 --max-ram-mb 4096
+
+# Process library strictly offline using local Whisper models (bypassing online API)
+docker exec -it sangita-backend python3 backend/lyrics_worker.py --no-api --model small --cores 2
+
+# Process a specific playlist only
+docker exec -it sangita-backend python3 backend/lyrics_worker.py --playlist "Rock" --cores 2
+
+# Force transcribe a single song with vocal isolation
+docker exec -it sangita-backend python3 backend/lyrics_worker.py --song "Rock/Song.mp3" --force --demucs
 ```
-Your Sangita (along with multi-device sync support) is now live at your Cloudflare domain.
+
+---
+
+## Remote Access (Cloudflare Tunnel)
+
+To securely access Sangita from mobile data or outside your local network without port forwarding:
+
+1. Create a tunnel in the [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com).
+2. Copy your Tunnel Token.
+3. Add the token to `.env`:
+   ```env
+   CLOUDFLARE_TUNNEL_TOKEN=your_cloudflare_tunnel_token_here
+   ```
+4. In `docker-compose.yml`, uncomment the `tunnel` service block:
+   ```yaml
+   tunnel:
+     image: cloudflare/cloudflared:latest
+     container_name: sangita-tunnel
+     restart: unless-stopped
+     command: tunnel --no-autoupdate run
+     environment:
+       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+     depends_on:
+       - proxy
+   ```
+5. In Cloudflare, point the Public Hostname to `http://proxy:80`.
+6. Restart your containers:
+   ```bash
+   docker compose up --build -d
+   ```
+
+---
+
+## Local Development (Without Docker)
+
+### Prerequisites
+- Python 3.11+ with `ffmpeg`
+- Node.js 18+
+- Redis (optional; sync server falls back to in-memory mode if Redis is absent)
+
+### 1. Backend Setup
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+PYTHONPATH=. python3 backend/app.py
+```
+
+### 2. Node Sync Server
+```bash
+cd sync-server
+npm install
+npm start
+```
+
+### 3. Frontend Development Server
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open **http://localhost:5173** in your browser.
+
+---
+
+## Architecture Overview
+
+```
+sangita/
+├── backend/
+│   ├── app.py                 # Media streaming, auth, Pillow covers, SQLite stats, lyrics APIs
+│   ├── lyrics_worker.py       # Resumable batch lyrics worker (Mutagen -> LRCLIB -> faster-whisper)
+│   ├── requirements.txt       # Python dependencies
+│   ├── test_admin_api.py      # Unit tests for admin routes and lyrics endpoints
+│   └── test_lyrics_worker.py  # Unit tests for lyrics metadata and CLI flags
+├── sync-server/
+│   ├── server.js              # Socket.IO multi-device real-time sync with Redis / Memory fallback
+│   └── package.json           # Node.js dependencies
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── AdminDashboard.jsx # Administration, analytics, user management, and lyrics console
+│   │   │   ├── LyricsView.jsx     # Center-stage synced lyrics overlay with click-to-seek
+│   │   │   ├── Player.jsx         # Persistent bottom audio player and controls
+│   │   │   └── ...
+│   │   ├── hooks/
+│   │   │   └── useDeviceSync.js   # Multi-device WebSocket synchronization hook
+│   │   └── index.css              # Custom design system and themes
+│   └── package.json
+├── nginx.conf                 # Gateway reverse proxy configuration
+├── Dockerfile                 # Multi-stage production container build
+└── docker-compose.yml         # Container topology
+```
+
+---
+
+## License
+
+This project is licensed under the terms of the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for details.

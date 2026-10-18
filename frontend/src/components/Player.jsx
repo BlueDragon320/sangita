@@ -71,7 +71,10 @@ export default function Player({
   token,
   isFavorite = false,
   onToggleFavorite,
-  onAddToPlaylist
+  onAddToPlaylist,
+  hasLyrics = false,
+  showLyrics = false,
+  onToggleLyrics
 }) {
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
   const hue = strHue(track?.name || '')
@@ -165,11 +168,22 @@ export default function Player({
           </div>
         </div>
         <div className="player-right">
+          {onToggleLyrics && (
+            <button
+              className={`btn-icon player-lyrics-btn ${showLyrics ? 'active' : ''}`}
+              onClick={onToggleLyrics}
+              title={showLyrics ? "Hide Lyrics" : "Show Synced Lyrics"}
+              data-testid="lyrics-toggle-btn"
+            >
+              <LyricsIcon />
+            </button>
+          )}
           {onToggleRightPanel && (
             <button
               className={`btn-icon ${showRightPanel ? 'active' : ''}`}
               onClick={onToggleRightPanel}
               title="Now Playing View"
+              data-testid="player-right-panel-toggle"
             >
               <PanelIcon />
             </button>
@@ -299,6 +313,16 @@ export default function Player({
       </div>
 
       <div className="player-right">
+        {onToggleLyrics && (
+          <button
+            className={`btn-icon player-lyrics-btn ${showLyrics ? 'active' : ''}`}
+            onClick={onToggleLyrics}
+            title={showLyrics ? "Hide Lyrics" : "Show Synced Lyrics"}
+            data-testid="lyrics-toggle-btn"
+          >
+            <LyricsIcon />
+          </button>
+        )}
         {onToggleRightPanel && (
           <button
             className={`btn-icon ${showRightPanel ? 'active' : ''}`}
@@ -453,6 +477,39 @@ function PlusIcon({ width = 16, height = 16 }) {
   return (
     <svg viewBox="0 0 24 24" width={width} height={height} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 5v14M5 12h14"/>
+    </svg>
+  )
+}
+
+function LyricsIcon({ width = 19, height = 19, className = '' }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={width}
+      height={height}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+    >
+      {/* Under-sheet / offset layer */}
+      <path d="M6 21h12a2 2 0 0 0 2-2V7" strokeOpacity="0.4" strokeWidth="1.5" />
+      {/* Main front page with folded corner */}
+      <path d="M4 3a1.5 1.5 0 0 1 1.5-1.5h8.5l5 5V18a1.5 1.5 0 0 1-1.5 1.5H5.5A1.5 1.5 0 0 1 4 18V3z" />
+      <polyline points="14 1.5 14 6.5 19 6.5" />
+      {/* Horizontal lyrics lines */}
+      <line x1="6.8" y1="7" x2="10.5" y2="7" strokeWidth="1.6" />
+      <line x1="6.8" y1="9.6" x2="10.5" y2="9.6" strokeWidth="1.6" />
+      <line x1="6.8" y1="12.2" x2="9.5" y2="12.2" strokeWidth="1.6" />
+      <line x1="6.8" y1="14.8" x2="16" y2="14.8" strokeWidth="1.6" />
+      {/* Beamed music notes */}
+      <path d="M12.8 11.5V5.2l4.8-1.2v6.2" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
+      <path d="M12.8 7.4l4.8-1.2" stroke="currentColor" strokeWidth="1.6" />
+      <ellipse cx="11.4" cy="11.5" rx="1.6" ry="1.2" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
+      <ellipse cx="16.4" cy="10.3" rx="1.6" ry="1.2" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
     </svg>
   )
 }
