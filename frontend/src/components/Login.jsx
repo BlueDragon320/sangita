@@ -34,8 +34,12 @@ export default function Login({ onLogin }) {
     <div className="login-page">
       <div className="login-bg" />
       <div className="login-grid" />
-      <div className="login-card">
-        <div className="login-logo">
+      <div className="login-wrapper">
+        <h1 className="login-warning-header">
+          Warning! &quot;This is a private website for personal use&quot; If you dont have the permission from Owner of the WebSite please exit
+        </h1>
+        <div className="login-card">
+          <div className="login-logo">
           <div className="login-logo-icon">
             <svg viewBox="0 0 24 24" width="26" height="26" fill="white">
               <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
@@ -75,6 +79,7 @@ export default function Login({ onLogin }) {
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
+      </div>
       </div>
     </div>
   )
