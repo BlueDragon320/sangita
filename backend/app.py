@@ -2294,15 +2294,23 @@ def admin_lyrics_status():
         }
 
     saved_remote_url = ""
+    saved_only_gpu = False
     try:
         cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
         if os.path.isfile(cfg_file):
             with open(cfg_file, "r") as f:
-                saved_remote_url = json.load(f).get("remote_whisper_url", "")
+                cfg_data = json.load(f)
+                saved_remote_url = cfg_data.get("remote_whisper_url", "")
+                saved_only_gpu = bool(cfg_data.get("only_remote_gpu", False))
     except Exception:
         pass
 
-    return jsonify({"job": status_data, "resources": resources, "remote_whisper_url": saved_remote_url})
+    return jsonify({
+        "job": status_data,
+        "resources": resources,
+        "remote_whisper_url": saved_remote_url,
+        "only_remote_gpu": saved_only_gpu
+    })
 
 
 @app.route("/api/admin/lyrics/test-remote", methods=["POST"])
@@ -2325,8 +2333,13 @@ def admin_lyrics_test_remote():
             # Remember URL for user convenience
             try:
                 cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
+                cur_cfg = {}
+                if os.path.isfile(cfg_file):
+                    with open(cfg_file, "r") as f:
+                        cur_cfg = json.load(f)
+                cur_cfg["remote_whisper_url"] = clean_url
                 with open(cfg_file, "w") as f:
-                    json.dump({"remote_whisper_url": clean_url}, f)
+                    json.dump(cur_cfg, f)
             except Exception:
                 pass
 
@@ -2338,7 +2351,8 @@ def admin_lyrics_test_remote():
                 "has_cuda": info.get("has_cuda", False),
                 "total_vram_mb": info.get("total_vram_mb", 0),
                 "used_vram_mb": info.get("used_vram_mb", 0),
-                "active_job": info.get("active_job", "idle")
+                "active_job": info.get("active_job", "idle"),
+                "limits": info.get("limits", {})
             })
         else:
             return jsonify({
@@ -2381,6 +2395,7 @@ def admin_lyrics_start():
     demucs = bool(data.get("demucs", False))
     api = bool(data.get("api", True))
     remote_whisper_url = str(data.get("remote_whisper_url") or data.get("remote_url") or "").strip()
+    only_remote_gpu = bool(data.get("only_remote_gpu", False))
 
     worker_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lyrics_worker.py")
     cmd = [
@@ -2407,10 +2422,21 @@ def admin_lyrics_start():
         cmd.append("--no-api")
     if remote_whisper_url:
         cmd.extend(["--remote-whisper-url", remote_whisper_url])
+    if only_remote_gpu:
+        cmd.append("--only-remote-gpu")
+
+    if remote_whisper_url or "only_remote_gpu" in data:
         try:
             cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
+            cur_cfg = {}
+            if os.path.isfile(cfg_file):
+                with open(cfg_file, "r") as f:
+                    cur_cfg = json.load(f)
+            if remote_whisper_url:
+                cur_cfg["remote_whisper_url"] = remote_whisper_url
+            cur_cfg["only_remote_gpu"] = only_remote_gpu
             with open(cfg_file, "w") as f:
-                json.dump({"remote_whisper_url": remote_whisper_url}, f)
+                json.dump(cur_cfg, f)
         except Exception:
             pass
 

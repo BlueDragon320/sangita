@@ -68,5 +68,38 @@ class TestWhisperGPUServer(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(len(HISTORY), 0)
 
+    def test_settings_endpoint_get_and_post(self):
+        # 1. GET settings
+        res = self.client.get('/api/settings')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertIn("limits", data)
+        self.assertIn("cpu_threads", data["limits"])
+        self.assertIn("max_ram_mb", data["limits"])
+        self.assertIn("cooldown_sec", data["limits"])
+
+        # 2. POST update settings
+        new_limits = {
+            "cpu_threads": 4,
+            "max_ram_mb": 2048,
+            "cooldown_sec": 1.0,
+            "low_priority": True,
+            "compute_type": "int8_float16"
+        }
+        res = self.client.post('/api/settings', json=new_limits)
+        self.assertEqual(res.status_code, 200)
+        resp = res.get_json()
+        self.assertTrue(resp["success"])
+        self.assertEqual(resp["limits"]["cpu_threads"], 4)
+        self.assertEqual(resp["limits"]["max_ram_mb"], 2048)
+        self.assertEqual(resp["limits"]["cooldown_sec"], 1.0)
+        self.assertEqual(resp["limits"]["compute_type"], "int8_float16")
+
+        # 3. Health check reflects limits
+        res_health = self.client.get('/health')
+        health_data = res_health.get_json()
+        self.assertIn("limits", health_data)
+        self.assertEqual(health_data["limits"]["cpu_threads"], 4)
+
 if __name__ == "__main__":
     unittest.main()

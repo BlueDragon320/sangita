@@ -690,6 +690,75 @@
       </div>
     </div>
 
+    <!-- Local Device Resource Limits & Safeguards Section -->
+    <div class="limits-section" style="background: var(--bg-card); backdrop-filter: blur(12px); border: 1px solid var(--border-color); border-radius: 16px; padding: 1.5rem; margin-bottom: 1.5rem;">
+      <div class="section-header" style="margin-bottom: 1.25rem;">
+        <div class="section-title">
+          <span>⚙️ Local Hardware Resource Limits & Safeguards</span>
+          <span class="card-badge" id="limitsSavedBadge" style="display: none; background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald);">✓ Saved</span>
+        </div>
+        <button class="btn btn-emerald" onclick="saveResourceLimits()">
+          💾 Apply Limits
+        </button>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+        <!-- CPU Limit -->
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 12px; padding: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-main);">💻 Max CPU Threads</label>
+            <span class="badge-pill" id="valCpuThreads" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa;">2</span>
+          </div>
+          <input type="range" id="inputCpuThreads" min="1" max="16" value="2" style="width: 100%; accent-color: #3b82f6; cursor: pointer;" oninput="document.getElementById('valCpuThreads').textContent = this.value">
+          <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 0.4rem;">
+            Caps CPU cores used by Whisper to keep your laptop responsive.
+          </div>
+        </div>
+
+        <!-- RAM Ceiling -->
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 12px; padding: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-main);">🧠 RAM Ceiling (MB)</label>
+            <span class="badge-pill" id="valRamMb" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald);">4096 MB</span>
+          </div>
+          <input type="range" id="inputRamMb" min="1024" max="16384" step="512" value="4096" style="width: 100%; accent-color: #10b981; cursor: pointer;" oninput="document.getElementById('valRamMb').textContent = this.value + ' MB'">
+          <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 0.4rem;">
+            Watchdog ceiling; unloads models if memory exceeds limit.
+          </div>
+        </div>
+
+        <!-- GPU Cooldown / Throttle -->
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 12px; padding: 1rem;">
+          <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-main); display: block; margin-bottom: 0.5rem;">🎮 GPU Cooldown Pause</label>
+          <select id="selectCooldown" style="width: 100%; background: #0b0f19; border: 1px solid var(--border-color); color: var(--text-main); padding: 0.45rem 0.65rem; border-radius: 8px; font-family: var(--font-main); font-size: 0.8rem;">
+            <option value="0">0.0s (Full Continuous Speed)</option>
+            <option value="0.25">0.25s Pause</option>
+            <option value="0.5">0.5s Pause (Balanced - Recommended)</option>
+            <option value="1.0">1.0s Pause (Low Fan Noise)</option>
+            <option value="2.0">2.0s Pause (Cool & Quiet)</option>
+          </select>
+          <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 0.4rem;">
+            Pauses between songs to prevent continuous 100% GPU heat.
+          </div>
+        </div>
+
+        <!-- Compute Precision & Priority -->
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 12px; padding: 1rem;">
+          <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-main); display: block; margin-bottom: 0.5rem;">⚡ Precision & Priority</label>
+          <select id="selectComputeType" style="width: 100%; background: #0b0f19; border: 1px solid var(--border-color); color: var(--text-main); padding: 0.45rem 0.65rem; border-radius: 8px; font-family: var(--font-main); font-size: 0.8rem; margin-bottom: 0.6rem;">
+            <option value="auto">auto (Detect optimal)</option>
+            <option value="float16">float16 (Fastest CUDA)</option>
+            <option value="int8_float16">int8_float16 (50% Less VRAM)</option>
+            <option value="int8">int8 (Lowest Memory CPU/GPU)</option>
+          </select>
+          <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.75rem; color: var(--text-muted);">
+            <input type="checkbox" id="checkLowPriority" style="accent-color: #10b981;">
+            <span>Low OS Priority (Smooth Gaming/Apps)</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
     <!-- Processed Songs History Section -->
     <div class="history-section">
       <div class="section-header">
@@ -900,7 +969,60 @@
       );
     }
 
-    // Poll telemetry every 1.5s
+    let limitsLoaded = false;
+    async function loadResourceLimits() {
+      try {
+        const res = await fetch('/api/settings');
+        if (!res.ok) return;
+        const data = await res.json();
+        const lim = data.limits || {};
+        if (lim.total_cores) {
+          document.getElementById('inputCpuThreads').max = lim.total_cores;
+        }
+        if (!limitsLoaded) {
+          limitsLoaded = true;
+          document.getElementById('inputCpuThreads').value = lim.cpu_threads || 2;
+          document.getElementById('valCpuThreads').textContent = lim.cpu_threads || 2;
+
+          document.getElementById('inputRamMb').value = lim.max_ram_mb || 4096;
+          document.getElementById('valRamMb').textContent = (lim.max_ram_mb || 4096) + ' MB';
+
+          document.getElementById('selectCooldown').value = String(lim.cooldown_sec !== undefined ? lim.cooldown_sec : 0.5);
+          document.getElementById('selectComputeType').value = lim.compute_type || 'auto';
+          document.getElementById('checkLowPriority').checked = Boolean(lim.low_priority);
+        }
+      } catch (e) {
+        console.warn('Error loading settings:', e);
+      }
+    }
+
+    async function saveResourceLimits() {
+      const payload = {
+        cpu_threads: parseInt(document.getElementById('inputCpuThreads').value, 10),
+        max_ram_mb: parseInt(document.getElementById('inputRamMb').value, 10),
+        cooldown_sec: parseFloat(document.getElementById('selectCooldown').value),
+        compute_type: document.getElementById('selectComputeType').value,
+        low_priority: document.getElementById('checkLowPriority').checked
+      };
+
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          const badge = document.getElementById('limitsSavedBadge');
+          badge.style.display = 'inline-block';
+          setTimeout(() => { badge.style.display = 'none'; }, 2500);
+        }
+      } catch (e) {
+        alert('Failed to save settings: ' + e.message);
+      }
+    }
+
+    // Initialize telemetry and resource limits
+    loadResourceLimits();
     fetchTelemetry();
     setInterval(fetchTelemetry, 1500);
   </script>

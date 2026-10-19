@@ -15,12 +15,14 @@ Features:
 
 import os
 import sys
+import gc
 import time
 import uuid
 import shutil
 import logging
 import argparse
 import tempfile
+import threading
 import subprocess
 from datetime import datetime, timezone
 
@@ -67,8 +69,53 @@ SERVER_CONFIG = {
     "compute_type": "auto",
     "default_model": "small",
     "host": "0.0.0.0",
-    "port": 8000
+    "port": 8000,
+    "cpu_threads": max(1, (psutil.cpu_count(logical=False) or 4) // 2),
+    "max_ram_mb": 4096,
+    "cooldown_sec": 0.5,
+    "low_priority": True
 }
+TRANSCRIBE_LOCK = threading.Lock()
+
+
+def apply_process_priority(low_priority=True):
+    """Sets OS scheduling priority to low/below-normal to prevent freezing foreground desktop apps."""
+    try:
+        p = psutil.Process()
+        if sys.platform == "win32":
+            if low_priority:
+                p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+            else:
+                p.nice(psutil.NORMAL_PRIORITY_CLASS)
+        else:
+            if low_priority and hasattr(os, "nice"):
+                try:
+                    os.nice(10)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"Could not adjust process priority: {e}")
+
+
+def check_memory_watchdog():
+    """Unloads cached models if process RSS exceeds configured max_ram_mb."""
+    try:
+        p = psutil.Process()
+        rss_mb = p.memory_info().rss / (1024 * 1024)
+        max_ram = SERVER_CONFIG.get("max_ram_mb", 4096)
+        if rss_mb > max_ram:
+            logger.warning(f"Process RAM ({rss_mb:.1f} MB) exceeds limit ({max_ram} MB). Unloading models and collecting garbage...")
+            MODELS_CACHE.clear()
+            gc.collect()
+            if shutil.which("nvidia-smi"):
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"Memory watchdog error: {e}")
 
 
 def detect_gpu():
@@ -163,18 +210,19 @@ def get_whisper_model(model_name="small"):
             device = "cpu"
             compute_type = "int8" if compute_type == "auto" else compute_type
 
-    cache_key = f"{model_name}_{device}_{compute_type}"
+    cpu_threads = int(SERVER_CONFIG.get("cpu_threads", 2))
+    cache_key = f"{model_name}_{device}_{compute_type}_{cpu_threads}"
     if cache_key in MODELS_CACHE:
         return MODELS_CACHE[cache_key], device, compute_type
 
-    logger.info(f"Loading faster-whisper model '{model_name}' on {device} ({compute_type})...")
+    logger.info(f"Loading faster-whisper model '{model_name}' on {device} ({compute_type}, {cpu_threads} CPU threads)...")
     from faster_whisper import WhisperModel
 
     model = WhisperModel(
         model_name,
         device=device,
         compute_type=compute_type,
-        cpu_threads=max(1, psutil.cpu_count(logical=False) or 2)
+        cpu_threads=cpu_threads
     )
     MODELS_CACHE[cache_key] = model
     return model, device, compute_type
@@ -190,7 +238,7 @@ def index():
 @app.route("/health", methods=["GET"])
 @app.route("/api/health", methods=["GET"])
 def health():
-    """Health check endpoint used by Sangita server to verify GPU worker connectivity."""
+    """Health check endpoint used by Sangita server to verify GPU worker connectivity and resource safeguards."""
     gpu_info = detect_gpu()
     return jsonify({
         "status": "ready",
@@ -201,16 +249,79 @@ def health():
         "total_vram_mb": gpu_info["total_vram_mb"],
         "used_vram_mb": gpu_info["used_vram_mb"],
         "active_job": ACTIVE_JOB["status"],
-        "models_cached": list(MODELS_CACHE.keys())
+        "models_cached": list(MODELS_CACHE.keys()),
+        "limits": {
+            "cpu_threads": SERVER_CONFIG.get("cpu_threads", 2),
+            "max_ram_mb": SERVER_CONFIG.get("max_ram_mb", 4096),
+            "cooldown_sec": SERVER_CONFIG.get("cooldown_sec", 0.5),
+            "low_priority": SERVER_CONFIG.get("low_priority", True),
+            "compute_type": SERVER_CONFIG.get("compute_type", "auto"),
+            "total_cores": psutil.cpu_count(logical=True) or 4
+        }
     })
 
 
 @app.route("/api/telemetry", methods=["GET"])
 def telemetry():
-    """Returns real-time telemetry and processed song history for the dashboard."""
+    """Returns real-time telemetry, processed song history, and limits for the dashboard."""
     data = get_hardware_telemetry()
     data["history"] = HISTORY[:50]
+    data["limits"] = {
+        "cpu_threads": SERVER_CONFIG.get("cpu_threads", 2),
+        "max_ram_mb": SERVER_CONFIG.get("max_ram_mb", 4096),
+        "cooldown_sec": SERVER_CONFIG.get("cooldown_sec", 0.5),
+        "low_priority": SERVER_CONFIG.get("low_priority", True),
+        "compute_type": SERVER_CONFIG.get("compute_type", "auto"),
+        "total_cores": psutil.cpu_count(logical=True) or 4
+    }
     return jsonify(data)
+
+
+@app.route("/api/settings", methods=["GET", "POST"])
+def api_settings():
+    """Reads or updates local hardware resource limits dynamically."""
+    global SERVER_CONFIG, MODELS_CACHE
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        if "cpu_threads" in data:
+            val = int(data["cpu_threads"])
+            SERVER_CONFIG["cpu_threads"] = max(1, min(val, psutil.cpu_count(logical=True) or 16))
+            MODELS_CACHE.clear()
+        if "max_ram_mb" in data:
+            SERVER_CONFIG["max_ram_mb"] = max(512, int(data["max_ram_mb"]))
+        if "cooldown_sec" in data:
+            SERVER_CONFIG["cooldown_sec"] = max(0.0, float(data["cooldown_sec"]))
+        if "low_priority" in data:
+            SERVER_CONFIG["low_priority"] = bool(data["low_priority"])
+            apply_process_priority(SERVER_CONFIG["low_priority"])
+        if "compute_type" in data and data["compute_type"] in ["auto", "float16", "int8_float16", "int8"]:
+            if SERVER_CONFIG["compute_type"] != data["compute_type"]:
+                SERVER_CONFIG["compute_type"] = data["compute_type"]
+                MODELS_CACHE.clear()
+
+        return jsonify({
+            "success": True,
+            "message": "Resource limits updated successfully",
+            "limits": {
+                "cpu_threads": SERVER_CONFIG["cpu_threads"],
+                "max_ram_mb": SERVER_CONFIG["max_ram_mb"],
+                "cooldown_sec": SERVER_CONFIG["cooldown_sec"],
+                "low_priority": SERVER_CONFIG["low_priority"],
+                "compute_type": SERVER_CONFIG["compute_type"],
+                "total_cores": psutil.cpu_count(logical=True) or 4
+            }
+        })
+    else:
+        return jsonify({
+            "limits": {
+                "cpu_threads": SERVER_CONFIG.get("cpu_threads", 2),
+                "max_ram_mb": SERVER_CONFIG.get("max_ram_mb", 4096),
+                "cooldown_sec": SERVER_CONFIG.get("cooldown_sec", 0.5),
+                "low_priority": SERVER_CONFIG.get("low_priority", True),
+                "compute_type": SERVER_CONFIG.get("compute_type", "auto"),
+                "total_cores": psutil.cpu_count(logical=True) or 4
+            }
+        })
 
 
 @app.route("/api/clear-history", methods=["POST"])
@@ -259,127 +370,137 @@ def transcribe():
     }
 
     temp_purged = False
-    try:
-        # Save audio to temporary location
-        uploaded_file.save(temp_path)
-        file_size = os.path.getsize(temp_path)
-        ACTIVE_JOB["size_bytes"] = file_size
+    with TRANSCRIBE_LOCK:
+        try:
+            # Save audio to temporary location
+            uploaded_file.save(temp_path)
+            file_size = os.path.getsize(temp_path)
+            ACTIVE_JOB["size_bytes"] = file_size
 
-        logger.info(f"Received '{filename}' ({file_size / 1024:.1f} KB) from {request.remote_addr}. Transcribing with model '{model_name}'...")
+            logger.info(f"Received '{filename}' ({file_size / 1024:.1f} KB) from {request.remote_addr}. Transcribing with model '{model_name}'...")
 
-        # Load model and transcribe
-        model, device_used, compute_type_used = get_whisper_model(model_name)
+            # Load model and transcribe with configured resource limits
+            model, device_used, compute_type_used = get_whisper_model(model_name)
 
-        lang_param = None if (not language or language == "auto") else language
-        segments, info = model.transcribe(
-            temp_path,
-            language=lang_param,
-            beam_size=beam_size,
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
-            condition_on_previous_text=False,
-            no_speech_threshold=0.6,
-            compression_ratio_threshold=2.4
-        )
+            lang_param = None if (not language or language == "auto") else language
+            segments, info = model.transcribe(
+                temp_path,
+                language=lang_param,
+                beam_size=beam_size,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
+                condition_on_previous_text=False,
+                no_speech_threshold=0.6,
+                compression_ratio_threshold=2.4
+            )
 
-        detected_lang = getattr(info, "language", language or "unknown")
+            detected_lang = getattr(info, "language", language or "unknown")
 
-        # Format into LRC timestamped lines
-        lrc_lines = []
-        last_text = ""
-        repetition_count = 0
+            # Format into LRC timestamped lines
+            lrc_lines = []
+            last_text = ""
+            repetition_count = 0
 
-        for seg in segments:
-            text = (seg.text or "").strip()
-            if not text:
-                continue
-
-            # Anti-repetition & hallucination guards
-            norm = text.lower().strip()
-            if norm == last_text:
-                repetition_count += 1
-                if repetition_count > 2:
+            for seg in segments:
+                text = (seg.text or "").strip()
+                if not text:
                     continue
-            else:
-                last_text = norm
-                repetition_count = 1
 
-            start_s = float(seg.start)
-            m = int(start_s // 60)
-            s = start_s % 60
-            lrc_lines.append(f"[{m:02d}:{s:05.2f}] {text}")
+                # Anti-repetition & hallucination guards
+                norm = text.lower().strip()
+                if norm == last_text:
+                    repetition_count += 1
+                    if repetition_count > 2:
+                        continue
+                else:
+                    last_text = norm
+                    repetition_count = 1
 
-        lrc_content = "\n".join(lrc_lines)
-        duration_sec = round(time.time() - start_time, 2)
+                start_s = float(seg.start)
+                m = int(start_s // 60)
+                s = start_s % 60
+                lrc_lines.append(f"[{m:02d}:{s:05.2f}] {text}")
 
-        # Log and record success in history
-        history_item = {
-            "id": str(uuid.uuid4())[:8],
-            "filename": filename,
-            "duration_sec": duration_sec,
-            "language": detected_lang,
-            "lines_count": len(lrc_lines),
-            "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
-            "status": "success",
-            "device": f"{device_used} ({compute_type_used})",
-            "lrc": lrc_content
-        }
-        HISTORY.insert(0, history_item)
-        if len(HISTORY) > MAX_HISTORY:
-            HISTORY.pop()
+            lrc_content = "\n".join(lrc_lines)
+            duration_sec = round(time.time() - start_time, 2)
 
-        logger.info(f"Completed '{filename}' in {duration_sec}s ({len(lrc_lines)} lines, lang={detected_lang})")
+            # GPU Cooldown rest if configured
+            cooldown = float(SERVER_CONFIG.get("cooldown_sec", 0.0))
+            if cooldown > 0:
+                logger.info(f"Applying {cooldown}s GPU cooldown rest...")
+                time.sleep(cooldown)
 
-        return jsonify({
-            "success": True,
-            "lrc": lrc_content,
-            "language": detected_lang,
-            "lines_count": len(lrc_lines),
-            "duration_sec": duration_sec,
-            "device": device_used,
-            "compute_type": compute_type_used,
-            "filename": filename,
-            "temp_purged": True
-        })
+            # Check memory watchdog
+            check_memory_watchdog()
 
-    except Exception as e:
-        logger.error(f"Error transcribing '{filename}': {e}", exc_info=True)
-        duration_sec = round(time.time() - start_time, 2)
-        history_item = {
-            "id": str(uuid.uuid4())[:8],
-            "filename": filename,
-            "duration_sec": duration_sec,
-            "language": "error",
-            "lines_count": 0,
-            "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
-            "status": "error",
-            "error_message": str(e),
-            "device": SERVER_CONFIG["device"],
-            "lrc": ""
-        }
-        HISTORY.insert(0, history_item)
-        return jsonify({"success": False, "error": str(e)}), 500
+            # Log and record success in history
+            history_item = {
+                "id": str(uuid.uuid4())[:8],
+                "filename": filename,
+                "duration_sec": duration_sec,
+                "language": detected_lang,
+                "lines_count": len(lrc_lines),
+                "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+                "status": "success",
+                "device": f"{device_used} ({compute_type_used})",
+                "lrc": lrc_content
+            }
+            HISTORY.insert(0, history_item)
+            if len(HISTORY) > MAX_HISTORY:
+                HISTORY.pop()
 
-    finally:
-        # STRICT REQUIREMENT: Delete temp audio file immediately after processing
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-                temp_purged = True
-                logger.info(f"Purged temp audio file: {temp_path}")
-            except Exception as err:
-                logger.warning(f"Could not delete temp audio {temp_path}: {err}")
+            logger.info(f"Completed '{filename}' in {duration_sec}s ({len(lrc_lines)} lines, lang={detected_lang})")
 
-        # Reset active job state
-        ACTIVE_JOB = {
-            "status": "idle",
-            "filename": None,
-            "size_bytes": 0,
-            "started_at": None,
-            "client_ip": None,
-            "model": None,
-            "language": None
-        }
+            return jsonify({
+                "success": True,
+                "lrc": lrc_content,
+                "language": detected_lang,
+                "lines_count": len(lrc_lines),
+                "duration_sec": duration_sec,
+                "device": device_used,
+                "compute_type": compute_type_used,
+                "filename": filename,
+                "temp_purged": True
+            })
+
+        except Exception as e:
+            logger.error(f"Error transcribing '{filename}': {e}", exc_info=True)
+            duration_sec = round(time.time() - start_time, 2)
+            history_item = {
+                "id": str(uuid.uuid4())[:8],
+                "filename": filename,
+                "duration_sec": duration_sec,
+                "language": "error",
+                "lines_count": 0,
+                "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+                "status": "error",
+                "error_message": str(e),
+                "device": SERVER_CONFIG["device"],
+                "lrc": ""
+            }
+            HISTORY.insert(0, history_item)
+            return jsonify({"success": False, "error": str(e)}), 500
+
+        finally:
+            # STRICT REQUIREMENT: Delete temp audio file immediately after processing
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                    temp_purged = True
+                    logger.info(f"Purged temp audio file: {temp_path}")
+                except Exception as err:
+                    logger.warning(f"Could not delete temp audio {temp_path}: {err}")
+
+            # Reset active job state
+            ACTIVE_JOB = {
+                "status": "idle",
+                "filename": None,
+                "size_bytes": 0,
+                "started_at": None,
+                "client_ip": None,
+                "model": None,
+                "language": None
+            }
 
 
 def parse_args():
@@ -389,6 +510,10 @@ def parse_args():
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"], help="Compute device (default: auto)")
     parser.add_argument("--compute-type", default="auto", choices=["auto", "float16", "int8_float16", "int8"], help="Compute precision")
     parser.add_argument("--model", default="small", choices=["tiny", "base", "small", "medium", "large-v3"], help="Default Whisper model")
+    parser.add_argument("--cpu-threads", type=int, default=None, help="Limit CPU threads used by Whisper")
+    parser.add_argument("--max-ram-mb", type=int, default=4096, help="RAM ceiling before unloading models (MB)")
+    parser.add_argument("--cooldown-sec", type=float, default=0.5, help="Cooldown pause between songs to prevent continuous 100% GPU heat (seconds)")
+    parser.add_argument("--no-low-priority", action="store_true", help="Do not lower process priority")
     return parser.parse_args()
 
 
@@ -400,6 +525,17 @@ if __name__ == "__main__":
     SERVER_CONFIG["compute_type"] = args.compute_type
     SERVER_CONFIG["default_model"] = args.model
 
+    if args.cpu_threads is not None:
+        SERVER_CONFIG["cpu_threads"] = max(1, args.cpu_threads)
+    if args.max_ram_mb is not None:
+        SERVER_CONFIG["max_ram_mb"] = max(512, args.max_ram_mb)
+    if args.cooldown_sec is not None:
+        SERVER_CONFIG["cooldown_sec"] = max(0.0, args.cooldown_sec)
+    if args.no_low_priority:
+        SERVER_CONFIG["low_priority"] = False
+
+    apply_process_priority(SERVER_CONFIG["low_priority"])
+
     gpu = detect_gpu()
     print("=" * 65)
     print("  Sangita — Local PC Lyrics API (Whisper GPU Node)")
@@ -410,6 +546,10 @@ if __name__ == "__main__":
         print(f"  • Total VRAM:    {gpu['total_vram_mb']} MB")
         print(f"  • Driver:        {gpu['driver_version']}")
     print(f"  • Default Model: {args.model}")
+    print(f"  • CPU Threads:   {SERVER_CONFIG['cpu_threads']} threads (Capped)")
+    print(f"  • RAM Ceiling:   {SERVER_CONFIG['max_ram_mb']} MB (Watchdog)")
+    print(f"  • GPU Cooldown:  {SERVER_CONFIG['cooldown_sec']}s between songs")
+    print(f"  • Low Priority:  {'Enabled (Smooth desktop)' if SERVER_CONFIG['low_priority'] else 'Disabled'}")
     print(f"  • Local Web UI:  http://localhost:{args.port}")
     print(f"  • Network URL:   http://<your-pc-ip>:{args.port}")
     print("=" * 65)

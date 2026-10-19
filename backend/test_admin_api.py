@@ -204,6 +204,23 @@ class TestAdminAPI(unittest.TestCase):
             self.assertIn('--remote-whisper-url', cmd_args)
             self.assertIn('http://192.168.1.50:8000', cmd_args)
 
+            # 4. Exclusive GPU mode (only_remote_gpu: True)
+            res = self.client.post('/api/admin/lyrics/start', headers=admin_headers, json={
+                'remote_whisper_url': 'http://192.168.1.50:8000',
+                'only_remote_gpu': True
+            })
+            self.assertEqual(res.status_code, 202)
+            cmd_args = mock_popen.call_args[0][0]
+            self.assertIn('--only-remote-gpu', cmd_args)
+            self.assertIn('--remote-whisper-url', cmd_args)
+
+        # 5. Check status endpoint reports only_remote_gpu
+        res = self.client.get('/api/admin/lyrics/status', headers=admin_headers)
+        self.assertEqual(res.status_code, 200)
+        status_json = res.get_json()
+        self.assertIn('only_remote_gpu', status_json)
+        self.assertTrue(status_json['only_remote_gpu'])
+
     def test_admin_lyrics_test_remote_endpoint(self):
         from unittest.mock import patch, MagicMock
         admin_headers = {'Authorization': f'Bearer {self.admin_token}'}

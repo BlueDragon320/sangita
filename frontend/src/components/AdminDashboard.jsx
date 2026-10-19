@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 
 function strHue(str) {
   let h = 0
@@ -229,8 +229,10 @@ export default function AdminDashboard({
     playlist: '',
     song: '',
     remote_whisper_enabled: false,
-    remote_whisper_url: ''
+    remote_whisper_url: '',
+    only_remote_gpu: false
   })
+  const hasLoadedLyricsNodeConfigRef = useRef(false)
   const [remoteGpuTestLoading, setRemoteGpuTestLoading] = useState(false)
   const [remoteGpuTestResult, setRemoteGpuTestResult] = useState(null)
   const [lyricsActionLoading, setLyricsActionLoading] = useState(false)
@@ -308,12 +310,18 @@ export default function AdminDashboard({
       if (res.ok) {
         const data = await res.json()
         setLyricsStatus(data)
-        if (data.remote_whisper_url) {
+        if (!hasLoadedLyricsNodeConfigRef.current) {
+          hasLoadedLyricsNodeConfigRef.current = true
           setLyricsConfig(c => {
-            if (!c.remote_whisper_url) {
-              return { ...c, remote_whisper_url: data.remote_whisper_url, remote_whisper_enabled: true }
+            const next = { ...c }
+            if (!c.remote_whisper_url && data.remote_whisper_url) {
+              next.remote_whisper_url = data.remote_whisper_url
+              next.remote_whisper_enabled = true
             }
-            return c
+            if (data.only_remote_gpu !== undefined) {
+              next.only_remote_gpu = Boolean(data.only_remote_gpu)
+            }
+            return next
           })
         }
       }
@@ -386,6 +394,9 @@ export default function AdminDashboard({
       let payload = overrideParams ? { ...lyricsConfig, ...overrideParams } : { ...lyricsConfig }
       if (!payload.remote_whisper_enabled) {
         delete payload.remote_whisper_url
+        delete payload.only_remote_gpu
+      } else {
+        payload.only_remote_gpu = Boolean(lyricsConfig.only_remote_gpu)
       }
       if (payload.scope === 'playlist') {
         if (!payload.playlist) {
@@ -2643,7 +2654,7 @@ export default function AdminDashboard({
              ========================================================================= */
           <div className="lyrics-engine-view" data-testid="lyrics-engine-content">
             {/* 1. Live Telemetry KPI Cards */}
-            <div className="kpi-grid">
+            <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
               {/* Host CPU & Per-Core */}
               <div className="kpi-card">
                 <div className="kpi-header">
@@ -2705,27 +2716,6 @@ export default function AdminDashboard({
                 </div>
               </div>
 
-              {/* Worker Process Resource Telemetry */}
-              <div className="kpi-card">
-                <div className="kpi-header">
-                  <span className="kpi-label">Worker Process Status</span>
-                  <span className={`status-pill ${lyricsStatus?.job?.state || 'idle'}`}>
-                    {lyricsStatus?.job?.state === 'running' && <span className="live-dot-pulse" />}
-                    {(lyricsStatus?.job?.state || 'IDLE').toUpperCase()}
-                  </span>
-                </div>
-                <div className="kpi-value" style={{ fontSize: '1.4rem' }}>
-                  {lyricsStatus?.resources?.worker_cpu_percent !== undefined
-                    ? `${lyricsStatus.resources.worker_cpu_percent.toFixed(1)}% CPU`
-                    : 'Inactive'}
-                </div>
-                <div className="kpi-subtext">
-                  {lyricsStatus?.resources?.worker_ram_mb !== undefined
-                    ? `${lyricsStatus.resources.worker_ram_mb.toFixed(1)} MB RSS (PID: ${lyricsStatus.job?.pid})`
-                    : 'No worker process running'}
-                </div>
-              </div>
-
               {/* Overall Coverage / Summary */}
               <div className="kpi-card">
                 <div className="kpi-header">
@@ -2755,7 +2745,14 @@ export default function AdminDashboard({
                           ⚡ API OFF (Direct Local)
                         </span>
                       )}
-                      {lyricsStatus.job.current_source_type === 'api' ? (
+                      {lyricsStatus.job.config?.only_remote_gpu && (
+                        <span className="source-pill" style={{ fontSize: '10px', background: 'rgba(99, 102, 241, 0.2)', color: '#A5B4FC', border: '1px solid rgba(99, 102, 241, 0.4)' }}>
+                          🛡️ Exclusive GPU (0% Server CPU)
+                        </span>
+                      )}
+                      {lyricsStatus.job.current_source_type === 'remote_gpu' ? (
+                        <span className="engine-badge" style={{ background: 'rgba(16, 185, 129, 0.2)', color: '#34D399', border: '1px solid rgba(16, 185, 129, 0.4)' }}>⚡ Remote PC GPU</span>
+                      ) : lyricsStatus.job.current_source_type === 'api' ? (
                         <span className="engine-badge api">🌐 Online API (LRCLIB)</span>
                       ) : lyricsStatus.job.current_source_type === 'local_machine' ? (
                         <span className="engine-badge local">⚡ Local Machine (Whisper 500MB Model)</span>
@@ -2849,6 +2846,12 @@ export default function AdminDashboard({
                     <span className="counter-name">🌐 Online API:</span>
                     <span className="counter-val" style={{ color: '#60A5FA' }}>{lyricsStatus.job.counts?.lrclib || 0}</span>
                   </div>
+                  {lyricsStatus.job.counts?.remote_gpu > 0 && (
+                    <div className="counter-pill" style={{ borderColor: 'rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.1)' }}>
+                      <span className="counter-name">⚡ Remote GPU:</span>
+                      <span className="counter-val" style={{ color: '#34D399' }}>{lyricsStatus.job.counts?.remote_gpu || 0}</span>
+                    </div>
+                  )}
                   <div className="counter-pill">
                     <span className="counter-name">⚡ Local Whisper:</span>
                     <span className="counter-val" style={{ color: '#C084FC' }}>{lyricsStatus.job.counts?.whisper || 0}</span>
@@ -3217,9 +3220,16 @@ export default function AdminDashboard({
                       }}>
                         <span>{remoteGpuTestResult.online ? '🟢' : '🔴'}</span>
                         {remoteGpuTestResult.online ? (
-                          <span>
-                            <strong>Online & Ready:</strong> {remoteGpuTestResult.gpu_name} ({remoteGpuTestResult.has_cuda ? 'NVIDIA CUDA float16' : 'CPU'}, {remoteGpuTestResult.total_vram_mb} MB VRAM, Latency: {remoteGpuTestResult.latency_ms}ms)
-                          </span>
+                          <div>
+                            <div>
+                              <strong>Online & Ready:</strong> {remoteGpuTestResult.gpu_name} ({remoteGpuTestResult.has_cuda ? 'NVIDIA CUDA float16' : 'CPU'}, {remoteGpuTestResult.total_vram_mb} MB VRAM, Latency: {remoteGpuTestResult.latency_ms}ms)
+                            </div>
+                            {remoteGpuTestResult.limits && (
+                              <div style={{ marginTop: 3, opacity: 0.9, fontSize: '10.5px' }}>
+                                🛡️ <strong>PC Safeguards:</strong> {remoteGpuTestResult.limits.cpu_threads} CPU Threads · {remoteGpuTestResult.limits.max_ram_mb} MB RAM Cap{remoteGpuTestResult.limits.cooldown_sec > 0 ? ` · ${remoteGpuTestResult.limits.cooldown_sec}s GPU Cooldown` : ''} · Precision: {remoteGpuTestResult.limits.compute_type || 'auto'}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <span>
                             <strong>Node Unreachable:</strong> {remoteGpuTestResult.error} — Make sure <code>Local_PC_Lyrics_API/start.bat</code> or <code>start.sh</code> is running on your PC.
@@ -3227,6 +3237,49 @@ export default function AdminDashboard({
                         )}
                       </div>
                     )}
+
+                    {/* Exclusive GPU Mode Toggle */}
+                    <div style={{
+                      marginTop: 12,
+                      padding: '10px 14px',
+                      borderRadius: 8,
+                      background: lyricsConfig.only_remote_gpu ? 'rgba(99, 102, 241, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                      border: lyricsConfig.only_remote_gpu ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(255, 255, 255, 0.06)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      transition: 'all 0.2s ease'
+                    }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '12px', color: 'var(--text)' }}>
+                          <span>🛡️ Use Only This GPU API (Exclusive GPU Mode)</span>
+                          {lyricsConfig.only_remote_gpu && (
+                            <span style={{
+                              fontSize: '9px',
+                              padding: '1px 5px',
+                              borderRadius: 4,
+                              background: 'rgba(99, 102, 241, 0.25)',
+                              color: '#a5b4fc',
+                              fontWeight: 800,
+                              textTransform: 'uppercase'
+                            }}>0% Server CPU</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 2 }}>
+                          Completely skips server CPU Whisper. Never runs heavy AI models on this server. If this GPU node is unreachable or fails, skips AI transcription to protect server memory and CPU.
+                        </div>
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', flexShrink: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={lyricsConfig.only_remote_gpu}
+                          onChange={e => setLyricsConfig(c => ({ ...c, only_remote_gpu: e.target.checked }))}
+                          disabled={lyricsStatus?.job?.state === 'running'}
+                          style={{ width: 16, height: 16, accentColor: '#6366f1', cursor: 'pointer' }}
+                        />
+                      </label>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3258,6 +3311,7 @@ export default function AdminDashboard({
                   >
                     <option value="all">All Sources</option>
                     <option value="lrclib">LRCLIB API</option>
+                    <option value="remote_gpu">Remote GPU API</option>
                     <option value="whisper">Whisper AI</option>
                     <option value="embedded">Embedded Tags</option>
                     <option value="failed">Failed Only</option>
@@ -3373,6 +3427,10 @@ export default function AdminDashboard({
                                 {row.source === 'lrclib' ? (
                                   <span className="source-pill lrclib" title="Retrieved from LRCLIB online synchronized lyrics database">
                                     🌐 Online API
+                                  </span>
+                                ) : row.source === 'remote_gpu' ? (
+                                  <span className="source-pill" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34D399', border: '1px solid rgba(16, 185, 129, 0.35)' }} title="Transcribed via Remote PC GPU Whisper node">
+                                    ⚡ Remote PC GPU
                                   </span>
                                 ) : row.source?.startsWith('whisper') ? (
                                   <span className="source-pill whisper" title="Transcribed on Local Machine using 500MB Whisper AI model">

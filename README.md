@@ -197,13 +197,14 @@ Local_PC_Lyrics_API\start.bat
 # Linux / macOS
 ./Local_PC_Lyrics_API/start.sh
 ```
-Open **`http://localhost:8000`** in your browser to view the real-time hardware telemetry dashboard (GPU VRAM, CPU %, active job progress, and processed lyrics).
+Open **`http://localhost:8000`** in your browser to view the real-time hardware telemetry dashboard, processed lyrics, and tune local hardware safeguards (CPU thread caps, RAM ceiling, and GPU cooldown delay).
 
 ### On your Sangita Server:
 1. Open Admin Dashboard -> **Lyrics Engine**.
 2. Enable **"Remote GPU Acceleration"**.
 3. Enter your PC's IP or Tailscale address (e.g., `http://192.168.1.50:8000`).
-4. Click **"Test Connection"** and start generating lyrics at blazing speeds!
+4. *(Optional)* Check **"Use Only This GPU API (Exclusive GPU Mode)"** to completely skip server CPU Whisper and guarantee 0% server CPU usage if the GPU node is offline or busy.
+5. Click **"Test Connection"** (which tests latency and displays your PC's hardware limits) and start generating lyrics at blazing speeds!
 
 See [Local_PC_Lyrics_API/README.md](Local_PC_Lyrics_API/README.md) for detailed networking and setup instructions.
 

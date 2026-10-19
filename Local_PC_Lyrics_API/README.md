@@ -48,7 +48,8 @@ chmod +x start.sh
    ```
    http://192.168.1.50:8000
    ```
-4. Click **"Test Connection"**. When green 🟢, click **Start Lyrics Caption Generation**!
+4. *(Optional)* Toggle **"Use Only This GPU API (Exclusive GPU Mode)"** if your server has very low RAM/CPU, ensuring it strictly uses your PC GPU and never runs Whisper on the server CPU.
+5. Click **"Test Connection"**. When green 🟢, click **Start Lyrics Caption Generation**!
 
 ### If Server is on a remote VPS / Cloud:
 Connect your PC and VPS securely without opening router ports using **[Tailscale](https://tailscale.com/)** (Free):
@@ -61,12 +62,27 @@ Connect your PC and VPS securely without opening router ports using **[Tailscale
 
 ---
 
-## ⚙️ CLI Options
+## ⚙️ CLI Options & Resource Limits
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
 | `--host` | `0.0.0.0` | Bind IP address (use `0.0.0.0` to allow server connections) |
 | `--port` | `8000` | Port number |
 | `--device` | `auto` | `auto` (prefers CUDA if detected), `cuda`, or `cpu` |
-| `--compute-type` | `auto` | `float16`, `int8_float16`, or `int8` |
+| `--compute-type` | `auto` | `float16`, `int8_float16` (50% less VRAM), or `int8` |
 | `--model` | `small` | Default Whisper model (`tiny`, `base`, `small`, `medium`, `large-v3`) |
+| `--cpu-threads` | Half cores | Maximum CPU threads allocated to CTranslate2 |
+| `--max-ram-mb` | `4096` | Memory watchdog limit (MB); frees models if exceeded |
+| `--cooldown-sec` | `0.5` | Pause between songs (seconds) to prevent continuous 100% GPU heat |
+| `--no-low-priority` | `False` | Disables below-normal process priority |
+
+---
+
+## 🛡️ Live Resource Controls (Web UI)
+
+Open **`http://localhost:8000`** in your browser to tune hardware safeguards in real time:
+- **Max CPU Threads Slider:** Cap CPU cores so background transcription never slows down local multitasking.
+- **RAM Ceiling Slider:** Auto-watchdog that unloads cached models and forces garbage collection.
+- **GPU Cooldown Rest:** Pauses between tracks (e.g. 0.5s or 1.0s) to keep laptop temperatures cool and eliminate fan whine.
+- **VRAM Optimization:** Switch to `int8_float16` to cut GPU VRAM usage in half while retaining full CUDA speed.
+- **Low OS Priority:** Keeps games and desktop applications buttery smooth during transcription.

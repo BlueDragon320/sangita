@@ -40,13 +40,16 @@ class TestLyricsWorker(unittest.TestCase):
         parser.add_argument("--api", dest="api", action="store_true", default=True)
         parser.add_argument("--no-api", dest="api", action="store_false", default=True)
         parser.add_argument("--remote-whisper-url", default="")
+        parser.add_argument("--only-remote-gpu", action="store_true")
 
         args_default = parser.parse_args([])
         self.assertTrue(args_default.api)
         self.assertEqual(args_default.remote_whisper_url, "")
+        self.assertFalse(args_default.only_remote_gpu)
 
-        args_remote = parser.parse_args(["--remote-whisper-url", "http://192.168.1.50:8000"])
+        args_remote = parser.parse_args(["--remote-whisper-url", "http://192.168.1.50:8000", "--only-remote-gpu"])
         self.assertEqual(args_remote.remote_whisper_url, "http://192.168.1.50:8000")
+        self.assertTrue(args_remote.only_remote_gpu)
 
     @patch("requests.post")
     @patch("requests.get")

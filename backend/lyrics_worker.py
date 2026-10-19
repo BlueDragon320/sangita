@@ -560,6 +560,7 @@ def main():
     parser.add_argument("--api", dest="api", action="store_true", default=True, help="Enable online API lookup with local model fallback")
     parser.add_argument("--no-api", dest="api", action="store_false", default=True, help="Skip online API and transcribe directly using local model")
     parser.add_argument("--remote-whisper-url", default=os.environ.get("REMOTE_WHISPER_URL", ""), help="URL of remote GPU Whisper node (e.g. http://192.168.1.50:8000)")
+    parser.add_argument("--only-remote-gpu", action="store_true", help="Strictly use remote GPU API; completely skip local server CPU Whisper")
 
     args = parser.parse_args()
 
@@ -652,7 +653,8 @@ def main():
             "limit": args.limit,
             "playlist": args.playlist,
             "song": args.song,
-            "remote_whisper_url": args.remote_whisper_url
+            "remote_whisper_url": args.remote_whisper_url,
+            "only_remote_gpu": getattr(args, "only_remote_gpu", False)
         }
     }
     write_status(data_dir, status_obj)
@@ -788,23 +790,28 @@ def main():
                 print(f"[Worker] Remote GPU Whisper error on {rel_path}: {e}", file=sys.stderr)
 
         if not lrc_content:
-            status_obj["current_stage"] = "local_whisper"
-            status_obj["current_source_type"] = "local_machine"
-            status_obj["current_source_label"] = f"Local Machine AI (Whisper {args.model} · 500MB Model)"
-            if getattr(args, "api", True):
-                status_obj["current_action"] = f"Online API unavailable. Transcribing locally on machine CPU via Whisper ({args.cores} cores, int8)..."
+            if getattr(args, "only_remote_gpu", False):
+                print(f"[Worker] Exclusive GPU Mode active: skipping local CPU Whisper for {rel_path} to preserve server resources.", flush=True)
+                status_obj["current_action"] = "Exclusive GPU Mode: Remote GPU node unavailable. Skipping local CPU transcription to preserve server resources."
+                write_status(data_dir, status_obj)
             else:
-                status_obj["current_action"] = f"Online API disabled. Transcribing directly on machine CPU via Whisper ({args.cores} cores, int8)..."
-            write_status(data_dir, status_obj)
-            try:
-                whisper_out, detected_lang = transcribe_with_whisper(
-                    vocal_path, args.model, args.language, args.cores, whisper_holder
-                )
-                if whisper_out and whisper_out.strip():
-                    lrc_content = whisper_out
-                    source_tag = "whisper_demucs" if (args.demucs and vocal_path != full_path) else "whisper"
-            except Exception as e:
-                print(f"[Worker] Whisper transcription failed for {rel_path}: {e}", file=sys.stderr)
+                status_obj["current_stage"] = "local_whisper"
+                status_obj["current_source_type"] = "local_machine"
+                status_obj["current_source_label"] = f"Local Machine AI (Whisper {args.model} · 500MB Model)"
+                if getattr(args, "api", True):
+                    status_obj["current_action"] = f"Online API unavailable. Transcribing locally on machine CPU via Whisper ({args.cores} cores, int8)..."
+                else:
+                    status_obj["current_action"] = f"Online API disabled. Transcribing directly on machine CPU via Whisper ({args.cores} cores, int8)..."
+                write_status(data_dir, status_obj)
+                try:
+                    whisper_out, detected_lang = transcribe_with_whisper(
+                        vocal_path, args.model, args.language, args.cores, whisper_holder
+                    )
+                    if whisper_out and whisper_out.strip():
+                        lrc_content = whisper_out
+                        source_tag = "whisper_demucs" if (args.demucs and vocal_path != full_path) else "whisper"
+                except Exception as e:
+                    print(f"[Worker] Whisper transcription failed for {rel_path}: {e}", file=sys.stderr)
 
         # Cleanup Demucs tmp dir if used
         if demucs_tmp_dir and os.path.exists(demucs_tmp_dir):
