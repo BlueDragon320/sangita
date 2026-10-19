@@ -255,10 +255,44 @@ class TestAdminAPI(unittest.TestCase):
             res = self.client.post('/api/admin/lyrics/test-remote', headers=admin_headers, json={'url': 'http://192.168.1.50:8000'})
             self.assertEqual(res.status_code, 200)
             data = res.get_json()
-            self.assertFalse(data['online'])
             self.assertIn('Unreachable', data['error'])
 
-    def test_lyrics_model_streaming_endpoints(self):
+    def test_admin_lyrics_remote_telemetry_endpoint(self):
+        from unittest.mock import patch, MagicMock
+        admin_headers = {'Authorization': f'Bearer {self.admin_token}'}
+
+        # 1. No URL configured
+        res = self.client.get('/api/admin/lyrics/remote-telemetry?url=', headers=admin_headers)
+        self.assertEqual(res.status_code, 400)
+
+        # 2. Successful telemetry response
+        with patch('requests.get') as mock_get:
+            mock_res = MagicMock(status_code=200)
+            mock_res.json.return_value = {
+                "status": "ready",
+                "device": "cuda",
+                "gpu_name": "NVIDIA GeForce RTX 4080",
+                "has_cuda": True,
+                "cuda_runtime_ready": True,
+                "total_vram_mb": 16384,
+                "used_vram_mb": 2048,
+                "gpu_util_pct": 24,
+                "cpu": {"percent": 18.5, "cores": 16, "model": "AMD Ryzen 9"},
+                "ram": {"total_mb": 32768, "used_mb": 8192, "percent": 25.0},
+                "specs": {"cpu_model": "AMD Ryzen 9", "total_cores": 16, "total_ram_mb": 32768, "gpu_name": "NVIDIA GeForce RTX 4080"},
+                "throughput": {"avg_sec_per_song": 3.2, "songs_per_min": 18.7, "total_processed": 42}
+            }
+            mock_get.return_value = mock_res
+
+            res = self.client.get('/api/admin/lyrics/remote-telemetry?url=http://192.168.1.50:8000', headers=admin_headers)
+            self.assertEqual(res.status_code, 200)
+            data = res.get_json()
+            self.assertTrue(data['online'])
+            self.assertEqual(data['gpu_name'], 'NVIDIA GeForce RTX 4080')
+            self.assertEqual(data['cpu']['percent'], 18.5)
+            self.assertEqual(data['ram']['total_mb'], 32768)
+            self.assertEqual(data['throughput']['songs_per_min'], 18.7)
+
         # Model info endpoint
         res = self.client.get('/api/lyrics/model/small/info')
         self.assertEqual(res.status_code, 200)

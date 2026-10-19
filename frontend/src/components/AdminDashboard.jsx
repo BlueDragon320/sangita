@@ -244,6 +244,8 @@ export default function AdminDashboard({
   const [remoteModelModalOpen, setRemoteModelModalOpen] = useState(false)
   const [remoteGpuTestLoading, setRemoteGpuTestLoading] = useState(false)
   const [remoteGpuTestResult, setRemoteGpuTestResult] = useState(null)
+  const [connectedPcTelemetry, setConnectedPcTelemetry] = useState(null)
+  const [connectedPcLoading, setConnectedPcLoading] = useState(false)
   const [nodeOpStatus, setNodeOpStatus] = useState(null)
   const [lyricsActionLoading, setLyricsActionLoading] = useState(false)
   const [lyricsEditModal, setLyricsEditModal] = useState({
@@ -322,6 +324,9 @@ export default function AdminDashboard({
         setLyricsStatus(data)
         if (!hasLoadedLyricsNodeConfigRef.current) {
           hasLoadedLyricsNodeConfigRef.current = true
+          if (data.remote_whisper_url) {
+            fetchConnectedPcTelemetry(data.remote_whisper_url)
+          }
           setLyricsConfig(c => {
             const next = { ...c }
             if (!c.remote_whisper_url && data.remote_whisper_url) {
@@ -377,15 +382,18 @@ export default function AdminDashboard({
       })
       const data = await res.json()
       setRemoteGpuTestResult(data)
-      if (data.online && data.limits) {
-        setLyricsConfig(c => ({
-          ...c,
-          pc_cpu_threads: data.limits.cpu_threads ?? c.pc_cpu_threads,
-          pc_max_ram_mb: data.limits.max_ram_mb ?? c.pc_max_ram_mb,
-          pc_cooldown_sec: data.limits.cooldown_sec ?? c.pc_cooldown_sec,
-          pc_compute_type: data.limits.compute_type ?? c.pc_compute_type,
-          pc_low_priority: data.limits.low_priority ?? c.pc_low_priority
-        }))
+      if (data.online) {
+        setConnectedPcTelemetry(data)
+        if (data.limits) {
+          setLyricsConfig(c => ({
+            ...c,
+            pc_cpu_threads: data.limits.cpu_threads ?? c.pc_cpu_threads,
+            pc_max_ram_mb: data.limits.max_ram_mb ?? c.pc_max_ram_mb,
+            pc_cooldown_sec: data.limits.cooldown_sec ?? c.pc_cooldown_sec,
+            pc_compute_type: data.limits.compute_type ?? c.pc_compute_type,
+            pc_low_priority: data.limits.low_priority ?? c.pc_low_priority
+          }))
+        }
       }
     } catch (err) {
       setRemoteGpuTestResult({ online: false, error: err.message })
@@ -393,6 +401,30 @@ export default function AdminDashboard({
       setRemoteGpuTestLoading(false)
     }
   }
+
+  const fetchConnectedPcTelemetry = useCallback(async (targetUrl = null) => {
+    const urlToUse = targetUrl || lyricsConfig.remote_whisper_url
+    if (!urlToUse || !token) return
+    try {
+      setConnectedPcLoading(true)
+      const res = await fetch(`/api/admin/lyrics/remote-telemetry?url=${encodeURIComponent(urlToUse)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.online) {
+          setConnectedPcTelemetry(data)
+          setRemoteGpuTestResult(prev => prev ? { ...prev, ...data } : data)
+        } else {
+          setConnectedPcTelemetry(prev => prev ? { ...prev, online: false, error: data.error } : { online: false, error: data.error })
+        }
+      }
+    } catch (err) {
+      console.warn('Error fetching connected PC telemetry:', err)
+    } finally {
+      setConnectedPcLoading(false)
+    }
+  }, [token, lyricsConfig.remote_whisper_url])
 
   const handleRemotePrime = async () => {
     if (!lyricsConfig.remote_whisper_url) {
@@ -515,16 +547,22 @@ export default function AdminDashboard({
     if (activeTab === 'lyrics') {
       fetchLyricsStatus()
       fetchLyricsLogs()
+      if (lyricsConfig.remote_whisper_url) {
+        fetchConnectedPcTelemetry(lyricsConfig.remote_whisper_url)
+      }
       const pollRate = lyricsStatus?.job?.state === 'running' ? 1000 : 3000
       const interval = setInterval(() => {
         fetchLyricsStatus()
         if (lyricsStatus?.job?.state === 'running') {
           fetchLyricsLogs()
         }
+        if (lyricsConfig.remote_whisper_url) {
+          fetchConnectedPcTelemetry(lyricsConfig.remote_whisper_url)
+        }
       }, pollRate)
       return () => clearInterval(interval)
     }
-  }, [activeTab, fetchLyricsStatus, fetchLyricsLogs, lyricsStatus?.job?.state])
+  }, [activeTab, fetchLyricsStatus, fetchLyricsLogs, fetchConnectedPcTelemetry, lyricsStatus?.job?.state, lyricsConfig.remote_whisper_url])
 
   const handleStartLyricsWorker = async (overrideParams = null) => {
     try {
@@ -1114,6 +1152,12 @@ export default function AdminDashboard({
       </div>
     )
   }
+
+  const connectedPcStats = connectedPcTelemetry || remoteGpuTestResult
+  const detectedCores = connectedPcStats?.specs?.total_cores || connectedPcStats?.limits?.total_cores || 16
+  const detectedRamMb = connectedPcStats?.specs?.total_ram_mb || connectedPcStats?.ram?.total_mb || connectedPcStats?.limits?.total_ram_mb || 32768
+  const detectedGpuName = connectedPcStats?.specs?.gpu_name || connectedPcStats?.gpu?.name || remoteGpuTestResult?.gpu_name || 'NVIDIA CUDA'
+  const detectedCpuModel = connectedPcStats?.specs?.cpu_model || connectedPcStats?.cpu?.model || 'PC Multi-Core Processor'
 
   return (
     <div className="admin-layout" data-theme={theme}>
@@ -3125,6 +3169,142 @@ export default function AdminDashboard({
               </div>
             </div>
 
+            {/* Connected PC Node Telemetry (Aligned directly below each corresponding Host card) */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 8 }}>
+              <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--emerald)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>⚡</span>
+                <span>Connected PC Node Telemetry {lyricsConfig.remote_whisper_url ? `(${lyricsConfig.remote_whisper_url})` : '(Local IP Not Connected)'}</span>
+                {connectedPcStats?.online ? (
+                  <span className="badge-pill online" style={{ fontSize: '9px', padding: '1px 6px', background: 'rgba(16, 185, 129, 0.15)', color: 'var(--emerald)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 10 }}>
+                    LIVE SYNC
+                  </span>
+                ) : lyricsConfig.remote_whisper_url ? (
+                  <span className="badge-pill offline" style={{ fontSize: '9px', padding: '1px 6px', background: 'rgba(239, 68, 68, 0.15)', color: '#FCA5A5', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 10 }}>
+                    STANDBY
+                  </span>
+                ) : null}
+              </div>
+              {lyricsConfig.remote_whisper_url && (
+                <button
+                  type="button"
+                  className="btn-sync-refresh"
+                  onClick={() => fetchConnectedPcTelemetry()}
+                  disabled={connectedPcLoading}
+                  title="Click to refresh connected PC specs and live telemetry"
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}
+                >
+                  <span style={{ display: 'inline-block', transform: connectedPcLoading ? 'rotate(180deg)' : 'none', transition: 'transform 0.4s ease' }}>🔄</span>
+                  <span>{connectedPcLoading ? 'Refreshing…' : 'Refresh Specs'}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', marginTop: 0 }}>
+              {/* Card 1 (Below Host CPU): Connected PC CPU */}
+              <div className="kpi-card" data-testid="connected-pc-cpu-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Connected PC CPU</span>
+                  <ActivityIcon />
+                </div>
+                <div className="kpi-value">
+                  {connectedPcStats?.cpu?.percent !== undefined
+                    ? `${connectedPcStats.cpu.percent.toFixed(1)}%`
+                    : '—'}
+                </div>
+                <div className="kpi-subtext">
+                  {detectedCores} Cores ({detectedCpuModel}) · Pinning {lyricsConfig.pc_cpu_threads} Threads
+                </div>
+                <div className="resource-bar-track" style={{ marginTop: 8 }}>
+                  <div
+                    className="resource-bar-fill"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, connectedPcStats?.cpu?.percent || 0))}%`,
+                      background: (connectedPcStats?.cpu?.percent || 0) > 85 ? '#EF4444' : (connectedPcStats?.cpu?.percent || 0) > 60 ? '#F59E0B' : 'var(--emerald)'
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Card 2 (Below Host Memory): Connected PC Memory */}
+              <div className="kpi-card" data-testid="connected-pc-ram-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Connected PC Memory (RAM)</span>
+                  <DeviceIcon />
+                </div>
+                <div className="kpi-value">
+                  {connectedPcStats?.ram?.used_mb !== undefined
+                    ? `${(connectedPcStats.ram.used_mb / 1024).toFixed(2)} GB`
+                    : '—'}
+                </div>
+                <div className="kpi-subtext">
+                  of {connectedPcStats?.ram?.total_mb ? `${(connectedPcStats.ram.total_mb / 1024).toFixed(1)} GB Total (${connectedPcStats.ram.percent?.toFixed(0) || 0}%)` : `${(detectedRamMb / 1024).toFixed(1)} GB Total`} · Cap: ${(lyricsConfig.pc_max_ram_mb / 1024).toFixed(1)} GB
+                </div>
+                <div className="resource-bar-track" style={{ marginTop: 8 }}>
+                  <div
+                    className="resource-bar-fill"
+                    style={{
+                      width: `${Math.min(100, connectedPcStats?.ram?.percent || 0)}%`,
+                      background: (connectedPcStats?.ram?.percent || 0) > 85 ? '#EF4444' : 'var(--emerald)'
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Card 3 (Below Host GPU): Connected PC GPU & VRAM */}
+              <div className="kpi-card" data-testid="connected-pc-gpu-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Connected PC GPU & VRAM</span>
+                  <span style={{ fontSize: '16px' }}>⚡</span>
+                </div>
+                <div className="kpi-value" style={{ fontSize: '1.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {detectedGpuName}
+                </div>
+                <div className="kpi-subtext">
+                  {((connectedPcStats?.gpu?.used_vram_mb ?? connectedPcStats?.used_vram_mb) !== undefined && (connectedPcStats?.gpu?.total_vram_mb || connectedPcStats?.total_vram_mb))
+                    ? `${connectedPcStats?.gpu?.used_vram_mb ?? connectedPcStats?.used_vram_mb} / ${connectedPcStats?.gpu?.total_vram_mb || connectedPcStats?.total_vram_mb} MB VRAM (${connectedPcStats?.gpu?.gpu_util_pct ?? connectedPcStats?.gpu_util_pct ?? 0}% Load · ${lyricsConfig.pc_compute_type})`
+                    : (remoteGpuTestResult?.online
+                        ? `${remoteGpuTestResult.total_vram_mb} MB VRAM · Latency: ${remoteGpuTestResult.latency_ms}ms`
+                        : lyricsConfig.remote_whisper_url ? 'Configured (Click Ping Node)' : 'Enter PC URL below')}
+                </div>
+                <div className="resource-bar-track" style={{ marginTop: 8 }}>
+                  <div
+                    className="resource-bar-fill"
+                    style={{
+                      width: `${(connectedPcStats?.gpu?.total_vram_mb || connectedPcStats?.total_vram_mb) ? Math.min(100, (((connectedPcStats?.gpu?.used_vram_mb ?? connectedPcStats?.used_vram_mb) || 0) / (connectedPcStats?.gpu?.total_vram_mb || connectedPcStats?.total_vram_mb)) * 100) : (remoteGpuTestResult?.online ? 10 : 0)}%`,
+                      background: '#8B5CF6'
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Card 4 (Below Catalog Coverage / ETA): Connected PC Batch ETA & Throughput */}
+              <div className="kpi-card" data-testid="connected-pc-eta-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Batch ETA & Throughput</span>
+                  <MusicIcon />
+                </div>
+                <div className="kpi-value">
+                  {lyricsStatus?.job?.state === 'running' && lyricsStatus?.job?.eta_seconds
+                    ? `ETA: ${formatDuration(lyricsStatus.job.eta_seconds)}`
+                    : `~${connectedPcStats?.throughput?.avg_sec_per_song || 3.5}s / song`}
+                </div>
+                <div className="kpi-subtext">
+                  {lyricsStatus?.job?.state === 'running'
+                    ? `Throughput: ~${connectedPcStats?.throughput?.songs_per_min || 17.1} songs/min · ${lyricsStatus.job.current_index || 0}/${lyricsStatus.job.total_songs || 0} Songs`
+                    : `Throughput: ~${connectedPcStats?.throughput?.songs_per_min || 17.1} songs/min (CUDA Accelerated)`}
+                </div>
+                <div className="resource-bar-track" style={{ marginTop: 8 }}>
+                  <div
+                    className="resource-bar-fill"
+                    style={{
+                      width: `${lyricsStatus?.job?.total_songs ? Math.min(100, ((lyricsStatus.job.current_index || 0) / lyricsStatus.job.total_songs) * 100) : 100}%`,
+                      background: 'var(--emerald)'
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* 4. The 3-Card Intuitive Workstation Layout */}
             <div className="lyrics-workstation-layout" style={{ marginTop: 18 }}>
               {/* CARD 1: 🎯 Generation Scope & Library Targets */}
@@ -3471,32 +3651,141 @@ export default function AdminDashboard({
                       <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-sub)', textTransform: 'uppercase', marginBottom: 6 }}>
                         ⚙️ Remote PC Hardware Safeguards & Throttling
                       </div>
+
+                      {/* Detected Connected PC Specs Profile Banner */}
+                      <div className="pc-specs-banner" data-testid="detected-pc-specs-banner" style={{
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 8,
+                        padding: '10px 14px',
+                        marginBottom: 12,
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                        gap: 12
+                      }}>
+                        <div>
+                          <span style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
+                            Detected CPU
+                          </span>
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFFFFF', marginTop: 2 }}>
+                            {detectedCpuModel}
+                          </div>
+                          <div style={{ fontSize: '10.5px', color: 'var(--emerald)' }}>
+                            {detectedCores} Logical Threads Available
+                          </div>
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
+                            System RAM
+                          </span>
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFFFFF', marginTop: 2 }}>
+                            {(detectedRamMb / 1024).toFixed(1)} GB Physical RAM
+                          </div>
+                          <div style={{ fontSize: '10.5px', color: 'var(--text-sub)' }}>
+                            Volatile RAM-Disk Ready
+                          </div>
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
+                            GPU Acceleration
+                          </span>
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFFFFF', marginTop: 2 }}>
+                            {detectedGpuName}
+                          </div>
+                          <div style={{ fontSize: '10.5px', color: 'var(--emerald)' }}>
+                            {remoteGpuTestResult?.total_vram_mb || connectedPcStats?.gpu?.total_vram_mb || 0} MB VRAM ({remoteGpuTestResult?.has_cuda ? 'CUDA' : 'CPU'})
+                          </div>
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
+                            Platform / OS
+                          </span>
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFFFFF', marginTop: 2 }}>
+                            {connectedPcStats?.specs?.os || 'Connected PC'}
+                          </div>
+                          <div style={{ fontSize: '10.5px', color: 'var(--text-sub)' }}>
+                            {remoteGpuTestResult?.online ? `Latency: ${remoteGpuTestResult.latency_ms || 0}ms` : 'Standby'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Quick Spec Presets based on Detected Hardware */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', marginRight: 4, fontWeight: 700 }}>
+                          Spec Presets:
+                        </span>
+                        <button
+                          type="button"
+                          className="preset-pill-btn"
+                          onClick={() => setLyricsConfig(c => ({
+                            ...c,
+                            pc_cpu_threads: Math.max(1, Math.round(detectedCores * 0.25)),
+                            pc_max_ram_mb: Math.max(1024, Math.round(detectedRamMb * 0.25)),
+                            pc_cooldown_sec: 1.0
+                          }))}
+                          title="Uses ~25% of PC specs with 1.0s cooldown so PC stays quiet"
+                          style={{ fontSize: '10.5px', padding: '3px 8px', borderRadius: 6, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border)', color: 'var(--text)', cursor: 'pointer' }}
+                        >
+                          🌿 Quiet (25% Specs)
+                        </button>
+                        <button
+                          type="button"
+                          className="preset-pill-btn"
+                          onClick={() => setLyricsConfig(c => ({
+                            ...c,
+                            pc_cpu_threads: Math.max(2, Math.round(detectedCores * 0.50)),
+                            pc_max_ram_mb: Math.max(2048, Math.round(detectedRamMb * 0.50)),
+                            pc_cooldown_sec: 0.5
+                          }))}
+                          title="Balanced ~50% specs allocation"
+                          style={{ fontSize: '10.5px', padding: '3px 8px', borderRadius: 6, background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', color: 'var(--emerald)', cursor: 'pointer' }}
+                        >
+                          ⚖️ Balanced (50% Specs)
+                        </button>
+                        <button
+                          type="button"
+                          className="preset-pill-btn"
+                          onClick={() => setLyricsConfig(c => ({
+                            ...c,
+                            pc_cpu_threads: Math.max(4, Math.round(detectedCores * 0.85)),
+                            pc_max_ram_mb: Math.max(4096, Math.round(detectedRamMb * 0.75)),
+                            pc_cooldown_sec: 0.0
+                          }))}
+                          title="Turbo throughput ~85% core allocation"
+                          style={{ fontSize: '10.5px', padding: '3px 8px', borderRadius: 6, background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.35)', color: '#C084FC', cursor: 'pointer' }}
+                        >
+                          ⚡ Turbo (85% Specs)
+                        </button>
+                      </div>
+
                       <div className="lyrics-safeguards-grid">
                         <div>
                           <label className="form-label" style={{ fontSize: '10.5px' }}>
-                            CPU Threads: <strong>{lyricsConfig.pc_cpu_threads}</strong>
+                            CPU Threads: <strong>{lyricsConfig.pc_cpu_threads}</strong> of {detectedCores} ({Math.round((lyricsConfig.pc_cpu_threads / detectedCores) * 100)}%)
                           </label>
                           <input
                             type="range"
                             min="1"
-                            max="16"
+                            max={Math.max(4, detectedCores)}
                             value={lyricsConfig.pc_cpu_threads}
                             onChange={e => setLyricsConfig(c => ({ ...c, pc_cpu_threads: parseInt(e.target.value, 10) || 1 }))}
                             style={{ width: '100%', accentColor: '#3b82f6' }}
+                            data-testid="remote-pc-threads-slider"
                           />
                         </div>
                         <div>
                           <label className="form-label" style={{ fontSize: '10.5px' }}>
-                            RAM Cap: <strong>{lyricsConfig.pc_max_ram_mb} MB</strong>
+                            RAM Cap: <strong>{(lyricsConfig.pc_max_ram_mb / 1024).toFixed(1)} GB</strong> of {(detectedRamMb / 1024).toFixed(1)} GB ({Math.round((lyricsConfig.pc_max_ram_mb / detectedRamMb) * 100)}%)
                           </label>
                           <input
                             type="range"
-                            min="1024"
-                            max="16384"
+                            min="512"
+                            max={Math.max(4096, detectedRamMb)}
                             step="512"
                             value={lyricsConfig.pc_max_ram_mb}
                             onChange={e => setLyricsConfig(c => ({ ...c, pc_max_ram_mb: parseInt(e.target.value, 10) || 4096 }))}
                             style={{ width: '100%', accentColor: 'var(--emerald)' }}
+                            data-testid="remote-pc-ram-slider"
                           />
                         </div>
                         <div>

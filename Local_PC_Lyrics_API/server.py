@@ -83,6 +83,8 @@ socket.getaddrinfo = _resilient_getaddrinfo
 
 from flask import Flask, request, jsonify, render_template, send_from_directory
 import psutil
+import platform
+
 
 # Optional PyAV patch for faster-whisper compatibility
 try:
@@ -548,11 +550,66 @@ def detect_gpu():
     }
 
 
+def detect_system_specs():
+    """Detects CPU model, core counts, total RAM, OS, and GPU hardware specs for client configuration."""
+    gpu_info = detect_gpu()
+    mem = psutil.virtual_memory()
+    logical_cores = psutil.cpu_count(logical=True) or 4
+    physical_cores = psutil.cpu_count(logical=False) or logical_cores
+
+    cpu_model = "Multi-Core CPU"
+    try:
+        if sys.platform == "linux" and os.path.isfile("/proc/cpuinfo"):
+            with open("/proc/cpuinfo", "r") as f:
+                for line in f:
+                    if "model name" in line:
+                        cpu_model = line.split(":", 1)[1].strip()
+                        break
+        elif sys.platform == "darwin":
+            cpu_model = subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], universal_newlines=True).strip()
+        elif sys.platform == "win32":
+            cpu_model = platform.processor() or "Multi-Core CPU"
+    except Exception:
+        cpu_model = platform.processor() or "Multi-Core CPU"
+
+    return {
+        "os": f"{platform.system()} {platform.release()}",
+        "platform": platform.platform(),
+        "cpu_model": cpu_model,
+        "total_cores": logical_cores,
+        "physical_cores": physical_cores,
+        "total_ram_mb": int(mem.total / (1024 * 1024)),
+        "available_ram_mb": int(mem.available / (1024 * 1024)),
+        "gpu_name": gpu_info["name"],
+        "total_vram_mb": gpu_info["total_vram_mb"],
+        "has_cuda": gpu_info["has_cuda"],
+        "cuda_runtime_ready": gpu_info.get("cuda_runtime_ready", False)
+    }
+
+
+def get_throughput_stats():
+    """Computes average processing speed, songs per minute, and history counts."""
+    total_processed = len(HISTORY)
+    if total_processed > 0:
+        times = [h.get("processing_time_sec", 0) for h in HISTORY if h.get("processing_time_sec")]
+        avg_time = round(sum(times) / len(times), 1) if times else 3.5
+    else:
+        avg_time = 3.5
+    songs_per_min = round(60.0 / avg_time, 1) if avg_time > 0 else 17.1
+    return {
+        "avg_sec_per_song": avg_time,
+        "songs_per_min": songs_per_min,
+        "total_processed": total_processed
+    }
+
+
 def get_hardware_telemetry():
     """Gathers CPU, RAM, and GPU telemetry for the live dashboard."""
     gpu_info = detect_gpu()
     mem = psutil.virtual_memory()
     cpu_pct = psutil.cpu_percent(interval=None)
+    specs = detect_system_specs()
+    throughput = get_throughput_stats()
 
     active_job_copy = dict(ACTIVE_JOB)
     if active_job_copy["started_at"]:
@@ -565,16 +622,21 @@ def get_hardware_telemetry():
         "gpu": gpu_info,
         "cpu": {
             "percent": cpu_pct,
-            "cores": psutil.cpu_count(logical=True)
+            "cores": specs["total_cores"],
+            "physical_cores": specs["physical_cores"],
+            "model": specs["cpu_model"]
         },
         "ram": {
-            "total_mb": int(mem.total / (1024 * 1024)),
+            "total_mb": specs["total_ram_mb"],
             "used_mb": int(mem.used / (1024 * 1024)),
             "percent": mem.percent
         },
+        "specs": specs,
+        "throughput": throughput,
         "active_job": active_job_copy,
         "total_processed": len(HISTORY)
     }
+
 
 
 def get_whisper_model(model_name="small", force_device=None):
@@ -663,6 +725,11 @@ def health():
     """Health check endpoint used by Sangita server to verify GPU worker connectivity and resource safeguards."""
     gpu_info = detect_gpu()
     ram_storage = get_ram_storage_info()
+    specs = detect_system_specs()
+    throughput = get_throughput_stats()
+    mem = psutil.virtual_memory()
+    cpu_pct = psutil.cpu_percent(interval=None)
+
     return jsonify({
         "status": "ready",
         "service": "sangita-remote-whisper",
@@ -673,6 +740,7 @@ def health():
         "status_msg": gpu_info.get("status_msg", "Ready"),
         "total_vram_mb": gpu_info["total_vram_mb"],
         "used_vram_mb": gpu_info["used_vram_mb"],
+        "gpu_util_pct": gpu_info.get("gpu_util_pct", 0),
         "active_job": ACTIVE_JOB["status"],
         "models_cached": list(MODELS_CACHE.keys()),
         "model_status": check_model_status(SERVER_CONFIG.get("default_model", "small")),
@@ -685,9 +753,25 @@ def health():
             "cooldown_sec": SERVER_CONFIG.get("cooldown_sec", 0.5),
             "low_priority": SERVER_CONFIG.get("low_priority", True),
             "compute_type": SERVER_CONFIG.get("compute_type", "auto"),
-            "total_cores": psutil.cpu_count(logical=True) or 4
-        }
+            "total_cores": specs["total_cores"],
+            "total_ram_mb": specs["total_ram_mb"]
+        },
+        "cpu": {
+            "percent": cpu_pct,
+            "cores": specs["total_cores"],
+            "physical_cores": specs["physical_cores"],
+            "model": specs["cpu_model"]
+        },
+        "ram": {
+            "total_mb": specs["total_ram_mb"],
+            "used_mb": int(mem.used / (1024 * 1024)),
+            "percent": mem.percent
+        },
+        "gpu": gpu_info,
+        "specs": specs,
+        "throughput": throughput
     })
+
 
 
 @app.route("/api/telemetry", methods=["GET"])
@@ -776,7 +860,8 @@ def api_settings():
                 "cooldown_sec": SERVER_CONFIG["cooldown_sec"],
                 "low_priority": SERVER_CONFIG["low_priority"],
                 "compute_type": SERVER_CONFIG["compute_type"],
-                "total_cores": psutil.cpu_count(logical=True) or 4
+                "total_cores": psutil.cpu_count(logical=True) or 4,
+                "total_ram_mb": int(psutil.virtual_memory().total / (1024 * 1024))
             }
         })
     else:
@@ -787,9 +872,11 @@ def api_settings():
                 "cooldown_sec": SERVER_CONFIG.get("cooldown_sec", 0.5),
                 "low_priority": SERVER_CONFIG.get("low_priority", True),
                 "compute_type": SERVER_CONFIG.get("compute_type", "auto"),
-                "total_cores": psutil.cpu_count(logical=True) or 4
+                "total_cores": psutil.cpu_count(logical=True) or 4,
+                "total_ram_mb": int(psutil.virtual_memory().total / (1024 * 1024))
             }
         })
+
 
 
 @app.route("/api/clear-history", methods=["POST"])

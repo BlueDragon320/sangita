@@ -165,9 +165,40 @@ describe('AdminDashboard Component', () => {
       if (url.includes('/api/admin/logs')) {
         return Promise.resolve({ ok: true, json: async () => mockLogsData })
       }
+      if (url.includes('/api/admin/lyrics/status')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            job: { state: 'idle' },
+            resources: { host_cpu_percent: 12.5, cpu_count: 8, host_ram_used_mb: 4096, host_ram_total_mb: 16384, host_ram_percent: 25.0 },
+            remote_whisper_url: 'http://192.168.1.50:8000',
+            remote_settings: { cpu_threads: 4, max_ram_mb: 8192, total_cores: 16, total_ram_mb: 32768 }
+          })
+        })
+      }
+      if (url.includes('/api/admin/lyrics/remote-telemetry')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            online: true,
+            latency_ms: 12,
+            gpu_name: 'NVIDIA GeForce RTX 4080',
+            has_cuda: true,
+            total_vram_mb: 16384,
+            used_vram_mb: 2048,
+            gpu: { name: 'NVIDIA GeForce RTX 4080', total_vram_mb: 16384, used_vram_mb: 2048, gpu_util_pct: 24 },
+            cpu: { percent: 18.5, cores: 16, model: 'AMD Ryzen 9 5950X' },
+            ram: { total_mb: 32768, used_mb: 8192, percent: 25.0 },
+            specs: { cpu_model: 'AMD Ryzen 9 5950X', total_cores: 16, total_ram_mb: 32768, gpu_name: 'NVIDIA GeForce RTX 4080' },
+            throughput: { avg_sec_per_song: 3.2, songs_per_min: 18.7, total_processed: 50 },
+            limits: { cpu_threads: 4, max_ram_mb: 8192, total_cores: 16, total_ram_mb: 32768 }
+          })
+        })
+      }
       return Promise.resolve({ ok: true, json: async () => ({}) })
     })
   })
+
 
   it('renders AdminDashboard layout with KPI cards and peak hour metrics', async () => {
     const handleBack = vi.fn()
@@ -374,4 +405,81 @@ describe('AdminDashboard Component', () => {
       expect(screen.getByTestId('lyrics-engine-content')).toBeInTheDocument()
     })
   })
+
+  it('renders Connected PC resource monitor cards and dynamically adapts hardware safeguards to detected specs', async () => {
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-tab-lyrics')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('admin-tab-lyrics'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('lyrics-engine-content')).toBeInTheDocument()
+    })
+
+    // 1. Verify Connected PC Telemetry KPI cards (Below Host CPU, RAM, GPU, and Coverage)
+    await waitFor(() => {
+      expect(screen.getByTestId('connected-pc-cpu-card')).toBeInTheDocument()
+      expect(screen.getByTestId('connected-pc-ram-card')).toBeInTheDocument()
+      expect(screen.getByTestId('connected-pc-gpu-card')).toBeInTheDocument()
+      expect(screen.getByTestId('connected-pc-eta-card')).toBeInTheDocument()
+    })
+
+    // Connected PC CPU Card displays CPU %, Cores & Model
+    const cpuCard = screen.getByTestId('connected-pc-cpu-card')
+    expect(cpuCard).toHaveTextContent('18.5%')
+    expect(cpuCard).toHaveTextContent('AMD Ryzen 9 5950X')
+
+    // Connected PC RAM Card displays used GB and total GB
+    const ramCard = screen.getByTestId('connected-pc-ram-card')
+    expect(ramCard).toHaveTextContent('8.00 GB')
+    expect(ramCard).toHaveTextContent('32.0 GB Total')
+
+    // Connected PC GPU Card displays GPU Model & VRAM
+    const gpuCard = screen.getByTestId('connected-pc-gpu-card')
+    expect(gpuCard).toHaveTextContent('NVIDIA GeForce RTX 4080')
+    expect(gpuCard).toHaveTextContent('2048 / 16384 MB VRAM')
+
+    // Connected PC ETA / Throughput card
+    const etaCard = screen.getByTestId('connected-pc-eta-card')
+    expect(etaCard).toHaveTextContent('3.2s / song')
+    expect(etaCard).toHaveTextContent('18.7 songs/min')
+
+    // 2. Verify Detected PC Specs Profile Banner
+    const specsBanner = screen.getByTestId('detected-pc-specs-banner')
+    expect(specsBanner).toHaveTextContent('AMD Ryzen 9 5950X')
+    expect(specsBanner).toHaveTextContent('16 Logical Threads Available')
+    expect(specsBanner).toHaveTextContent('32.0 GB Physical RAM')
+    expect(specsBanner).toHaveTextContent('NVIDIA GeForce RTX 4080')
+
+    // 3. Verify Dynamic Sliders Bounds adapted to detected 16 cores and 32GB RAM
+    const threadsSlider = screen.getByTestId('remote-pc-threads-slider')
+    const ramSlider = screen.getByTestId('remote-pc-ram-slider')
+    expect(threadsSlider).toHaveAttribute('max', '16')
+    expect(ramSlider).toHaveAttribute('max', '32768')
+
+    // 4. Test Spec Presets: Quiet (25%) and Turbo (85%)
+    const quietBtn = screen.getByText(/Quiet \(25% Specs\)/i)
+    fireEvent.click(quietBtn)
+    expect(threadsSlider).toHaveValue('4') // 25% of 16
+    expect(ramSlider).toHaveValue('8192') // 25% of 32768
+
+    const turboBtn = screen.getByText(/Turbo \(85% Specs\)/i)
+    fireEvent.click(turboBtn)
+    expect(threadsSlider).toHaveValue('14') // 85% of 16
+    expect(ramSlider).toHaveValue('24576') // 75% of 32768
+  })
 })
+

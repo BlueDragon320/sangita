@@ -2585,11 +2585,17 @@ def admin_lyrics_test_remote():
                 "status_msg": info.get("status_msg", "Ready"),
                 "total_vram_mb": info.get("total_vram_mb", 0),
                 "used_vram_mb": info.get("used_vram_mb", 0),
+                "gpu_util_pct": info.get("gpu_util_pct", info.get("gpu", {}).get("gpu_util_pct", 0)),
                 "active_job": info.get("active_job", "idle"),
                 "model_status": info.get("model_status", {}),
                 "ram_mode": info.get("ram_mode", False),
                 "storage_mode": info.get("storage_mode", "RAM (Ephemeral)"),
-                "limits": info.get("limits", {})
+                "limits": info.get("limits", {}),
+                "cpu": info.get("cpu", {}),
+                "ram": info.get("ram", {}),
+                "gpu": info.get("gpu", {}),
+                "specs": info.get("specs", {}),
+                "throughput": info.get("throughput", {})
             })
         else:
             return jsonify({
@@ -2601,6 +2607,56 @@ def admin_lyrics_test_remote():
             "online": False,
             "error": f"Unreachable ({e})"
         }), 200
+
+
+@app.route("/api/admin/lyrics/remote-telemetry", methods=["GET", "POST"])
+@require_admin
+def admin_lyrics_remote_telemetry():
+    """Fetches real-time hardware telemetry and specs from the connected remote PC Whisper node."""
+    import time
+    import requests
+    node_cfg = _get_lyrics_node_config()
+    data = request.get_json(silent=True) or {} if request.method == "POST" else {}
+    raw_url = data.get("url") if "url" in data else request.args.get("url")
+
+    if raw_url is not None:
+        url = str(raw_url).strip()
+    else:
+        url = str(node_cfg.get("remote_whisper_url", "")).strip()
+
+    if not url:
+        return jsonify({"online": False, "error": "No remote Whisper URL configured"}), 400
+
+
+    clean_url = url.rstrip("/")
+    start_t = time.time()
+    try:
+        res = requests.get(f"{clean_url}/health", timeout=3.0)
+        latency_ms = int((time.time() - start_t) * 1000)
+        if res.status_code == 200:
+            info = res.json()
+            return jsonify({
+                "online": True,
+                "latency_ms": latency_ms,
+                "specs": info.get("specs", {}),
+                "cpu": info.get("cpu", {}),
+                "ram": info.get("ram", {}),
+                "gpu": info.get("gpu", {}),
+                "limits": info.get("limits", {}),
+                "throughput": info.get("throughput", {}),
+                "active_job": info.get("active_job", "idle"),
+                "storage_mode": info.get("storage_mode", "RAM (Ephemeral)"),
+                "total_vram_mb": info.get("total_vram_mb", 0),
+                "used_vram_mb": info.get("used_vram_mb", 0),
+                "gpu_util_pct": info.get("gpu_util_pct", info.get("gpu", {}).get("gpu_util_pct", 0)),
+                "gpu_name": info.get("gpu_name", "Unknown GPU"),
+                "has_cuda": info.get("has_cuda", False),
+                "cuda_runtime_ready": info.get("cuda_runtime_ready", False)
+            })
+        return jsonify({"online": False, "error": f"Remote node returned HTTP {res.status_code}"}), 200
+    except Exception as e:
+        return jsonify({"online": False, "error": str(e)}), 200
+
 
 
 @app.route("/api/admin/lyrics/remote-prime", methods=["POST"])
