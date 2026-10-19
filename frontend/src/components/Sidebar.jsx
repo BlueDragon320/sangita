@@ -103,7 +103,7 @@ function PlaylistThumb({ name, firstTrackPath, token }) {
   )
 }
 
-export default function Sidebar({
+function Sidebar({
   playlists,
   currentPlaylist,
   onSelect,
@@ -248,3 +248,5 @@ export default function Sidebar({
     </aside>
   )
 }
+
+export default React.memo(Sidebar)

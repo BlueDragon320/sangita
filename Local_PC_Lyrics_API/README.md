@@ -62,6 +62,14 @@ Connect your PC and VPS securely without opening router ports using **[Tailscale
    ```
 3. Test connection and enjoy instant GPU offloading over encrypted wire!
 
+### 📊 Live Remote Telemetry in Sangita Admin:
+Once connected, Sangita's **Lyrics Engine** tab in the main Admin Dashboard displays a dedicated **Connected PC Resource Monitor**:
+- **Connected PC CPU Utilization:** Real-time CPU % displayed directly below the Host CPU gauge.
+- **Connected PC RAM Usage:** Live memory consumption displayed below the Host Memory gauge.
+- **Connected PC GPU & VRAM:** NVIDIA GPU name, CUDA compute %, and VRAM allocated.
+- **Batch ETA & Progress:** Estimated completion time, active track name, and processing speed.
+- **Remote Hardware Tuner:** Adjust max CPU threads, RAM limit, and GPU cooldown pause directly from Sangita Admin without touching the PC.
+
 ---
 
 ## ⚙️ CLI Options & Resource Limits

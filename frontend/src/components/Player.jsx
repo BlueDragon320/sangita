@@ -41,7 +41,7 @@ function PlayerDisc({ track, token, discBg }) {
   )
 }
 
-export default function Player({
+function Player({
   track,
   playlist,
   isPlaying,
@@ -513,3 +513,5 @@ function LyricsIcon({ width = 19, height = 19, className = '' }) {
     </svg>
   )
 }
+
+export default React.memo(Player)

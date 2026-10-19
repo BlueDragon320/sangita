@@ -72,7 +72,7 @@ function TrackRowThumb({ track, token }) {
   )
 }
  
-export default function TrackList({
+function TrackList({
   tracks = [],
   currentIndex,
   isPlaying,
@@ -191,3 +191,5 @@ export default function TrackList({
     </div>
   )
 }
+
+export default React.memo(TrackList)

@@ -154,7 +154,7 @@ function HeroArt({ playlistName, tracks = [], token }) {
   )
 }
 
-export default function Hero({
+function Hero({
   playlistName,
   tracks = [],
   isPlaying,
@@ -293,3 +293,5 @@ export default function Hero({
     </div>
   )
 }
+
+export default React.memo(Hero)

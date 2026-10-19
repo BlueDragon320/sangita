@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 
-export default function RightPanel({
+function RightPanel({
   track,
   playlist,
   isPlaying,
@@ -164,3 +164,5 @@ export default function RightPanel({
     </aside>
   )
 }
+
+export default React.memo(RightPanel)

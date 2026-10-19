@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react'
 import Login      from './components/Login.jsx'
 import Sidebar    from './components/Sidebar.jsx'
 import Header     from './components/Header.jsx'
@@ -7,7 +7,8 @@ import TrackList  from './components/TrackList.jsx'
 import Player     from './components/Player.jsx'
 import DevicePanel from './components/DevicePanel.jsx'
 import { useDeviceSync } from './hooks/useDeviceSync.js'
-import AdminDashboard from './components/AdminDashboard.jsx'
+
+const AdminDashboard = React.lazy(() => import('./components/AdminDashboard.jsx'))
 
 function buildTracks(playlistName, paths) {
   return paths.map((p, i) => ({
@@ -33,6 +34,33 @@ function ThemeIcon({ theme }) {
     </svg>
   )
 }
+
+const DEVICE_INFO = (() => {
+  if (typeof navigator === 'undefined') {
+    return { browser: 'Browser', deviceType: 'desktop', deviceName: 'Desktop', os: 'Unknown' };
+  }
+  const ua = navigator.userAgent;
+  let browser = 'Browser';
+  if (ua.includes('Edg/')) browser = 'Edge';
+  else if (ua.includes('OPR/')) browser = 'Opera';
+  else if (ua.includes('Chrome/') && !ua.includes('Chromium/')) browser = 'Chrome';
+  else if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Safari/') && !ua.includes('Chrome/')) browser = 'Safari';
+
+  const isMobile = /Mobi|Android/i.test(ua) && !/iPad|Tablet/i.test(ua);
+  const isTablet = /iPad|Tablet/i.test(ua);
+  const deviceType = isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop';
+  const deviceName = isMobile ? 'Mobile' : isTablet ? 'Tablet' : 'Desktop';
+
+  let os = 'Unknown';
+  if (/Windows/i.test(ua)) os = 'Windows';
+  else if (/Mac OS X/i.test(ua)) os = 'Mac';
+  else if (/Linux/i.test(ua)) os = 'Linux';
+  else if (/Android/i.test(ua)) os = 'Android';
+  else if (/iPhone|iPad/i.test(ua)) os = 'iOS';
+
+  return { browser, deviceType, deviceName, os };
+})();
 
 function QuickCardThumb({ name, firstTrackPath, token }) {
   if (name === 'Favorites') {
@@ -156,15 +184,19 @@ export default function App() {
   const wasActiveRef  = useRef(false)
   const loadedTrackIdRef = useRef(null)
   const sendRemoteRef = useRef(null)
+  const lastTimeRef   = useRef(-1)
+  const lastDurRef    = useRef(-1)
+  const lastPlayingRef = useRef(null)
 
-  const searchResults = []
-  if (searchQuery.trim()) {
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase();
+    const results = [];
     for (const [plName, paths] of Object.entries(playlists)) {
       paths.forEach((p, i) => {
         const trackName = p.split('/').pop().replace(/\.[^/.]+$/, '');
         if (trackName.toLowerCase().includes(q) || plName.toLowerCase().includes(q)) {
-          searchResults.push({
+          results.push({
             id: `search-${plName}-${i}`,
             path: p,
             name: trackName,
@@ -173,7 +205,8 @@ export default function App() {
         }
       });
     }
-  }
+    return results;
+  }, [searchQuery, playlists]);
 
   useEffect(() => { queueRef.current     = queue        }, [queue])
   useEffect(() => { indexRef.current     = currentIndex }, [currentIndex])
@@ -279,12 +312,14 @@ export default function App() {
   const currentTrack = (() => {
     const curPath = isActiveDevice ? loadedTrackIdRef.current : (syncState?.trackId || loadedTrackIdRef.current);
     if (!curPath) return null;
+    if (currentIndex >= 0 && queue[currentIndex]?.path === curPath) return queue[currentIndex];
     const inQueue = queue.find(t => t.path === curPath);
     if (inQueue) return inQueue;
     for (const [plName, paths] of Object.entries(playlists)) {
-      if (paths.includes(curPath)) {
+      const idx = paths.indexOf(curPath);
+      if (idx !== -1) {
         return {
-          id: `${plName}-${paths.indexOf(curPath)}`,
+          id: `${plName}-${idx}`,
           path: curPath,
           name: curPath.split('/').pop().replace(/\.[^/.]+$/, ''),
           playlist: plName
@@ -367,26 +402,6 @@ export default function App() {
   useEffect(() => {
     if (!isPlaying || !isActiveDevice || !currentTrack) return;
     
-    const ua = navigator.userAgent;
-    let browser = 'Browser';
-    if (ua.includes('Edg/')) browser = 'Edge';
-    else if (ua.includes('OPR/')) browser = 'Opera';
-    else if (ua.includes('Chrome/') && !ua.includes('Chromium/')) browser = 'Chrome';
-    else if (ua.includes('Firefox/')) browser = 'Firefox';
-    else if (ua.includes('Safari/') && !ua.includes('Chrome/')) browser = 'Safari';
-    
-    const isMobile = /Mobi|Android/i.test(ua) && !/iPad|Tablet/i.test(ua);
-    const isTablet = /iPad|Tablet/i.test(ua);
-    const deviceType = isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop';
-    const deviceName = isMobile ? 'Mobile' : isTablet ? 'Tablet' : 'Desktop';
-    
-    let os = 'Unknown';
-    if (/Windows/i.test(ua)) os = 'Windows';
-    else if (/Mac OS X/i.test(ua)) os = 'Mac';
-    else if (/Linux/i.test(ua)) os = 'Linux';
-    else if (/Android/i.test(ua)) os = 'Android';
-    else if (/iPhone|iPad/i.test(ua)) os = 'iOS';
-
     const devId = getMyDeviceId();
     const intervalSec = 10;
     
@@ -401,10 +416,10 @@ export default function App() {
           track_id: currentTrack.path,
           playlist: currentTrack.playlist || 'Library',
           device_id: devId,
-          device_name: deviceName,
-          device_type: deviceType,
-          browser: browser,
-          os: os,
+          device_name: DEVICE_INFO.deviceName,
+          device_type: DEVICE_INFO.deviceType,
+          browser: DEVICE_INFO.browser,
+          os: DEVICE_INFO.os,
           duration: intervalSec
         })
       }).catch(err => console.warn('[Stats] Failed report:', err));
@@ -737,9 +752,19 @@ export default function App() {
         if (audio) {
           const t = audio.currentTime || 0
           const d = isFinite(audio.duration) ? audio.duration : 0
-          setCurrentTime(t)
-          setDuration(d)
-          setIsLocalPlaying(!audio.paused && !audio.ended)
+          const playing = !audio.paused && !audio.ended
+          if (Math.abs(t - lastTimeRef.current) > 0.05) {
+            setCurrentTime(t)
+            lastTimeRef.current = t
+          }
+          if (Math.abs(d - lastDurRef.current) > 0.1) {
+            setDuration(d)
+            lastDurRef.current = d
+          }
+          if (playing !== lastPlayingRef.current) {
+            setIsLocalPlaying(playing)
+            lastPlayingRef.current = playing
+          }
           if (d > 0) {
             const track = indexRef.current >= 0 ? queueRef.current[indexRef.current] : null
             if (track) setDurations(prev => prev[track.path] === d ? prev : { ...prev, [track.path]: d })
@@ -754,9 +779,18 @@ export default function App() {
           const durMs = s.durationMs || 0
           const t = Math.max(0, durMs > 0 ? Math.min(curMs, durMs) : curMs) / 1000
           const d = durMs > 0 ? durMs / 1000 : (durations[s.trackId] || 0)
-          setCurrentTime(t)
-          if (d > 0) setDuration(d)
-          setIsLocalPlaying(false)
+          if (Math.abs(t - lastTimeRef.current) > 0.05) {
+            setCurrentTime(t)
+            lastTimeRef.current = t
+          }
+          if (d > 0 && Math.abs(d - lastDurRef.current) > 0.1) {
+            setDuration(d)
+            lastDurRef.current = d
+          }
+          if (lastPlayingRef.current !== false) {
+            setIsLocalPlaying(false)
+            lastPlayingRef.current = false
+          }
         }
       }
       rafRef.current = requestAnimationFrame(tick)
@@ -1221,19 +1255,75 @@ export default function App() {
     a.download = track.name; document.body.appendChild(a); a.click(); document.body.removeChild(a)
   }, [currentTrack])
 
+  const handleSidebarSelect = useCallback((name) => {
+    setView('music');
+    setSearchQuery('');
+    setCurrentPlaylist(name);
+    setShowLyrics(false);
+    setMobileMenuOpen(false);
+    window.history.pushState({}, '', '/');
+  }, []);
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarCollapsed(c => !c);
+  }, []);
+
+  const handleOpenDevices = useCallback(() => {
+    setShowDevices(true);
+  }, []);
+
+  const handleCloseDevices = useCallback(() => {
+    setShowDevices(false);
+  }, []);
+
+  const handleOpenMobileMenu = useCallback(() => {
+    setMobileMenuOpen(true);
+  }, []);
+
+  const handleCloseMobileMenu = useCallback(() => {
+    setMobileMenuOpen(false);
+  }, []);
+
+  const handleCloseLyrics = useCallback(() => {
+    setShowLyrics(false);
+  }, []);
+
+  const handleToggleLyrics = useCallback(() => {
+    setShowLyrics(v => !v);
+  }, []);
+
+  const handleCloseRightPanel = useCallback(() => {
+    setShowRightPanel(false);
+  }, []);
+
+  const handleToggleRightPanel = useCallback(() => {
+    setShowRightPanel(p => !p);
+  }, []);
+
+  const handleSearchChange = useCallback((val) => {
+    setSearchQuery(val);
+    if (val.trim()) {
+      setView('search');
+    } else {
+      setView('music');
+    }
+  }, []);
+
   if (!token) return <Login onLogin={handleLogin} />
 
   if (view === 'admin') {
     return (
-      <AdminDashboard
-        token={token}
-        playlists={playlists}
-        onBackToPlayer={() => handleViewChange('music')}
-        onLogout={handleLogout}
-        theme={theme}
-        onCycleTheme={cycleTheme}
-        ThemeIcon={ThemeIcon}
-      />
+      <Suspense fallback={<div className="loading-state" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>}>
+        <AdminDashboard
+          token={token}
+          playlists={playlists}
+          onBackToPlayer={() => handleViewChange('music')}
+          onLogout={handleLogout}
+          theme={theme}
+          onCycleTheme={cycleTheme}
+          ThemeIcon={ThemeIcon}
+        />
+      </Suspense>
     )
   }
 
@@ -1244,24 +1334,17 @@ export default function App() {
         <DevicePanel
           devices={devices} myDeviceId={getMyDeviceId()}
           activeDeviceId={syncState?.activeDeviceId}
-          onTransfer={transferPlayback} onClose={() => setShowDevices(false)}
+          onTransfer={transferPlayback} onClose={handleCloseDevices}
         />
       )}
       <div className="app-body">
-        {mobileMenuOpen && <div className="mobile-overlay" onClick={() => setMobileMenuOpen(false)} />}
+        {mobileMenuOpen && <div className="mobile-overlay" onClick={handleCloseMobileMenu} />}
         <Sidebar
           playlists={playlists} currentPlaylist={currentPlaylist}
-          onSelect={(name) => {
-            setView('music');
-            setSearchQuery('');
-            setCurrentPlaylist(name);
-            setShowLyrics(false);
-            setMobileMenuOpen(false);
-            window.history.pushState({}, '', '/');
-          }}
+          onSelect={handleSidebarSelect}
           isOpen={mobileMenuOpen}
           sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={() => setSidebarCollapsed(c => !c)}
+          onToggleSidebar={handleToggleSidebar}
           token={token}
         />
         <div className="main-area">
@@ -1270,22 +1353,15 @@ export default function App() {
             onSelectView={handleViewChange}
             isAdmin={role === 'admin'}
             searchQuery={searchQuery}
-            onSearchChange={(val) => {
-              setSearchQuery(val);
-              if (val.trim()) {
-                setView('search');
-              } else {
-                setView('music');
-              }
-            }}
+            onSearchChange={handleSearchChange}
             theme={theme}
             onCycleTheme={cycleTheme}
             ThemeIcon={ThemeIcon}
             username={username}
             onLogout={handleLogout}
-            onOpenDevices={() => setShowDevices(true)}
+            onOpenDevices={handleOpenDevices}
             deviceCount={devices.length}
-            onOpenMobileMenu={() => setMobileMenuOpen(true)}
+            onOpenMobileMenu={handleOpenMobileMenu}
           />
 
           <div className={`main-scroll-body ${showLyrics && currentTrack ? 'lyrics-mode' : ''}`}>
@@ -1298,7 +1374,7 @@ export default function App() {
                   lyricsData={lyricsData}
                   loading={lyricsLoading}
                   onSeek={handleSeekFromLyrics}
-                  onClose={() => setShowLyrics(false)}
+                  onClose={handleCloseLyrics}
                   isPlaying={isPlaying}
                   onTogglePlay={togglePlay}
                   token={token}
@@ -1419,7 +1495,7 @@ export default function App() {
             isPlaying={isPlaying}
             duration={duration}
             formatTime={formatTime}
-            onClose={() => setShowRightPanel(false)}
+            onClose={handleCloseRightPanel}
             onTogglePlay={togglePlay}
             onDownload={downloadTrack}
             token={token}
@@ -1440,15 +1516,15 @@ export default function App() {
           volume={volume} onVolumeChange={changeVolume} formatTime={formatTime}
           isActiveDevice={isActiveDevice} activeDeviceName={activeDeviceName} syncState={syncState}
           onClaimDevice={claimActiveDevice} onSendRemote={sendRemoteControl}
-          devices={devices} myDeviceId={getMyDeviceId()} onOpenDevices={() => setShowDevices(true)}
-          showRightPanel={showRightPanel} onToggleRightPanel={() => setShowRightPanel(p => !p)}
+          devices={devices} myDeviceId={getMyDeviceId()} onOpenDevices={handleOpenDevices}
+          showRightPanel={showRightPanel} onToggleRightPanel={handleToggleRightPanel}
           token={token}
           isFavorite={currentTrack ? favorites.includes(currentTrack.path) : false}
           onToggleFavorite={toggleFavorite}
           onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
           hasLyrics={!!lyricsData?.has_lyrics}
           showLyrics={showLyrics}
-          onToggleLyrics={() => setShowLyrics(v => !v)}
+          onToggleLyrics={handleToggleLyrics}
         />
       )}
 

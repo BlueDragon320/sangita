@@ -196,11 +196,24 @@ async function removeDevice(userId, deviceId) {
 
 async function getDevices(userId) {
   const ids = await redis.smembers(K.deviceSet(userId));
+  if (!ids || ids.length === 0) return [];
+  const results = await Promise.all(ids.map(id => redis.get(K.device(userId, id))));
   const devices = [];
-  for (const id of ids) {
-    const raw = await redis.get(K.device(userId, id));
-    if (raw) { devices.push(JSON.parse(raw)); }
-    else      { await redis.srem(K.deviceSet(userId), id); } // TTL expired
+  const expiredIds = [];
+  for (let i = 0; i < ids.length; i++) {
+    const raw = results[i];
+    if (raw) {
+      try {
+        devices.push(JSON.parse(raw));
+      } catch {
+        expiredIds.push(ids[i]);
+      }
+    } else {
+      expiredIds.push(ids[i]);
+    }
+  }
+  if (expiredIds.length > 0) {
+    await Promise.all(expiredIds.map(id => redis.srem(K.deviceSet(userId), id)));
   }
   return devices;
 }
@@ -213,6 +226,8 @@ async function getState(userId) {
 async function saveState(userId, state) {
   await redis.set(K.state(userId), JSON.stringify(state));
 }
+
+const lastBroadcast = new Map();
 
 io.use((socket, next) => {
   const token  = socket.handshake.auth?.token || socket.handshake.query?.token;
@@ -302,9 +317,15 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('PLAYBACK_STATE_CHANGED', async (data) => {
-    const state = { ...data, updatedAt: Date.now() };
+    const now = Date.now();
+    const last = lastBroadcast.get(userId) || 0;
+    const state = { ...data, updatedAt: now };
     await saveState(userId, state);
-    socket.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state); // relay to others
+    const isCritical = data.isPlaying !== undefined || data.trackId !== undefined || data.playlist !== undefined;
+    if (isCritical || (now - last > 100)) {
+      socket.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state); // relay to others
+      lastBroadcast.set(userId, now);
+    }
   });
 
   socket.on('POSITION_REPORT', async ({ positionMs, durationMs }) => {

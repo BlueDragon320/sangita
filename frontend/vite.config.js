@@ -18,6 +18,18 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor': ['react', 'react-dom'],
+          'sync': ['socket.io-client'],
+        }
+      }
+    },
+    cssCodeSplit: true,
+    minify: 'esbuild',
+    sourcemap: false,
+    target: 'es2020',
   },
   test: {
     environment: 'jsdom',

@@ -12,11 +12,30 @@ import sqlite3
 import re
 import threading
 import secrets
+import io
+import glob
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from functools import wraps
-from flask import Flask, request, jsonify, send_from_directory, abort, g
+from flask import Flask, request, jsonify, send_from_directory, abort, g, has_request_context, Response, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
+import requests
+import psutil
+
+try:
+    import mutagen
+    from mutagen.flac import Picture
+except ImportError:
+    mutagen = None
+    Picture = None
+
+try:
+    from PIL import Image, ImageChops, ImageStat
+except ImportError:
+    Image = None
+    ImageChops = None
+    ImageStat = None
 
 app = Flask(__name__, static_folder=None)
 # Hardened production configuration (Items 10, 11, 12)
@@ -56,6 +75,15 @@ def format_timestamp_tz(ts_str, tz_obj):
         return ts_str
 
 AUDIO_EXTS = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus")
+
+def parse_track_name(track_path):
+    """Returns (name, artist) from a file path like 'Artist - Song.mp3'."""
+    base = os.path.basename(track_path)
+    clean_name = os.path.splitext(base)[0]
+    if " - " in clean_name:
+        parts = clean_name.split(" - ", 1)
+        return parts[1].strip(), parts[0].strip()
+    return clean_name, "Unknown Artist"
 
 # User Database Persistence setup
 DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
@@ -101,13 +129,46 @@ TOKEN_TTL  = 86400 * 7
 if PASSWORD == "sangita123":
     print("[SECURITY WARNING] Default admin password 'sangita123' is active. Set SANGITA_PASS in production.")
 
+class _RequestDbProxy:
+    """Wraps sqlite3.Connection so explicit .close() calls inside request routes are no-ops, allowing the connection to be shared per request and closed on app context teardown."""
+    def __init__(self, conn):
+        self._conn = conn
+    def close(self):
+        pass
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
 def get_db():
+    if has_request_context():
+        if "db" not in g:
+            raw_conn = sqlite3.connect(STATS_DB)
+            raw_conn.row_factory = sqlite3.Row
+            g.raw_db = raw_conn
+            g.db = _RequestDbProxy(raw_conn)
+        return g.db
     conn = sqlite3.connect(STATS_DB)
     conn.row_factory = sqlite3.Row
     return conn
 
+@app.teardown_appcontext
+def close_db(error=None):
+    raw_db = g.pop("raw_db", None)
+    g.pop("db", None)
+    if raw_db is not None:
+        try:
+            raw_db.close()
+        except Exception:
+            pass
+
 def init_db():
     conn = get_db()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-8000")
+    except Exception as e:
+        print(f"[DB Pragma Warning] {e}")
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS play_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,12 +281,23 @@ def init_db():
     except Exception as e:
         print(f"[DB Migration Error] {e}")
 
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_play_events_user_ts ON play_events (username, timestamp DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_play_events_user_device ON play_events (username, device_id, id DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_track_totals_user ON user_track_totals (username, total_seconds DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_user_playlist ON playlist_tracks (username, playlist_name)")
+    except Exception as e:
+        print(f"[DB Index Creation Warning] {e}")
+
     conn.commit()
     conn.close()
 
 init_db()
 
+_users_cache = {"mtime": 0, "data": None}
+
 def load_users():
+    global _users_cache
     if not os.path.exists(USERS_FILE):
         # Seed default admin user from environment
         admin_user = {
@@ -240,14 +312,25 @@ def load_users():
         save_users(users)
         return users
     try:
+        mtime = os.path.getmtime(USERS_FILE)
+        if _users_cache["data"] is not None and _users_cache["mtime"] == mtime:
+            return _users_cache["data"]
         with open(USERS_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+        _users_cache = {"mtime": mtime, "data": data}
+        return data
     except Exception:
-        return {}
+        return _users_cache["data"] if _users_cache["data"] is not None else {}
 
 def save_users(users):
+    global _users_cache
     with open(USERS_FILE, "w") as f:
         json.dump(users, f, indent=2)
+    try:
+        _users_cache = {"mtime": os.path.getmtime(USERS_FILE), "data": users}
+    except Exception:
+        _users_cache = {"mtime": 0, "data": users}
+
 
 def _make_token(username):
     payload = json.dumps({"u": username, "exp": int(time.time()) + TOKEN_TTL})
@@ -860,15 +943,7 @@ def get_current_user_stats():
         top_tracks = []
         for r in top_rows:
             track_path = r["track_id"]
-            base = os.path.basename(track_path)
-            clean_name = os.path.splitext(base)[0]
-            artist = "Unknown Artist"
-            if " - " in clean_name:
-                parts = clean_name.split(" - ", 1)
-                artist = parts[0].strip()
-                name = parts[1].strip()
-            else:
-                name = clean_name
+            name, artist = parse_track_name(track_path)
             top_tracks.append({
                 "path": track_path,
                 "name": name,
@@ -890,15 +965,7 @@ def get_current_user_stats():
         recently_played = []
         for r in recent_rows:
             track_path = r["track_id"]
-            base = os.path.basename(track_path)
-            clean_name = os.path.splitext(base)[0]
-            artist = "Unknown Artist"
-            if " - " in clean_name:
-                parts = clean_name.split(" - ", 1)
-                artist = parts[0].strip()
-                name = parts[1].strip()
-            else:
-                name = clean_name
+            name, artist = parse_track_name(track_path)
             recently_played.append({
                 "path": track_path,
                 "name": name,
@@ -911,12 +978,7 @@ def get_current_user_stats():
         # 5. Top Artists
         artist_map = {}
         for r in conn.execute("SELECT track_id, play_count, total_seconds FROM user_track_totals WHERE username = ?", (username,)).fetchall():
-            base = os.path.basename(r["track_id"])
-            clean_name = os.path.splitext(base)[0]
-            if " - " in clean_name:
-                art = clean_name.split(" - ", 1)[0].strip()
-            else:
-                art = "Unknown Artist"
+            _, art = parse_track_name(r["track_id"])
             if art not in artist_map:
                 artist_map[art] = {"artist": art, "play_count": 0, "total_seconds": 0, "tracks": 0}
             artist_map[art]["play_count"] += r["play_count"]
@@ -1071,7 +1133,12 @@ def get_user_listening_history():
     finally:
         conn.close()
 
+_durations_cache = {"ts": 0, "data": None}
+
 def get_track_durations():
+    global _durations_cache
+    if _durations_cache["data"] is not None and (time.time() - _durations_cache["ts"] < 60):
+        return _durations_cache["data"]
     if not os.path.exists(MUSIC_DIR):
         return {}
     conn = get_db()
@@ -1094,9 +1161,11 @@ def get_track_durations():
                     if rel_path in cached and cached[rel_path][0] == mtime and cached[rel_path][1] is not None:
                         durations[rel_path] = cached[rel_path][1]
                     else:
-                        import mutagen
-                        audio = mutagen.File(full_path)
-                        dur = round(audio.info.length, 1) if (audio and hasattr(audio, 'info') and getattr(audio.info, 'length', None)) else None
+                        if mutagen is not None:
+                            audio = mutagen.File(full_path)
+                            dur = round(audio.info.length, 1) if (audio and hasattr(audio, 'info') and getattr(audio.info, 'length', None)) else None
+                        else:
+                            dur = None
                         durations[rel_path] = dur
                         to_insert.append((rel_path, mtime, dur))
                 except Exception:
@@ -1115,6 +1184,7 @@ def get_track_durations():
         except Exception as e:
             print(f"[TrackCache Save Error] {e}")
     conn.close()
+    _durations_cache = {"ts": time.time(), "data": durations}
     return durations
 
 @app.route("/api/durations")
@@ -1125,7 +1195,6 @@ def get_durations():
 @app.route("/api/stream/<path:filepath>")
 @require_auth
 def stream_audio(filepath):
-    import urllib.parse
     safe = os.path.normpath(urllib.parse.unquote(filepath))
     if safe.startswith("..") or safe.startswith("/"):
         abort(403)
@@ -1146,7 +1215,9 @@ def stream_audio(filepath):
         abort(403)
     if not os.path.isfile(full_path):
         abort(404)
-    return send_from_directory(os.path.dirname(full_path), os.path.basename(full_path), conditional=True)
+    resp = send_from_directory(os.path.dirname(full_path), os.path.basename(full_path), conditional=True)
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 def process_cover_image(img_data):
     if not img_data:
@@ -1771,55 +1842,6 @@ def admin_get_analytics():
             WHERE timestamp >= ? AND timestamp <= ?
             GROUP BY dow
         """, [offset_sql, start_utc, end_utc]).fetchall()
-        hour_dict = {r["hr"]: (r["total_sec"], r["play_count"]) for r in hour_rows}
-
-        hourly_distribution = []
-        max_hour_sec = 0
-        peak_hour_index = 0
-        for h in range(24):
-            sec, cnt = hour_dict.get(h, (0, 0))
-            if sec > max_hour_sec:
-                max_hour_sec = sec
-                peak_hour_index = h
-            am_pm = "AM" if h < 12 else "PM"
-            h12 = 12 if h % 12 == 0 else h % 12
-            pct = round((sec / total_seconds * 100), 1) if total_seconds > 0 else 0
-            hourly_distribution.append({
-                "hour": h,
-                "label": f"{h12} {am_pm}",
-                "full_label": f"{h12}:00 {am_pm} - {(h12 % 12) + 1}:00 {'PM' if (h + 1) >= 12 and (h + 1) < 24 else 'AM'}",
-                "seconds": sec,
-                "minutes": round(sec / 60.0, 1),
-                "hours": round(sec / 3600.0, 2),
-                "plays": cnt,
-                "percentage": pct
-            })
-
-        peak_h = peak_hour_index
-        peak_am_pm = "AM" if peak_h < 12 else "PM"
-        peak_h12 = 12 if peak_h % 12 == 0 else peak_h % 12
-        next_h = (peak_h + 1) % 24
-        next_am_pm = "AM" if next_h < 12 else "PM"
-        next_h12 = 12 if next_h % 12 == 0 else next_h % 12
-        
-        peak_hour_info = {
-            "hour": peak_h,
-            "label": f"{peak_h12}:00 {peak_am_pm} – {next_h12}:00 {next_am_pm}",
-            "seconds": max_hour_sec,
-            "hours": round(max_hour_sec / 3600.0, 2),
-            "percentage": round((max_hour_sec / total_seconds * 100), 1) if total_seconds > 0 else 0
-        }
-
-        # 5. Day of the Week Distribution (Mon to Sun)
-        # SQLite strftime('%w') returns 0=Sunday, 1=Monday... 6=Saturday
-        dow_rows = conn.execute("""
-            SELECT CAST(strftime('%w', timestamp) AS INTEGER) as dow,
-                   COALESCE(SUM(duration_sec), 0) as total_sec,
-                   COUNT(id) as play_count
-            FROM play_events
-            WHERE timestamp >= ? AND timestamp <= ?
-            GROUP BY dow
-        """, date_params).fetchall()
         dow_dict = {r["dow"]: (r["total_sec"], r["play_count"]) for r in dow_rows}
 
         dow_order = [(1, "Mon", "Monday"), (2, "Tue", "Tuesday"), (3, "Wed", "Wednesday"),
@@ -1866,15 +1888,7 @@ def admin_get_analytics():
         top_tracks = []
         for r in top_song_rows:
             track_path = r["track_id"]
-            base = os.path.basename(track_path)
-            clean_name = os.path.splitext(base)[0]
-            artist = "Unknown Artist"
-            if " - " in clean_name:
-                parts = clean_name.split(" - ", 1)
-                artist = parts[0].strip()
-                name = parts[1].strip()
-            else:
-                name = clean_name
+            name, artist = parse_track_name(track_path)
             top_tracks.append({
                 "track_id": track_path,
                 "name": name,
@@ -1896,9 +1910,7 @@ def admin_get_analytics():
         """, date_params).fetchall()
         
         for r in all_period_events:
-            base = os.path.basename(r["track_id"])
-            clean_name = os.path.splitext(base)[0]
-            art = clean_name.split(" - ", 1)[0].strip() if " - " in clean_name else "Unknown Artist"
+            _, art = parse_track_name(r["track_id"])
             if art not in artist_map:
                 artist_map[art] = {"artist": art, "total_seconds": 0, "play_count": 0, "tracks": set()}
             artist_map[art]["total_seconds"] += r["duration_sec"]
@@ -2024,16 +2036,7 @@ def admin_get_analytics():
         live_sessions = []
         for r in live_rows:
             track_path = r["track_id"]
-            base = os.path.basename(track_path)
-            clean_name = os.path.splitext(base)[0]
-            artist = "Unknown Artist"
-            if " - " in clean_name:
-                parts = clean_name.split(" - ", 1)
-                artist = parts[0].strip()
-                name = parts[1].strip()
-            else:
-                name = clean_name
-
+            name, artist = parse_track_name(track_path)
             live_sessions.append({
                 "id": r["id"],
                 "username": r["username"],
@@ -2153,16 +2156,7 @@ def admin_get_logs():
         events = []
         for r in rows:
             track_path = r["track_id"]
-            base = os.path.basename(track_path)
-            clean_name = os.path.splitext(base)[0]
-            artist = "Unknown Artist"
-            if " - " in clean_name:
-                parts = clean_name.split(" - ", 1)
-                artist = parts[0].strip()
-                name = parts[1].strip()
-            else:
-                name = clean_name
-
+            name, artist = parse_track_name(track_path)
             events.append({
                 "id": r["id"],
                 "username": r["username"],
@@ -2192,10 +2186,6 @@ def admin_get_logs():
 @app.route("/api/admin/export", methods=["GET"])
 @require_admin
 def admin_export_csv():
-    import io
-    import csv
-    from flask import Response
-
     tz_obj, tz_name = get_tz_from_request()
     conn = get_db()
     try:
@@ -2211,16 +2201,7 @@ def admin_export_csv():
 
         for r in rows:
             track_path = r["track_id"]
-            base = os.path.basename(track_path)
-            clean_name = os.path.splitext(base)[0]
-            artist = "Unknown Artist"
-            if " - " in clean_name:
-                parts = clean_name.split(" - ", 1)
-                artist = parts[0].strip()
-                name = parts[1].strip()
-            else:
-                name = clean_name
-
+            name, artist = parse_track_name(track_path)
             writer.writerow([
                 r["id"],
                 format_timestamp_tz(r["timestamp"], tz_obj),
