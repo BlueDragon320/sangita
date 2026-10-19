@@ -88,6 +88,38 @@ export default function LyricsView({
   const activeLineRef = useRef(null)
   const userScrollTimeoutRef = useRef(null)
   const [userIsScrolling, setUserIsScrolling] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [dynamicBg, setDynamicBg] = useState(() => {
+    try {
+      return localStorage.getItem('sangita_lyrics_dynamic_bg') === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  const toggleDynamicBg = () => {
+    setDynamicBg((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('sangita_lyrics_dynamic_bg', next.toString())
+      } catch {}
+      return next
+    })
+  }
+
+  const toggleFullscreen = () => {
+    setIsFullscreen((prev) => !prev)
+  }
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isFullscreen])
 
   const trackKey = track?.path || track?.name || 'default'
   const [userOffsetSec, setUserOffsetSec] = useState(() => {
@@ -256,7 +288,7 @@ export default function LyricsView({
 
   return (
     <div
-      className="lyrics-view-container"
+      className={`lyrics-view-container ${isFullscreen ? 'fullscreen-mode' : ''} ${dynamicBg ? 'dynamic-bg' : ''}`}
       data-testid="lyrics-view"
     >
       {/* Top Floating Header */}
@@ -315,6 +347,37 @@ export default function LyricsView({
             </button>
           )}
 
+          {/* Dynamic Moving Gradient Background Toggle */}
+          <button
+            className={`btn-icon lyrics-action-icon-btn lyrics-ambient-btn ${dynamicBg ? 'active' : ''}`}
+            onClick={toggleDynamicBg}
+            title={dynamicBg ? "Turn off moving background" : "Turn on moving background"}
+            data-testid="lyrics-ambient-bg-btn"
+          >
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
+              <path d="M12 2L9.5 8.5 3 11l6.5 2.5L12 20l2.5-6.5L21 11l-6.5-2.5L12 2zm7 13l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15zM5 3L3.75 5.75 1 7l2.75 1.25L5 11l1.25-2.75L9 7 6.25 5.75 5 3z"/>
+            </svg>
+          </button>
+
+          {/* Maximize / Minimize Fullscreen Toggle */}
+          <button
+            className={`btn-icon lyrics-action-icon-btn lyrics-maximize-btn ${isFullscreen ? 'active' : ''}`}
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "Minimize to normal view (Esc)" : "Maximize (Full screen)"}
+            data-testid="lyrics-maximize-btn"
+          >
+            {isFullscreen ? (
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
+                <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
+                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+              </svg>
+            )}
+          </button>
+
+          {/* Close 'X' Button */}
           <button
             className="btn-icon lyrics-close-btn"
             onClick={onClose}

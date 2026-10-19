@@ -85,4 +85,87 @@ describe('LyricsView Component', () => {
     fireEvent.click(nudgeEarlier)
     expect(offsetReset).toHaveTextContent('Sync: 0.0s')
   })
+
+  it('toggles maximize / fullscreen mode and handles escape key', () => {
+    render(
+      <LyricsView
+        track={mockTrack}
+        currentTime={2}
+        duration={100}
+        lyricsData={{ has_lyrics: true, raw: '[00:02.00] Line 1' }}
+        loading={false}
+      />
+    )
+
+    const container = screen.getByTestId('lyrics-view')
+    const maxBtn = screen.getByTestId('lyrics-maximize-btn')
+
+    expect(container).not.toHaveClass('fullscreen-mode')
+    expect(maxBtn).toHaveAttribute('title', 'Maximize (Full screen)')
+
+    // Click maximize
+    fireEvent.click(maxBtn)
+    expect(container).toHaveClass('fullscreen-mode')
+    expect(maxBtn).toHaveAttribute('title', 'Minimize to normal view (Esc)')
+
+    // Press Escape to minimize back
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(container).not.toHaveClass('fullscreen-mode')
+
+    // Click maximize again and click again to minimize
+    fireEvent.click(maxBtn)
+    expect(container).toHaveClass('fullscreen-mode')
+    fireEvent.click(maxBtn)
+    expect(container).not.toHaveClass('fullscreen-mode')
+  })
+
+  it('toggles dynamic moving background and persists to localStorage', () => {
+    localStorage.clear()
+
+    const { unmount } = render(
+      <LyricsView
+        track={mockTrack}
+        currentTime={2}
+        duration={100}
+        lyricsData={{ has_lyrics: true, raw: '[00:02.00] Line 1' }}
+        loading={false}
+      />
+    )
+
+    const container = screen.getByTestId('lyrics-view')
+    const bgBtn = screen.getByTestId('lyrics-ambient-bg-btn')
+
+    // Default is off
+    expect(container).not.toHaveClass('dynamic-bg')
+    expect(bgBtn).toHaveAttribute('title', 'Turn on moving background')
+    expect(localStorage.getItem('sangita_lyrics_dynamic_bg')).toBeNull()
+
+    // Toggle on
+    fireEvent.click(bgBtn)
+    expect(container).toHaveClass('dynamic-bg')
+    expect(bgBtn).toHaveAttribute('title', 'Turn off moving background')
+    expect(localStorage.getItem('sangita_lyrics_dynamic_bg')).toBe('true')
+
+    // Toggle off
+    fireEvent.click(bgBtn)
+    expect(container).not.toHaveClass('dynamic-bg')
+    expect(localStorage.getItem('sangita_lyrics_dynamic_bg')).toBe('false')
+
+    unmount()
+
+    // Test restoring from localStorage when initialized with 'true'
+    localStorage.setItem('sangita_lyrics_dynamic_bg', 'true')
+    render(
+      <LyricsView
+        track={mockTrack}
+        currentTime={2}
+        duration={100}
+        lyricsData={{ has_lyrics: true, raw: '[00:02.00] Line 1' }}
+        loading={false}
+      />
+    )
+    const newContainer = screen.getByTestId('lyrics-view')
+    expect(newContainer).toHaveClass('dynamic-bg')
+  })
 })
+

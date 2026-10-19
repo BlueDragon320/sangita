@@ -3538,6 +3538,93 @@ input, button, select, textarea {
   transform: translateY(-1px);
 }
 
+@keyframes slowUndulatingGradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.lyrics-view-container.dynamic-bg {
+  background: linear-gradient(
+    -45deg,
+    #0c1322 0%,
+    #1e1b4b 20%,
+    #064e3b 40%,
+    #2e1065 60%,
+    #134e4a 80%,
+    #0f172a 100%
+  );
+  background-size: 350% 350%;
+  animation: slowUndulatingGradient 22s ease-in-out infinite alternate;
+  transition: background 0.8s ease;
+}
+
+.lyrics-view-container.fullscreen-mode {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 99999 !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  animation: fadeIn 0.2s ease;
+}
+
+.lyrics-view-container.fullscreen-mode .lyrics-view-header {
+  padding: 36px 64px 20px 64px;
+}
+
+.lyrics-view-container.fullscreen-mode .lyrics-lines-wrapper {
+  max-width: 880px;
+}
+
+.lyrics-view-container.fullscreen-mode .lyric-line {
+  font-size: clamp(1.8rem, 4vw, 3rem);
+  line-height: 1.4;
+}
+
+.lyrics-action-icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  color: var(--text-sub);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.lyrics-action-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #FFFFFF;
+  transform: scale(1.05);
+}
+
+.lyrics-action-icon-btn.active {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.45);
+  color: var(--emerald);
+}
+
+.lyrics-ambient-btn.active {
+  background: rgba(168, 85, 247, 0.2);
+  border-color: rgba(168, 85, 247, 0.45);
+  color: #C084FC;
+}
+
 .lyrics-close-btn {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.08);
