@@ -79,4 +79,32 @@ describe('Hero Component & Spotify Layout', () => {
     fireEvent.click(shuffleBtn)
     expect(handleShuffle).toHaveBeenCalledTimes(1)
   })
+
+  it('renders 4-track quad collage grid when playlist has 4 or more tracks', () => {
+    const fourTracks = [
+      { id: '1', name: 'Song 1', path: 'Pl/Song1.mp3' },
+      { id: '2', name: 'Song 2', path: 'Pl/Song2.mp3' },
+      { id: '3', name: 'Song 3', path: 'Pl/Song3.mp3' },
+      { id: '4', name: 'Song 4', path: 'Pl/Song4.mp3' },
+    ]
+    const { container } = render(
+      <Hero
+        playlistName="Collage Playlist"
+        tracks={fourTracks}
+        isPlaying={false}
+        isShuffle={false}
+        onPlay={vi.fn()}
+        onShuffle={vi.fn()}
+        onDownload={vi.fn()}
+        username="VaibhavOp"
+        durations={{}}
+        token="valid-token"
+      />
+    )
+
+    const quadGrid = container.querySelector('.hero-art-quad-grid')
+    expect(quadGrid).toBeInTheDocument()
+    const images = container.querySelectorAll('.hero-quad-img')
+    expect(images.length).toBe(4)
+  })
 })

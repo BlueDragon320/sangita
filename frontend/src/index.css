@@ -532,8 +532,6 @@ input, button, select, textarea {
 .main-scroll-body {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
   scroll-behavior: smooth;
