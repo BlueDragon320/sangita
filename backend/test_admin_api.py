@@ -197,6 +197,51 @@ class TestAdminAPI(unittest.TestCase):
             cmd_args = mock_popen.call_args[0][0]
             self.assertIn('--no-api', cmd_args)
 
+            # 3. Remote Whisper URL provided
+            res = self.client.post('/api/admin/lyrics/start', headers=admin_headers, json={'remote_whisper_url': 'http://192.168.1.50:8000'})
+            self.assertEqual(res.status_code, 202)
+            cmd_args = mock_popen.call_args[0][0]
+            self.assertIn('--remote-whisper-url', cmd_args)
+            self.assertIn('http://192.168.1.50:8000', cmd_args)
+
+    def test_admin_lyrics_test_remote_endpoint(self):
+        from unittest.mock import patch, MagicMock
+        admin_headers = {'Authorization': f'Bearer {self.admin_token}'}
+
+        # Empty URL
+        res = self.client.post('/api/admin/lyrics/test-remote', headers=admin_headers, json={'url': ''})
+        self.assertEqual(res.status_code, 400)
+
+        # Successful connection
+        with patch('requests.get') as mock_get:
+            mock_res = MagicMock(status_code=200)
+            mock_res.json.return_value = {
+                "status": "ready",
+                "device": "cuda",
+                "gpu_name": "NVIDIA GeForce RTX 3060",
+                "has_cuda": True,
+                "total_vram_mb": 6144,
+                "used_vram_mb": 20,
+                "active_job": "idle"
+            }
+            mock_get.return_value = mock_res
+
+            res = self.client.post('/api/admin/lyrics/test-remote', headers=admin_headers, json={'url': 'http://192.168.1.50:8000'})
+            self.assertEqual(res.status_code, 200)
+            data = res.get_json()
+            self.assertTrue(data['online'])
+            self.assertEqual(data['gpu_name'], 'NVIDIA GeForce RTX 3060')
+            self.assertTrue(data['has_cuda'])
+
+        # Unreachable connection
+        with patch('requests.get', side_effect=Exception("Connection timed out")):
+            res = self.client.post('/api/admin/lyrics/test-remote', headers=admin_headers, json={'url': 'http://192.168.1.50:8000'})
+            self.assertEqual(res.status_code, 200)
+            data = res.get_json()
+            self.assertFalse(data['online'])
+            self.assertIn('Unreachable', data['error'])
+
 if __name__ == '__main__':
     unittest.main()
+
 

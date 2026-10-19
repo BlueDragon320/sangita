@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sangita — Local PC Lyrics API (Whisper GPU Acceleration)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #07090e;
+      --bg-surface: #0f1422;
+      --bg-card: rgba(20, 26, 43, 0.75);
+      --bg-card-hover: rgba(27, 35, 58, 0.9);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-glow: rgba(16, 185, 129, 0.3);
+      --accent-emerald: #10b981;
+      --accent-emerald-dim: rgba(16, 185, 129, 0.15);
+      --accent-cyan: #06b6d4;
+      --accent-blue: #3b82f6;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --font-main: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(16, 185, 129, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(59, 130, 246, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 50% 50%, rgba(6, 182, 212, 0.03) 0%, transparent 60%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      font-family: var(--font-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    header {
+      padding: 1.25rem 2rem;
+      border-bottom: 1px solid var(--border-color);
+      background: rgba(11, 15, 25, 0.85);
+      backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .brand-icon {
+      width: 42px;
+      height: 42px;
+      background: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 20px rgba(16, 185, 129, 0.35);
+      font-size: 1.3rem;
+    }
+
+    .brand-title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(to right, #ffffff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-tag {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-emerald);
+      background: var(--accent-emerald-dim);
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      display: inline-block;
+      margin-left: 0.5rem;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+
+    .live-status-pill {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 0.4rem 0.9rem;
+      border-radius: 9999px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border-color);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 10px var(--accent-emerald);
+      animation: pulse 2s infinite ease-in-out;
+    }
+
+    .status-dot.busy {
+      background: var(--accent-amber);
+      box-shadow: 0 0 12px var(--accent-amber);
+      animation: pulse-rapid 0.8s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    @keyframes pulse-rapid {
+      0%, 100% { opacity: 1; transform: scale(1.1); }
+      50% { opacity: 0.3; transform: scale(0.9); }
+    }
+
+    main {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+
+    /* Privacy Banner */
+    .banner-privacy {
+      background: linear-gradient(90deg, rgba(16, 185, 129, 0.08) 0%, rgba(6, 182, 212, 0.08) 100%);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: 14px;
+      padding: 0.9rem 1.4rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .banner-privacy-left {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .banner-privacy-icon {
+      font-size: 1.4rem;
+    }
+
+    .banner-privacy-text h4 {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--accent-emerald);
+      margin-bottom: 0.15rem;
+    }
+
+    .banner-privacy-text p {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    /* Grid Layout */
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 1.4rem;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .card:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+      transform: translateY(-2px);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .card-badge {
+      font-size: 0.72rem;
+      font-family: var(--font-mono);
+      background: rgba(255, 255, 255, 0.06);
+      padding: 0.2rem 0.5rem;
+      border-radius: 6px;
+      color: var(--text-muted);
+    }
+
+    .stat-main {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      margin-bottom: 0.85rem;
+    }
+
+    .stat-number {
+      font-size: 2.1rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+    }
+
+    .stat-unit {
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--text-dim);
+    }
+
+    .stat-sub {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    /* Progress Bar */
+    .progress-bar-bg {
+      width: 100%;
+      height: 7px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 0.4s ease, background 0.3s ease;
+    }
+
+    .fill-emerald { background: linear-gradient(90deg, #10b981, #06b6d4); }
+    .fill-blue { background: linear-gradient(90deg, #3b82f6, #6366f1); }
+    .fill-amber { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+
+    /* Active Job Section */
+    .active-job-card {
+      background: linear-gradient(135deg, rgba(20, 26, 43, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .active-job-card.is-active {
+      border-color: rgba(245, 158, 11, 0.4);
+      box-shadow: 0 0 25px rgba(245, 158, 11, 0.08);
+    }
+
+    .active-job-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1.25rem;
+    }
+
+    .active-job-song {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .song-icon {
+      width: 48px;
+      height: 48px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+    }
+
+    .active-job-card.is-active .song-icon {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(245, 158, 11, 0.3);
+      color: var(--accent-amber);
+    }
+
+    .song-details h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+      max-width: 450px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .song-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+
+    /* History Table */
+    .history-section {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .btn {
+      font-family: var(--font-main);
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 0.45rem 1rem;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.2s ease;
+    }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-emerald {
+      background: var(--accent-emerald-dim);
+      border-color: rgba(16, 185, 129, 0.3);
+      color: var(--accent-emerald);
+    }
+
+    .btn-emerald:hover {
+      background: rgba(16, 185, 129, 0.25);
+    }
+
+    .table-container {
+      overflow-x: auto;
+      border-radius: 10px;
+      border: 1px solid var(--border-color);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.85rem;
+    }
+
+    th {
+      background: rgba(15, 23, 42, 0.8);
+      padding: 0.75rem 1rem;
+      color: var(--text-dim);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-muted);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-main);
+    }
+
+    .badge-pill {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      display: inline-block;
+    }
+
+    .badge-success {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-emerald);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+    }
+
+    .badge-speed {
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.25);
+    }
+
+    .badge-lang {
+      background: rgba(168, 85, 247, 0.15);
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.25);
+      text-transform: uppercase;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-dim);
+    }
+
+    .empty-icon {
+      font-size: 2.2rem;
+      margin-bottom: 0.5rem;
+      opacity: 0.5;
+    }
+
+    /* Modal for Lyrics Viewer */
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 1.5rem;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal-box {
+      background: #0f1422;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      width: 100%;
+      max-width: 650px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+    }
+
+    .modal-close {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      font-size: 1.4rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .modal-close:hover {
+      color: var(--text-main);
+    }
+
+    .modal-body {
+      padding: 1.25rem 1.5rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .lyrics-pre {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.7;
+      color: #e2e8f0;
+      white-space: pre-wrap;
+      background: rgba(0, 0, 0, 0.35);
+      padding: 1rem;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .modal-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
+    }
+
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border-color);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <span class="brand-title">Local PC Lyrics API</span>
+        <span class="brand-tag">Whisper GPU Accelerated</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="live-status-pill" id="headerStatusPill">
+        <span class="status-dot" id="headerStatusDot"></span>
+        <span id="headerStatusText">Listening on 0.0.0.0:8000</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Privacy & Ephemeral Storage Banner -->
+    <div class="banner-privacy">
+      <div class="banner-privacy-left">
+        <span class="banner-privacy-icon">🛡️</span>
+        <div class="banner-privacy-text">
+          <h4>Strict Ephemeral Audio Storage</h4>
+          <p>Audio sent by Sangita server is streamed, transcribed in GPU memory, and immediately deleted from local disk after lyrics are returned.</p>
+        </div>
+      </div>
+      <div>
+        <span class="badge-pill badge-success" style="font-size: 0.75rem;">ZERO DISK RETENTION</span>
+      </div>
+    </div>
+
+    <!-- Active Job Real-Time Card -->
+    <div class="active-job-card" id="activeJobCard">
+      <div class="active-job-content">
+        <div class="active-job-song">
+          <div class="song-icon" id="jobIcon">🎵</div>
+          <div class="song-details">
+            <h3 id="jobSongName">Idle — Waiting for audio from Sangita server...</h3>
+            <div class="song-meta">
+              <span id="jobMetaClient">Client: Waiting</span>
+              <span>•</span>
+              <span id="jobMetaModel">Model: small</span>
+              <span>•</span>
+              <span id="jobMetaElapsed">Elapsed: 0.0s</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <span class="badge-pill badge-success" id="jobStatePill">READY FOR JOBS</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hardware Telemetry Grid -->
+    <div class="telemetry-grid">
+      <!-- GPU Telemetry Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">🎮 GPU Hardware</span>
+          <span class="card-badge" id="gpuBadge">CUDA</span>
+        </div>
+        <div class="stat-main">
+          <span class="stat-number" id="vramUsed">0</span>
+          <span class="stat-unit">/ <span id="vramTotal">0</span> MB VRAM</span>
+        </div>
+        <div class="stat-sub" id="gpuName">Detecting GPU...</div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill fill-emerald" id="vramBar" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <!-- CPU Telemetry Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">💻 Host CPU</span>
+          <span class="card-badge" id="cpuCores">0 Cores</span>
+        </div>
+        <div class="stat-main">
+          <span class="stat-number" id="cpuPct">0</span>
+          <span class="stat-unit">%</span>
+        </div>
+        <div class="stat-sub">CTranslate2 Worker Threading</div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill fill-blue" id="cpuBar" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <!-- RAM Telemetry Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">🧠 System RAM</span>
+          <span class="card-badge" id="ramPct">0%</span>
+        </div>
+        <div class="stat-main">
+          <span class="stat-number" id="ramUsed">0</span>
+          <span class="stat-unit">/ <span id="ramTotal">0</span> GB</span>
+        </div>
+        <div class="stat-sub">Host Memory Footprint</div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill fill-emerald" id="ramBar" style="width: 0%;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Processed Songs History Section -->
+    <div class="history-section">
+      <div class="section-header">
+        <div class="section-title">
+          <span>📜 Processed Songs History</span>
+          <span class="card-badge" id="historyCount">0</span>
+        </div>
+        <button class="btn" id="clearHistoryBtn" onclick="clearHistory()">
+          🗑️ Clear History
+        </button>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Song / Track Filename</th>
+              <th>Speed</th>
+              <th>Language</th>
+              <th>Lines</th>
+              <th>Device</th>
+              <th>Time</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="historyTableBody">
+            <tr>
+              <td colspan="7" class="empty-state">
+                <div class="empty-icon">🎧</div>
+                <div>No songs processed yet. Start lyrics generation in Sangita to see live progress!</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Lyrics Modal Viewer -->
+  <div class="modal-backdrop" id="lyricsModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-title" id="modalSongTitle">Song Lyrics (.lrc)</div>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <pre class="lyrics-pre" id="modalLyricsContent"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-emerald" id="copyLyricsBtn" onclick="copyModalLyrics()">
+          📋 Copy LRC
+        </button>
+        <button class="btn" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Sangita Remote GPU Whisper Node • Lightweight AI Acceleration for Low-Spec Servers • Open Source
+  </footer>
+
+  <script>
+    let historyData = [];
+
+    async function fetchTelemetry() {
+      try {
+        const res = await fetch('/api/telemetry');
+        if (!res.ok) return;
+        const data = await res.json();
+        renderTelemetry(data);
+      } catch (err) {
+        console.warn('Telemetry fetch error:', err);
+      }
+    }
+
+    function renderTelemetry(data) {
+      // 1. GPU
+      const gpu = data.gpu || {};
+      document.getElementById('gpuName').textContent = gpu.name || 'CPU (No GPU Detected)';
+      document.getElementById('gpuBadge').textContent = gpu.has_cuda ? 'CUDA ACTIVE' : 'CPU MODE';
+      document.getElementById('gpuBadge').style.color = gpu.has_cuda ? 'var(--accent-emerald)' : 'var(--text-muted)';
+      
+      const vramUsed = gpu.used_vram_mb || 0;
+      const vramTotal = gpu.total_vram_mb || 0;
+      document.getElementById('vramUsed').textContent = vramUsed;
+      document.getElementById('vramTotal').textContent = vramTotal;
+      const vramPct = vramTotal > 0 ? (vramUsed / vramTotal) * 100 : 0;
+      document.getElementById('vramBar').style.width = `${Math.min(100, vramPct)}%`;
+
+      // 2. CPU
+      const cpu = data.cpu || {};
+      const cpuVal = Math.round(cpu.percent || 0);
+      document.getElementById('cpuPct').textContent = cpuVal;
+      document.getElementById('cpuCores').textContent = `${cpu.cores || 1} Cores`;
+      document.getElementById('cpuBar').style.width = `${Math.min(100, cpuVal)}%`;
+
+      // 3. RAM
+      const ram = data.ram || {};
+      const ramUsedGb = (ram.used_mb / 1024).toFixed(1);
+      const ramTotalGb = (ram.total_mb / 1024).toFixed(1);
+      document.getElementById('ramUsed').textContent = ramUsedGb;
+      document.getElementById('ramTotal').textContent = ramTotalGb;
+      document.getElementById('ramPct').textContent = `${Math.round(ram.percent || 0)}%`;
+      document.getElementById('ramBar').style.width = `${Math.min(100, ram.percent || 0)}%`;
+
+      // 4. Active Job
+      const job = data.active_job || {};
+      const jobCard = document.getElementById('activeJobCard');
+      const headerDot = document.getElementById('headerStatusDot');
+      const headerText = document.getElementById('headerStatusText');
+
+      if (job.status === 'transcribing') {
+        jobCard.classList.add('is-active');
+        headerDot.className = 'status-dot busy';
+        headerText.textContent = `Transcribing: ${job.filename}`;
+        document.getElementById('jobIcon').textContent = '⚡';
+        document.getElementById('jobSongName').textContent = job.filename || 'Processing track...';
+        document.getElementById('jobMetaClient').textContent = `Client: ${job.client_ip || 'remote'}`;
+        document.getElementById('jobMetaModel').textContent = `Model: ${job.model || 'small'}`;
+        document.getElementById('jobMetaElapsed').textContent = `Elapsed: ${job.elapsed_sec || 0}s`;
+        document.getElementById('jobStatePill').className = 'badge-pill badge-speed';
+        document.getElementById('jobStatePill').textContent = 'TRANSCRIBING ON GPU...';
+      } else {
+        jobCard.classList.remove('is-active');
+        headerDot.className = 'status-dot';
+        headerText.textContent = 'Ready for incoming requests';
+        document.getElementById('jobIcon').textContent = '🎵';
+        document.getElementById('jobSongName').textContent = 'Idle — Waiting for audio from Sangita server...';
+        document.getElementById('jobMetaClient').textContent = 'Client: Waiting';
+        document.getElementById('jobMetaElapsed').textContent = 'Elapsed: 0.0s';
+        document.getElementById('jobStatePill').className = 'badge-pill badge-success';
+        document.getElementById('jobStatePill').textContent = 'READY FOR JOBS';
+      }
+
+      // 5. History Table
+      if (Array.isArray(data.history)) {
+        historyData = data.history;
+        renderHistory(data.history);
+      }
+    }
+
+    function renderHistory(list) {
+      document.getElementById('historyCount').textContent = list.length;
+      const tbody = document.getElementById('historyTableBody');
+
+      if (list.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="empty-state">
+              <div class="empty-icon">🎧</div>
+              <div>No songs processed yet. Start lyrics generation in Sangita to see live progress!</div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = list.map(item => `
+        <tr>
+          <td style="font-weight: 600; color: #f1f5f9;">${escapeHtml(item.filename)}</td>
+          <td><span class="badge-pill badge-speed">⚡ ${item.duration_sec}s</span></td>
+          <td><span class="badge-pill badge-lang">${item.language || 'auto'}</span></td>
+          <td>${item.lines_count || 0} lines</td>
+          <td style="font-size: 0.75rem; font-family: var(--font-mono);">${item.device || 'cuda'}</td>
+          <td style="color: var(--text-dim); font-size: 0.78rem;">${item.timestamp}</td>
+          <td>
+            <button class="btn btn-emerald" style="padding: 0.25rem 0.65rem; font-size: 0.75rem;" onclick="openModal('${item.id}')">
+              📄 View Lyrics
+            </button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function openModal(id) {
+      const item = historyData.find(x => x.id === id);
+      if (!item) return;
+      document.getElementById('modalSongTitle').textContent = `Lyrics: ${item.filename} (${item.duration_sec}s on ${item.device})`;
+      document.getElementById('modalLyricsContent').textContent = item.lrc || '(No lyrics generated or error occurred)';
+      document.getElementById('lyricsModal').classList.add('open');
+    }
+
+    function closeModal() {
+      document.getElementById('lyricsModal').classList.remove('open');
+    }
+
+    function copyModalLyrics() {
+      const text = document.getElementById('modalLyricsContent').textContent;
+      navigator.clipboard.writeText(text);
+      const btn = document.getElementById('copyLyricsBtn');
+      btn.textContent = '✅ Copied!';
+      setTimeout(() => { btn.textContent = '📋 Copy LRC'; }, 2000);
+    }
+
+    async function clearHistory() {
+      if (!confirm('Clear all processed song history?')) return;
+      try {
+        await fetch('/api/clear-history', { method: 'POST' });
+        fetchTelemetry();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/[&<>'"]/g, 
+        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+      );
+    }
+
+    // Poll telemetry every 1.5s
+    fetchTelemetry();
+    setInterval(fetchTelemetry, 1500);
+  </script>
+</body>
+</html>

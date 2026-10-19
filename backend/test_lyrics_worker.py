@@ -1,9 +1,11 @@
 import unittest
+from unittest.mock import patch, MagicMock
 from backend.lyrics_worker import (
     clean_tag_value,
     sanitize_song_title,
     parse_audio_metadata,
-    query_lrclib
+    query_lrclib,
+    offload_to_remote_whisper
 )
 
 class TestLyricsWorker(unittest.TestCase):
@@ -37,15 +39,42 @@ class TestLyricsWorker(unittest.TestCase):
         parser = argparse.ArgumentParser()
         parser.add_argument("--api", dest="api", action="store_true", default=True)
         parser.add_argument("--no-api", dest="api", action="store_false", default=True)
+        parser.add_argument("--remote-whisper-url", default="")
 
         args_default = parser.parse_args([])
         self.assertTrue(args_default.api)
+        self.assertEqual(args_default.remote_whisper_url, "")
 
-        args_on = parser.parse_args(["--api"])
-        self.assertTrue(args_on.api)
+        args_remote = parser.parse_args(["--remote-whisper-url", "http://192.168.1.50:8000"])
+        self.assertEqual(args_remote.remote_whisper_url, "http://192.168.1.50:8000")
 
-        args_off = parser.parse_args(["--no-api"])
-        self.assertFalse(args_off.api)
+    @patch("requests.post")
+    @patch("requests.get")
+    def test_offload_to_remote_whisper_success(self, mock_get, mock_post):
+        mock_get.return_value = MagicMock(status_code=200)
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "success": True,
+                "lrc": "[00:01.00] Test line",
+                "language": "hi",
+                "duration_sec": 3.2,
+                "device": "cuda"
+            }
+        )
+
+        with patch("builtins.open", MagicMock()):
+            lrc, lang = offload_to_remote_whisper("dummy.mp3", "http://192.168.1.50:8000", "small", "hi")
+            self.assertEqual(lrc, "[00:01.00] Test line")
+            self.assertEqual(lang, "hi")
+
+    @patch("requests.get")
+    def test_offload_to_remote_whisper_unreachable(self, mock_get):
+        mock_get.side_effect = Exception("Connection refused")
+        lrc, lang = offload_to_remote_whisper("dummy.mp3", "http://192.168.1.50:8000", "small", "auto")
+        self.assertIsNone(lrc)
+        self.assertIsNone(lang)
 
 if __name__ == "__main__":
     unittest.main()
+

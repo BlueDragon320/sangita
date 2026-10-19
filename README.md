@@ -20,6 +20,11 @@ Sangita is a modern, self-hosted, full-stack music streaming platform designed t
   - **Online API Mode (Default)**: Rapidly fetches synced lyrics from LRCLIB; if missing, automatically falls back to local Whisper AI models.
   - **Direct Local Model Mode**: Offline and privacy-first transcription directly on machine CPU via CTranslate2 / `faster-whisper` (`small` int8 ~460MB, `base`, `tiny`, `medium`).
   - **Admin Web Controls & CLI**: Interactive **API Toggle**, Target Scope selection (All Library, Specific Playlist, or Single Song), CPU core affinity, RAM limiters, and optional HTDemucs vocal separation.
+- **Remote GPU Acceleration (Local PC Lyrics API Offload)**:
+  - Offload heavy Whisper AI transcription from low-spec servers (VPS, Docker, Raspberry Pi) to your local NVIDIA GPU laptop/PC using the standalone [Local_PC_Lyrics_API](Local_PC_Lyrics_API/).
+  - Transcribes 4-minute tracks in **3 to 8 seconds** (15x–30x faster) using CUDA `float16`.
+  - Includes a dedicated web dashboard on your PC displaying live GPU VRAM, CPU/RAM telemetry, active job monitor, and lyrics viewer.
+  - Zero disk retention: uploaded audio is purged from local disk immediately after lyrics generation.
 - **Multi-Device Real-Time Synchronization**:
   - Spotify Connect-style real-time control via WebSockets and Redis.
   - Use your smartphone or secondary browser tab as a remote control for your desktop or stereo playback.
@@ -180,16 +185,47 @@ Open **http://localhost:5173** in your browser.
 
 ---
 
+## ⚡ Local PC Lyrics API (Remote GPU Acceleration)
+
+If your Sangita server runs on a low-resource machine (e.g., VPS, Raspberry Pi, or NAS without a GPU), you can run the standalone Whisper GPU microservice on your personal laptop or gaming PC with NVIDIA CUDA.
+
+### On your PC / Laptop:
+```bash
+# Windows
+Local_PC_Lyrics_API\start.bat
+
+# Linux / macOS
+./Local_PC_Lyrics_API/start.sh
+```
+Open **`http://localhost:8000`** in your browser to view the real-time hardware telemetry dashboard (GPU VRAM, CPU %, active job progress, and processed lyrics).
+
+### On your Sangita Server:
+1. Open Admin Dashboard -> **Lyrics Engine**.
+2. Enable **"Remote GPU Acceleration"**.
+3. Enter your PC's IP or Tailscale address (e.g., `http://192.168.1.50:8000`).
+4. Click **"Test Connection"** and start generating lyrics at blazing speeds!
+
+See [Local_PC_Lyrics_API/README.md](Local_PC_Lyrics_API/README.md) for detailed networking and setup instructions.
+
+---
+
 ## Architecture Overview
 
 ```
 sangita/
 ├── backend/
 │   ├── app.py                 # Media streaming, auth, Pillow covers, SQLite stats, lyrics APIs
-│   ├── lyrics_worker.py       # Resumable batch lyrics worker (Mutagen -> LRCLIB -> faster-whisper)
+│   ├── lyrics_worker.py       # Resumable batch lyrics worker (Mutagen -> LRCLIB -> Remote GPU -> faster-whisper)
 │   ├── requirements.txt       # Python dependencies
 │   ├── test_admin_api.py      # Unit tests for admin routes and lyrics endpoints
 │   └── test_lyrics_worker.py  # Unit tests for lyrics metadata and CLI flags
+├── Local_PC_Lyrics_API/       # Standalone GPU acceleration microservice & local web dashboard
+│   ├── server.py              # Flask GPU service with CUDA auto-detect & auto-purge
+│   ├── templates/             # Live hardware telemetry & lyrics viewer dashboard
+│   ├── start.bat              # One-click Windows launcher
+│   ├── start.sh               # One-click Linux/Mac launcher
+│   ├── test_server.py         # Unit tests for local API
+│   └── requirements.txt
 ├── sync-server/
 │   ├── server.js              # Socket.IO multi-device real-time sync with Redis / Memory fallback
 │   └── package.json           # Node.js dependencies

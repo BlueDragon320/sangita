@@ -227,8 +227,12 @@ export default function AdminDashboard({
     force: false,
     scope: 'all', // 'all' | 'playlist' | 'song'
     playlist: '',
-    song: ''
+    song: '',
+    remote_whisper_enabled: false,
+    remote_whisper_url: ''
   })
+  const [remoteGpuTestLoading, setRemoteGpuTestLoading] = useState(false)
+  const [remoteGpuTestResult, setRemoteGpuTestResult] = useState(null)
   const [lyricsActionLoading, setLyricsActionLoading] = useState(false)
   const [lyricsEditModal, setLyricsEditModal] = useState({
     open: false,
@@ -304,11 +308,44 @@ export default function AdminDashboard({
       if (res.ok) {
         const data = await res.json()
         setLyricsStatus(data)
+        if (data.remote_whisper_url) {
+          setLyricsConfig(c => {
+            if (!c.remote_whisper_url) {
+              return { ...c, remote_whisper_url: data.remote_whisper_url, remote_whisper_enabled: true }
+            }
+            return c
+          })
+        }
       }
     } catch (err) {
       console.warn('Error fetching lyrics status:', err)
     }
   }, [token])
+
+  const handleTestRemoteGpu = async () => {
+    if (!lyricsConfig.remote_whisper_url) {
+      alert('Please enter your PC/Laptop Remote Whisper URL (e.g. http://192.168.1.50:8000)')
+      return
+    }
+    setRemoteGpuTestLoading(true)
+    setRemoteGpuTestResult(null)
+    try {
+      const res = await fetch('/api/admin/lyrics/test-remote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ url: lyricsConfig.remote_whisper_url })
+      })
+      const data = await res.json()
+      setRemoteGpuTestResult(data)
+    } catch (err) {
+      setRemoteGpuTestResult({ online: false, error: err.message })
+    } finally {
+      setRemoteGpuTestLoading(false)
+    }
+  }
 
   const fetchLyricsLogs = useCallback(async () => {
     if (!token) return
@@ -347,6 +384,9 @@ export default function AdminDashboard({
     try {
       setLyricsActionLoading(true)
       let payload = overrideParams ? { ...lyricsConfig, ...overrideParams } : { ...lyricsConfig }
+      if (!payload.remote_whisper_enabled) {
+        delete payload.remote_whisper_url
+      }
       if (payload.scope === 'playlist') {
         if (!payload.playlist) {
           alert('Please select a playlist to generate lyrics for.')
@@ -3087,6 +3127,108 @@ export default function AdminDashboard({
                     <span>Force regenerate existing .lrc</span>
                   </label>
                 </div>
+              </div>
+
+              {/* Remote GPU Acceleration Card */}
+              <div className="remote-gpu-card" style={{
+                marginTop: 14,
+                padding: '14px 16px',
+                borderRadius: 'var(--radius-md, 12px)',
+                background: lyricsConfig.remote_whisper_enabled ? 'rgba(16, 185, 129, 0.05)' : 'rgba(255, 255, 255, 0.02)',
+                border: lyricsConfig.remote_whisper_enabled ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid var(--border)',
+                transition: 'all 0.25s ease'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: '20px' }}>⚡</span>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>Remote GPU Acceleration (PC / Laptop Offload)</span>
+                        {lyricsConfig.remote_whisper_enabled && (
+                          <span style={{
+                            fontSize: '10px',
+                            padding: '2px 6px',
+                            borderRadius: 6,
+                            background: 'rgba(16, 185, 129, 0.2)',
+                            color: 'var(--emerald)',
+                            fontWeight: 800
+                          }}>ACTIVE</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 2 }}>
+                        Send audio to your GPU-enabled PC/laptop to transcribe in 3–8s and preserve server CPU. Audio is deleted from PC immediately after processing.
+                      </div>
+                    </div>
+                  </div>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
+                    <input
+                      type="checkbox"
+                      checked={lyricsConfig.remote_whisper_enabled}
+                      onChange={e => setLyricsConfig(c => ({ ...c, remote_whisper_enabled: e.target.checked }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    />
+                    <span>Enable Remote GPU Offload</span>
+                  </label>
+                </div>
+
+                {lyricsConfig.remote_whisper_enabled && (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 260 }}>
+                        <label style={{ fontSize: '11px', color: 'var(--text-sub)', display: 'block', marginBottom: 4 }}>
+                          PC / Laptop Whisper API URL:
+                        </label>
+                        <input
+                          type="text"
+                          className="form-input-text"
+                          placeholder="e.g. http://192.168.1.50:8000 or http://100.x.y.z:8000"
+                          value={lyricsConfig.remote_whisper_url}
+                          onChange={e => setLyricsConfig(c => ({ ...c, remote_whisper_url: e.target.value }))}
+                          disabled={lyricsStatus?.job?.state === 'running'}
+                          style={{ width: '100%', fontSize: '12px', padding: '6px 10px' }}
+                        />
+                      </div>
+                      <div style={{ alignSelf: 'flex-end' }}>
+                        <button
+                          type="button"
+                          className="admin-nav-btn"
+                          onClick={handleTestRemoteGpu}
+                          disabled={remoteGpuTestLoading || !lyricsConfig.remote_whisper_url}
+                          style={{ padding: '7px 14px', fontSize: '12px', height: 34 }}
+                        >
+                          {remoteGpuTestLoading ? 'Pinging Node…' : '🔌 Test Connection'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {remoteGpuTestResult && (
+                      <div style={{
+                        marginTop: 10,
+                        padding: '8px 12px',
+                        borderRadius: 8,
+                        fontSize: '11px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        background: remoteGpuTestResult.online ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        border: remoteGpuTestResult.online ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+                        color: remoteGpuTestResult.online ? '#34D399' : '#FCA5A5'
+                      }}>
+                        <span>{remoteGpuTestResult.online ? '🟢' : '🔴'}</span>
+                        {remoteGpuTestResult.online ? (
+                          <span>
+                            <strong>Online & Ready:</strong> {remoteGpuTestResult.gpu_name} ({remoteGpuTestResult.has_cuda ? 'NVIDIA CUDA float16' : 'CPU'}, {remoteGpuTestResult.total_vram_mb} MB VRAM, Latency: {remoteGpuTestResult.latency_ms}ms)
+                          </span>
+                        ) : (
+                          <span>
+                            <strong>Node Unreachable:</strong> {remoteGpuTestResult.error} — Make sure <code>Local_PC_Lyrics_API/start.bat</code> or <code>start.sh</code> is running on your PC.
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

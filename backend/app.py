@@ -2293,7 +2293,63 @@ def admin_lyrics_status():
             "error": str(e)
         }
 
-    return jsonify({"job": status_data, "resources": resources})
+    saved_remote_url = ""
+    try:
+        cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
+        if os.path.isfile(cfg_file):
+            with open(cfg_file, "r") as f:
+                saved_remote_url = json.load(f).get("remote_whisper_url", "")
+    except Exception:
+        pass
+
+    return jsonify({"job": status_data, "resources": resources, "remote_whisper_url": saved_remote_url})
+
+
+@app.route("/api/admin/lyrics/test-remote", methods=["POST"])
+@require_admin
+def admin_lyrics_test_remote():
+    import time
+    import requests
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or data.get("remote_whisper_url") or "").strip()
+    if not url:
+        return jsonify({"online": False, "error": "No remote URL provided"}), 400
+
+    clean_url = url.rstrip("/")
+    start_t = time.time()
+    try:
+        res = requests.get(f"{clean_url}/health", timeout=3.5)
+        latency_ms = int((time.time() - start_t) * 1000)
+        if res.status_code == 200:
+            info = res.json()
+            # Remember URL for user convenience
+            try:
+                cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
+                with open(cfg_file, "w") as f:
+                    json.dump({"remote_whisper_url": clean_url}, f)
+            except Exception:
+                pass
+
+            return jsonify({
+                "online": True,
+                "latency_ms": latency_ms,
+                "device": info.get("device", "unknown"),
+                "gpu_name": info.get("gpu_name", "Unknown GPU"),
+                "has_cuda": info.get("has_cuda", False),
+                "total_vram_mb": info.get("total_vram_mb", 0),
+                "used_vram_mb": info.get("used_vram_mb", 0),
+                "active_job": info.get("active_job", "idle")
+            })
+        else:
+            return jsonify({
+                "online": False,
+                "error": f"Server responded with HTTP {res.status_code}"
+            }), 200
+    except Exception as e:
+        return jsonify({
+            "online": False,
+            "error": f"Unreachable ({e})"
+        }), 200
 
 
 @app.route("/api/admin/lyrics/start", methods=["POST"])
@@ -2324,6 +2380,7 @@ def admin_lyrics_start():
     force = bool(data.get("force", False))
     demucs = bool(data.get("demucs", False))
     api = bool(data.get("api", True))
+    remote_whisper_url = str(data.get("remote_whisper_url") or data.get("remote_url") or "").strip()
 
     worker_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lyrics_worker.py")
     cmd = [
@@ -2348,6 +2405,14 @@ def admin_lyrics_start():
         cmd.append("--demucs")
     if not api:
         cmd.append("--no-api")
+    if remote_whisper_url:
+        cmd.extend(["--remote-whisper-url", remote_whisper_url])
+        try:
+            cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
+            with open(cfg_file, "w") as f:
+                json.dump({"remote_whisper_url": remote_whisper_url}, f)
+        except Exception:
+            pass
 
     try:
         proc = subprocess.Popen(
@@ -2361,7 +2426,8 @@ def admin_lyrics_start():
             "pid": proc.pid,
             "config": {
                 "api": api, "model": model, "language": language, "cores": cores,
-                "max_ram_mb": max_ram_mb, "limit": limit, "song": song, "playlist": playlist, "force": force, "demucs": demucs
+                "max_ram_mb": max_ram_mb, "limit": limit, "song": song, "playlist": playlist,
+                "force": force, "demucs": demucs, "remote_whisper_url": remote_whisper_url
             }
         }), 202
     except Exception as e:

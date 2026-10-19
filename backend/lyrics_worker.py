@@ -20,6 +20,7 @@ import argparse
 import tempfile
 import subprocess
 import socket
+import requests
 from datetime import datetime, timezone
 
 # Resilient DNS fallback hook (handles local DNS sinkholes like PiHole / AdGuard for Hugging Face and LRCLIB)
@@ -490,6 +491,46 @@ def write_lrc_file(target_lrc_path, content):
         f.write(content.strip() + "\n")
     os.replace(tmp_path, target_lrc_path)
 
+def offload_to_remote_whisper(audio_path, remote_url, model_name, language, timeout=120):
+    """
+    Offloads audio file to a remote GPU Whisper microservice.
+    Returns (lrc_content, detected_language) on success, or (None, None) on failure.
+    """
+    if not remote_url:
+        return None, None
+
+    clean_url = remote_url.strip().rstrip("/")
+    try:
+        # Fast probe health check with 3s timeout
+        health_res = requests.get(f"{clean_url}/health", timeout=3)
+        if health_res.status_code != 200:
+            print(f"[Worker] Remote GPU node at {clean_url} is unreachable (HTTP {health_res.status_code})", file=sys.stderr)
+            return None, None
+
+        filename = os.path.basename(audio_path)
+        with open(audio_path, "rb") as f:
+            files = {"audio": (filename, f, "audio/mpeg")}
+            data = {"model": model_name, "language": language}
+            res = requests.post(f"{clean_url}/transcribe", files=files, data=data, timeout=timeout)
+
+        if res.status_code == 200:
+            resp_data = res.json()
+            if resp_data.get("success"):
+                lrc = resp_data.get("lrc", "")
+                lang = resp_data.get("language", language)
+                dur = resp_data.get("duration_sec", 0)
+                dev = resp_data.get("device", "gpu")
+                print(f"[Worker] Remote GPU Whisper transcribed {filename} in {dur}s ({dev})", flush=True)
+                return lrc, lang
+            else:
+                print(f"[Worker] Remote GPU returned error: {resp_data.get('error')}", file=sys.stderr)
+        else:
+            print(f"[Worker] Remote GPU HTTP {res.status_code}: {res.text[:150]}", file=sys.stderr)
+    except Exception as e:
+        print(f"[Worker] Could not offload to Remote GPU at {clean_url}: {e}", file=sys.stderr)
+
+    return None, None
+
 def discover_songs(music_dir):
     songs = []
     if not os.path.exists(music_dir):
@@ -518,6 +559,7 @@ def main():
     parser.add_argument("--demucs", action="store_true", help="Isolate vocals with Demucs before Whisper")
     parser.add_argument("--api", dest="api", action="store_true", default=True, help="Enable online API lookup with local model fallback")
     parser.add_argument("--no-api", dest="api", action="store_false", default=True, help="Skip online API and transcribe directly using local model")
+    parser.add_argument("--remote-whisper-url", default=os.environ.get("REMOTE_WHISPER_URL", ""), help="URL of remote GPU Whisper node (e.g. http://192.168.1.50:8000)")
 
     args = parser.parse_args()
 
@@ -582,6 +624,7 @@ def main():
         "embedded": 0,
         "lrclib": 0,
         "whisper": 0,
+        "remote_gpu": 0,
         "failed": 0
     }
 
@@ -608,7 +651,8 @@ def main():
             "demucs": args.demucs,
             "limit": args.limit,
             "playlist": args.playlist,
-            "song": args.song
+            "song": args.song,
+            "remote_whisper_url": args.remote_whisper_url
         }
     }
     write_status(data_dir, status_obj)
@@ -726,7 +770,23 @@ def main():
             except Exception as e:
                 print(f"[Worker] Demucs error on {rel_path}: {e}", file=sys.stderr)
 
-        # 5. Whisper AI transcription (Local Machine 500MB Model)
+        # 5. Whisper AI transcription (Remote GPU or Local Machine)
+        if not lrc_content and getattr(args, "remote_whisper_url", None):
+            status_obj["current_stage"] = "remote_gpu_whisper"
+            status_obj["current_source_type"] = "remote_gpu"
+            status_obj["current_source_label"] = "Remote GPU Whisper (Laptop/PC)"
+            status_obj["current_action"] = f"Offloading audio to Remote GPU node at {args.remote_whisper_url}..."
+            write_status(data_dir, status_obj)
+            try:
+                remote_out, detected_lang = offload_to_remote_whisper(
+                    vocal_path, args.remote_whisper_url, args.model, args.language
+                )
+                if remote_out and remote_out.strip():
+                    lrc_content = remote_out
+                    source_tag = "remote_gpu"
+            except Exception as e:
+                print(f"[Worker] Remote GPU Whisper error on {rel_path}: {e}", file=sys.stderr)
+
         if not lrc_content:
             status_obj["current_stage"] = "local_whisper"
             status_obj["current_source_type"] = "local_machine"
@@ -763,12 +823,14 @@ def main():
         song_durations.append(proc_time)
 
         final_source_label = (
+            "Remote GPU (Laptop/PC)" if source_tag == "remote_gpu" else
             "Online API (LRCLIB)" if source_tag == "lrclib" else
             f"Local Machine (Whisper {args.model})" if "whisper" in source_tag else
             "Embedded Metadata Tags" if source_tag == "embedded" else
             "Plain Embedded" if source_tag == "embedded_unsynced" else "None"
         )
         final_source_type = (
+            "remote_gpu" if source_tag == "remote_gpu" else
             "api" if source_tag == "lrclib" else
             "local_machine" if "whisper" in source_tag else
             "embedded" if "embedded" in source_tag else "none"
