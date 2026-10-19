@@ -163,10 +163,12 @@ export default function LyricsView({
   // Auto-scroll active line to center when not interrupted
   useEffect(() => {
     if (!userIsScrolling && activeLineRef.current && activeIndex >= 0) {
-      activeLineRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center'
-      })
+      if (typeof activeLineRef.current.scrollIntoView === 'function') {
+        activeLineRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center'
+        })
+      }
     }
   }, [activeIndex, userIsScrolling])
 
@@ -176,11 +178,9 @@ export default function LyricsView({
     }
   }, [])
 
-  const hue = strHue(track?.name || 'Sangita')
-
   const resumeAutoScroll = () => {
     setUserIsScrolling(false)
-    if (activeLineRef.current) {
+    if (activeLineRef.current && typeof activeLineRef.current.scrollIntoView === 'function') {
       activeLineRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
   }

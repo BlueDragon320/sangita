@@ -28,7 +28,58 @@ import argparse
 import tempfile
 import threading
 import subprocess
+import socket
+import urllib.request
 from datetime import datetime, timezone
+
+# Resilient DNS fallback hook (bypasses router/local Pi-hole/AdGuard sinkholes that block huggingface.co to 0.0.0.0)
+_orig_getaddrinfo = socket.getaddrinfo
+_dns_cache = {}
+
+def _resolve_fallback(host):
+    if host in _dns_cache:
+        return _dns_cache[host]
+    # 1. Try DoH (DNS-over-HTTPS via Cloudflare & Google)
+    doh_urls = [
+        f"https://1.1.1.1/dns-query?name={host}&type=A",
+        f"https://dns.google/resolve?name={host}&type=A"
+    ]
+    for url in doh_urls:
+        try:
+            req = urllib.request.Request(url, headers={"accept": "application/dns-json", "User-Agent": "Sangita-DNS-Fallback"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+                ips = [ans["data"] for ans in data.get("Answer", []) if ans.get("type") == 1]
+                if ips:
+                    _dns_cache[host] = ips
+                    return ips
+        except Exception:
+            continue
+    # 2. Try dig @8.8.8.8
+    try:
+        out = subprocess.getoutput(f"dig @8.8.8.8 {host} +short").strip().split("\n")
+        ips = [x.strip() for x in out if x.strip() and x.strip()[0].isdigit() and "." in x]
+        if ips:
+            _dns_cache[host] = ips
+            return ips
+    except Exception:
+        pass
+    return None
+
+def _resilient_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    try:
+        res = _orig_getaddrinfo(host, port, family, type, proto, flags)
+        if any(addr[4][0] in ('0.0.0.0', '::') for addr in res):
+            raise socket.gaierror(-2, 'Sinkholed')
+        return res
+    except Exception:
+        if isinstance(host, str) and '.' in host and not host.endswith('.local'):
+            ips = _resolve_fallback(host)
+            if ips:
+                return _orig_getaddrinfo(ips[0], port, family, type, proto, flags)
+        raise
+
+socket.getaddrinfo = _resilient_getaddrinfo
 
 from flask import Flask, request, jsonify, render_template, send_from_directory
 import psutil
@@ -333,7 +384,14 @@ def load_model_to_ram(model_name="small", source="online", server_url=None):
         cached_path = None
         try:
             from faster_whisper.utils import download_model
-            cached_path = download_model(model_name, local_files_only=True)
+            cand_path = download_model(model_name, local_files_only=True)
+            # Verify model.bin exists and is non-empty
+            bin_file = os.path.join(cand_path, "model.bin")
+            if os.path.isfile(bin_file) and os.path.getsize(bin_file) > 1024 * 1024:
+                cached_path = cand_path
+            else:
+                logger.info(f"Local cache for '{model_name}' is incomplete (missing model.bin), downloading from Hub...")
+                cached_path = None
         except Exception:
             cached_path = None
 

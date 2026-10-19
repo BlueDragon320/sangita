@@ -23,8 +23,40 @@ import socket
 import requests
 from datetime import datetime, timezone
 
-# Resilient DNS fallback hook (handles local DNS sinkholes like PiHole / AdGuard for Hugging Face and LRCLIB)
+# Resilient DNS fallback hook (bypasses router/local Pi-hole/AdGuard sinkholes that block huggingface.co or lrclib to 0.0.0.0)
+import urllib.request
 _orig_getaddrinfo = socket.getaddrinfo
+_dns_cache = {}
+
+def _resolve_fallback(host):
+    if host in _dns_cache:
+        return _dns_cache[host]
+    # 1. Try DoH (DNS-over-HTTPS via Cloudflare & Google)
+    doh_urls = [
+        f"https://1.1.1.1/dns-query?name={host}&type=A",
+        f"https://dns.google/resolve?name={host}&type=A"
+    ]
+    for url in doh_urls:
+        try:
+            req = urllib.request.Request(url, headers={"accept": "application/dns-json", "User-Agent": "Sangita-DNS-Fallback"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+                ips = [ans["data"] for ans in data.get("Answer", []) if ans.get("type") == 1]
+                if ips:
+                    _dns_cache[host] = ips
+                    return ips
+        except Exception:
+            continue
+    # 2. Try dig @8.8.8.8
+    try:
+        out = subprocess.getoutput(f"dig @8.8.8.8 {host} +short").strip().split("\n")
+        ips = [x.strip() for x in out if x.strip() and x.strip()[0].isdigit() and "." in x]
+        if ips:
+            _dns_cache[host] = ips
+            return ips
+    except Exception:
+        pass
+    return None
 
 def _resilient_getaddrinfo(host, port, family=socket.AF_UNSPEC, socktype=socket.SOCK_STREAM, proto=0, flags=0):
     try:
@@ -33,16 +65,10 @@ def _resilient_getaddrinfo(host, port, family=socket.AF_UNSPEC, socktype=socket.
             raise socket.gaierror(-2, 'Sinkholed')
         return res
     except Exception:
-        try:
-            out = subprocess.getoutput(f"dig @8.8.8.8 {host} +short").strip().split("\n")
-            ips = [x.strip() for x in out if x.strip() and x.strip()[0].isdigit() and "." in x]
+        if isinstance(host, str) and '.' in host and not host.endswith('.local'):
+            ips = _resolve_fallback(host)
             if ips:
-                ret = []
-                for ip in ips:
-                    ret.append((socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, int(port) if str(port).isdigit() else 443)))
-                return ret
-        except Exception:
-            pass
+                return _orig_getaddrinfo(ips[0], port, family, socktype, proto, flags)
         raise
 
 socket.getaddrinfo = _resilient_getaddrinfo
