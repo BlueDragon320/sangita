@@ -90,6 +90,7 @@ import AddToPlaylistModal from './components/AddToPlaylistModal.jsx'
 import HomeDashboard from './components/HomeDashboard.jsx'
 import CreatePlaylistModal from './components/CreatePlaylistModal.jsx'
 import LyricsView from './components/LyricsView.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 
 export default function App() {
   const [token,           setToken]           = useState(() => localStorage.getItem('sangita_token') || '')
@@ -763,7 +764,8 @@ export default function App() {
       if (q.length === 0) return
       if (isLoopRef.current) {
         audio.currentTime = 0;
-        audio.play().catch(console.error);
+        const p = audio.play();
+        if (p?.catch) p.catch(console.error);
         broadcastState({
           activeDeviceId: getMyDeviceId(),
           trackId: loadedTrackIdRef.current,
@@ -835,7 +837,8 @@ export default function App() {
     audioRef.current.src    = `/api/stream/${encodeURIComponent(track.path)}?token=${t}`
     loadedTrackIdRef.current = track.path
     audioRef.current.volume = volumeRef.current / 100
-    audioRef.current.play().catch(console.error)
+    const p = audioRef.current.play();
+    if (p?.catch) p.catch(console.error);
     setCurrentIndex(index)
     broadcastState({
       activeDeviceId: getMyDeviceId(), trackId: track.path,
@@ -917,7 +920,12 @@ export default function App() {
       internalPlayTrack(q[idx], idx); return
     }
     const newPlaying = shouldForce !== undefined ? shouldForce : audio.paused
-    if (newPlaying) audio.play().catch(console.error); else audio.pause()
+    if (newPlaying) {
+      const p = audio.play();
+      if (p?.catch) p.catch(console.error);
+    } else {
+      audio.pause();
+    }
     broadcastState({
       activeDeviceId: getMyDeviceId(),
       trackId: loadedTrackIdRef.current,
@@ -1272,18 +1280,20 @@ export default function App() {
 
           <div className="main-scroll-body">
             {showLyrics && currentTrack ? (
-              <LyricsView
-                track={currentTrack}
-                currentTime={currentTime}
-                duration={duration}
-                lyricsData={lyricsData}
-                loading={lyricsLoading}
-                onSeek={handleSeekFromLyrics}
-                onClose={() => setShowLyrics(false)}
-                isPlaying={isPlaying}
-                onTogglePlay={togglePlay}
-                token={token}
-              />
+              <ErrorBoundary onReset={() => setShowLyrics(false)} resetLabel="Return to Library">
+                <LyricsView
+                  track={currentTrack}
+                  currentTime={currentTime}
+                  duration={duration}
+                  lyricsData={lyricsData}
+                  loading={lyricsLoading}
+                  onSeek={handleSeekFromLyrics}
+                  onClose={() => setShowLyrics(false)}
+                  isPlaying={isPlaying}
+                  onTogglePlay={togglePlay}
+                  token={token}
+                />
+              </ErrorBoundary>
             ) : dataLoading ? (
               <div className="loading-state"><div className="spinner" /><p>Loading your music library…</p></div>
             ) : view === 'home' ? (

@@ -532,6 +532,8 @@ input, button, select, textarea {
 .main-scroll-body {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
   scroll-behavior: smooth;
@@ -3369,13 +3371,13 @@ input, button, select, textarea {
 .lyrics-view-container {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: calc(100vh - 180px);
   width: 100%;
   position: relative;
   overflow: hidden;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  animation: fadeIn 0.4s var(--ease-smooth);
+  background: var(--surface);
+  animation: fadeIn 0.3s ease;
 }
 
 .lyrics-view-header {
@@ -3514,11 +3516,12 @@ input, button, select, textarea {
 
 .lyrics-scroll-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   scroll-behavior: smooth;
   padding: 40px 48px 140px 48px;
-  mask-image: linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, black 6%, black 94%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 6%, black 94%, transparent 100%);
 }
 
 .lyrics-lines-wrapper {
@@ -3536,7 +3539,7 @@ input, button, select, textarea {
   font-weight: 700;
   line-height: 1.35;
   letter-spacing: -0.02em;
-  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   transform-origin: left center;
   user-select: none;
 }
@@ -3547,24 +3550,24 @@ input, button, select, textarea {
 
 .lyric-line.clickable:hover {
   color: var(--text);
-  opacity: 0.9;
+  opacity: 1;
   transform: translateX(6px);
 }
 
 .lyric-line.past {
   color: var(--text-dim);
-  opacity: 0.35;
-}
-
-.lyric-line.future {
-  color: var(--text-sub);
   opacity: 0.55;
 }
 
-.lyric-line.active {
+.lyric-line.future {
   color: var(--text);
+  opacity: 0.75;
+}
+
+.lyric-line.active {
+  color: #FFFFFF;
   opacity: 1;
-  font-weight: 700;
+  font-weight: 800;
   transform: scale(1.02) translateX(4px);
 }
 

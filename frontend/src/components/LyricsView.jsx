@@ -93,7 +93,8 @@ export default function LyricsView({
   const [userOffsetSec, setUserOffsetSec] = useState(() => {
     try {
       const saved = localStorage.getItem(`sangita_lyrics_offset_${trackKey}`)
-      return saved ? parseFloat(saved) : 0
+      const parsed = parseFloat(saved)
+      return Number.isFinite(parsed) ? parsed : 0
     } catch {
       return 0
     }
@@ -103,15 +104,19 @@ export default function LyricsView({
   useEffect(() => {
     try {
       const saved = localStorage.getItem(`sangita_lyrics_offset_${trackKey}`)
-      setUserOffsetSec(saved ? parseFloat(saved) : 0)
+      const parsed = parseFloat(saved)
+      setUserOffsetSec(Number.isFinite(parsed) ? parsed : 0)
     } catch {
       setUserOffsetSec(0)
     }
   }, [trackKey])
 
+  const safeOffset = Number.isFinite(userOffsetSec) ? userOffsetSec : 0
+
   const handleAdjustOffset = (delta) => {
     setUserOffsetSec((prev) => {
-      const next = Math.round((prev + delta) * 10) / 10
+      const current = Number.isFinite(prev) ? prev : 0
+      const next = Math.round((current + delta) * 10) / 10
       try {
         localStorage.setItem(`sangita_lyrics_offset_${trackKey}`, next.toString())
       } catch {}
@@ -135,8 +140,8 @@ export default function LyricsView({
 
   // Find active line index based on currentTime + 150ms lookahead + user calibration
   const activeIndex = useMemo(() => {
-    if (!isSynced || lines.length === 0) return -1
-    const target = currentTime + 0.15 + userOffsetSec
+    if (!isSynced || !Array.isArray(lines) || lines.length === 0) return -1
+    const target = currentTime + 0.15 + safeOffset
 
     let found = -1
     for (let i = 0; i < lines.length; i++) {
@@ -220,12 +225,12 @@ export default function LyricsView({
                 -0.5s
               </button>
               <button
-                className={`btn-sync-offset-pill ${userOffsetSec !== 0 ? 'calibrated' : ''}`}
+                className={`btn-sync-offset-pill ${safeOffset !== 0 ? 'calibrated' : ''}`}
                 onClick={handleResetOffset}
                 title="Click to reset sync calibration to 0.0s"
                 data-testid="lyrics-offset-reset"
               >
-                {userOffsetSec === 0 ? 'Sync: 0.0s' : `${userOffsetSec > 0 ? '+' : ''}${userOffsetSec.toFixed(1)}s`}
+                {safeOffset === 0 ? 'Sync: 0.0s' : `${safeOffset > 0 ? '+' : ''}${safeOffset.toFixed(1)}s`}
               </button>
               <button
                 className="btn-sync-nudge"

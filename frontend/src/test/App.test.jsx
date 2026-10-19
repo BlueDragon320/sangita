@@ -75,4 +75,64 @@ describe('App Component Full Integration', () => {
       expect(screen.getByText('Your Top 10 Most Played Songs')).toBeInTheDocument()
     })
   })
+
+  it('toggles LyricsView when clicking lyrics button in player', async () => {
+    localStorage.setItem('sangita_token', 'mock-token')
+    localStorage.setItem('sangita_user', 'admin')
+    localStorage.setItem('sangita_role', 'admin')
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/me')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ username: 'admin', role: 'admin', rules: { allowed_playlists: ['*'] } })
+        })
+      }
+      if (url.includes('/api/playlists')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            'Chill Vibes': ['Chill Vibes/song1.mp3'],
+            'Favorites': []
+          })
+        })
+      }
+      if (url.includes('/api/lyrics/')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ has_lyrics: true, raw: '[00:01.00] Testing song 1 lyrics' })
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Chill Vibes')).toBeInTheDocument()
+    })
+
+    // Click on playlist to open tracklist
+    fireEvent.click(screen.getByTestId('sidebar-playlist-Chill Vibes'))
+
+    await waitFor(() => {
+      expect(screen.getByText('song1')).toBeInTheDocument()
+    })
+
+    // Click on track to play it
+    fireEvent.click(screen.getByText('song1'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('player-bar')).toBeInTheDocument()
+    })
+
+    // Find and click lyrics button
+    const lyricsBtn = screen.getByTestId('lyrics-toggle-btn')
+    fireEvent.click(lyricsBtn)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('lyrics-view')).toBeInTheDocument()
+      expect(screen.getByText('Testing song 1 lyrics')).toBeInTheDocument()
+    })
+  })
 })

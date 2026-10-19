@@ -350,4 +350,28 @@ describe('AdminDashboard Component', () => {
       )
     })
   })
+
+  it('renders Lyrics Engine tab without crashing', async () => {
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-tab-lyrics')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('admin-tab-lyrics'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('lyrics-engine-content')).toBeInTheDocument()
+    })
+  })
 })
