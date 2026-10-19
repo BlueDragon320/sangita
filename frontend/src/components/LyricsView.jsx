@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 
 
+function formatLyricsTime(sec = 0) {
+  const s = Math.floor(sec || 0)
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${m}:${r < 10 ? '0' : ''}${r}`
+}
+
 function parseLRC(lrcText) {
   if (!lrcText || typeof lrcText !== 'string') return { lines: [], isSynced: false, offsetSec: 0 }
 
@@ -84,42 +91,241 @@ export default function LyricsView({
   onTogglePlay,
   token
 }) {
+  const fullContainerRef = useRef(null)
   const containerRef = useRef(null)
   const activeLineRef = useRef(null)
   const userScrollTimeoutRef = useRef(null)
+  const hideControlsTimeoutRef = useRef(null)
   const [userIsScrolling, setUserIsScrolling] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [dynamicBg, setDynamicBg] = useState(() => {
+  const [controlsVisible, setControlsVisible] = useState(true)
+  const COLORFUL_THEMES = useMemo(() => [
+    'combo1',
+    'combo2',
+    'combo3',
+    'combo4',
+    'red',
+    'green',
+    'blue'
+  ], [])
+
+  const [theme, setTheme] = useState(() => {
     try {
-      return localStorage.getItem('sangita_lyrics_dynamic_bg') === 'true'
+      const savedTheme = localStorage.getItem('sangita_lyrics_theme')
+      if (savedTheme) return savedTheme
+      const oldBg = localStorage.getItem('sangita_lyrics_dynamic_bg')
+      if (oldBg === 'true') return 'combo1'
+      return 'default'
     } catch {
-      return false
+      return 'default'
     }
   })
 
-  const toggleDynamicBg = () => {
-    setDynamicBg((prev) => {
-      const next = !prev
-      try {
-        localStorage.setItem('sangita_lyrics_dynamic_bg', next.toString())
-      } catch {}
-      return next
-    })
-  }
+  const [isPendingClick, setIsPendingClick] = useState(false)
+  const lastClickTimeRef = useRef(0)
+  const clickTimerRef = useRef(null)
 
-  const toggleFullscreen = () => {
-    setIsFullscreen((prev) => !prev)
-  }
+  const handleAmbientClick = useCallback(() => {
+    const now = Date.now()
+    const elapsed = now - lastClickTimeRef.current
+
+    // Double-click detected: 2 clicks within 1.5 seconds (1500ms)
+    if (elapsed < 1500 && lastClickTimeRef.current > 0) {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current)
+        clickTimerRef.current = null
+      }
+      setIsPendingClick(false)
+      lastClickTimeRef.current = 0
+
+      setTheme((prev) => {
+        // Toggle Black / White
+        const next = prev === 'black' ? 'white' : 'black'
+        try {
+          localStorage.setItem('sangita_lyrics_theme', next)
+          localStorage.setItem('sangita_lyrics_dynamic_bg', 'true')
+        } catch {}
+        return next
+      })
+      return
+    }
+
+    // Single click detected: start timer for ~1.5s delay to allow double-click window
+    lastClickTimeRef.current = now
+    setIsPendingClick(true)
+
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current)
+    }
+
+    clickTimerRef.current = setTimeout(() => {
+      setIsPendingClick(false)
+      lastClickTimeRef.current = 0
+      clickTimerRef.current = null
+
+      setTheme((prev) => {
+        // If in monochrome mode (black or white), return to colorful themes
+        if (prev === 'black' || prev === 'white') {
+          const next = 'combo1'
+          try {
+            localStorage.setItem('sangita_lyrics_theme', next)
+            localStorage.setItem('sangita_lyrics_dynamic_bg', 'true')
+          } catch {}
+          return next
+        }
+
+        // Cycle through the 7 colorful combinations: default -> combo1 -> combo2 -> combo3 -> combo4 -> red -> green -> blue -> default
+        const idx = COLORFUL_THEMES.indexOf(prev)
+        let next
+        if (idx === -1) {
+          next = COLORFUL_THEMES[0] // combo1
+        } else if (idx === COLORFUL_THEMES.length - 1) {
+          next = 'default'
+        } else {
+          next = COLORFUL_THEMES[idx + 1]
+        }
+
+        try {
+          localStorage.setItem('sangita_lyrics_theme', next)
+          localStorage.setItem('sangita_lyrics_dynamic_bg', next !== 'default' ? 'true' : 'false')
+        } catch {}
+        return next
+      })
+    }, 1500)
+  }, [COLORFUL_THEMES])
+
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current)
+      }
+    }
+  }, [])
+
+  const toggleFullscreen = useCallback(async () => {
+    const isCurrentlyFs = !!(
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement
+    )
+
+    if (!isCurrentlyFs && !isFullscreen) {
+      setIsFullscreen(true)
+      try {
+        const el = fullContainerRef.current || document.documentElement
+        if (el?.requestFullscreen) {
+          await el.requestFullscreen()
+        } else if (el?.webkitRequestFullscreen) {
+          await el.webkitRequestFullscreen()
+        } else if (el?.mozRequestFullScreen) {
+          await el.mozRequestFullScreen()
+        } else if (el?.msRequestFullscreen) {
+          await el.msRequestFullscreen()
+        }
+      } catch {
+        // Fallback: CSS fullscreen active
+      }
+    } else {
+      setIsFullscreen(false)
+      try {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen()
+        } else if (document.webkitExitFullscreen) {
+          await document.webkitExitFullscreen()
+        } else if (document.mozCancelFullScreen) {
+          await document.mozCancelFullScreen()
+        } else if (document.msExitFullscreen) {
+          await document.msExitFullscreen()
+        }
+      } catch {
+        // Fallback
+      }
+    }
+  }, [isFullscreen])
+
+  // Sync fullscreen state with native browser events (e.g. Esc or F11)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isFs = !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement
+      )
+      setIsFullscreen(isFs)
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange)
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange)
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange)
+    }
+  }, [])
+
+  // Auto-hide controls in movie/cinema fullscreen mode when inactive
+  const handleMouseMove = useCallback(() => {
+    if (!isFullscreen) return
+    setControlsVisible(true)
+    if (hideControlsTimeoutRef.current) {
+      clearTimeout(hideControlsTimeoutRef.current)
+    }
+    hideControlsTimeoutRef.current = setTimeout(() => {
+      setControlsVisible(false)
+    }, 3500)
+  }, [isFullscreen])
+
+  useEffect(() => {
+    if (!isFullscreen) {
+      setControlsVisible(true)
+      if (hideControlsTimeoutRef.current) {
+        clearTimeout(hideControlsTimeoutRef.current)
+      }
+    }
+  }, [isFullscreen])
+
+  useEffect(() => {
+    if (isFullscreen) {
+      document.body.classList.add('lyrics-fullscreen-active')
+    } else {
+      document.body.classList.remove('lyrics-fullscreen-active')
+    }
+    return () => {
+      document.body.classList.remove('lyrics-fullscreen-active')
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {})
+      }
+    }
+  }, [isFullscreen])
 
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && isFullscreen) {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {})
+        }
         setIsFullscreen(false)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isFullscreen])
+
+  const handleClose = useCallback(() => {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {})
+    }
+    setIsFullscreen(false)
+    if (onClose) {
+      onClose()
+    }
+  }, [onClose])
 
   const trackKey = track?.path || track?.name || 'default'
   const [userOffsetSec, setUserOffsetSec] = useState(() => {
@@ -286,13 +492,18 @@ export default function LyricsView({
     }
   }
 
+  const isDynamic = ['combo1', 'combo2', 'combo3', 'combo4'].includes(theme)
+  const themeClass = theme && theme !== 'default' ? `theme-${theme}` : ''
+
   return (
     <div
-      className={`lyrics-view-container ${isFullscreen ? 'fullscreen-mode' : ''} ${dynamicBg ? 'dynamic-bg' : ''}`}
+      ref={fullContainerRef}
+      className={`lyrics-view-container ${isFullscreen ? 'fullscreen-mode' : ''} ${isDynamic ? 'dynamic-bg' : ''} ${themeClass} ${isFullscreen && !controlsVisible ? 'cursor-hidden' : ''}`}
+      onMouseMove={handleMouseMove}
       data-testid="lyrics-view"
     >
       {/* Top Floating Header */}
-      <div className="lyrics-view-header">
+      <div className={`lyrics-view-header ${isFullscreen && !controlsVisible ? 'controls-hidden' : ''}`}>
         <div className="lyrics-track-info">
           <span className="lyrics-tag">SYNCED LYRICS</span>
           <h2 className="lyrics-track-title" title={track?.name}>
@@ -349,9 +560,9 @@ export default function LyricsView({
 
           {/* Dynamic Moving Gradient Background Toggle */}
           <button
-            className={`btn-icon lyrics-action-icon-btn lyrics-ambient-btn ${dynamicBg ? 'active' : ''}`}
-            onClick={toggleDynamicBg}
-            title={dynamicBg ? "Turn off moving background" : "Turn on moving background"}
+            className={`btn-icon lyrics-action-icon-btn lyrics-ambient-btn ${theme !== 'default' ? 'active' : ''} ${isPendingClick ? 'pending-click' : ''}`}
+            onClick={handleAmbientClick}
+            title={theme === 'default' ? "Turn on moving background" : "Turn off moving background"}
             data-testid="lyrics-ambient-bg-btn"
           >
             <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
@@ -380,7 +591,7 @@ export default function LyricsView({
           {/* Close 'X' Button */}
           <button
             className="btn-icon lyrics-close-btn"
-            onClick={onClose}
+            onClick={handleClose}
             title="Close Lyrics (Return to Playlist)"
             data-testid="lyrics-close-btn"
           >
@@ -442,6 +653,44 @@ export default function LyricsView({
           </div>
         )}
       </div>
+
+      {/* Floating Movie Cinema Playback Controls in Fullscreen */}
+      {isFullscreen && (
+        <div
+          className={`lyrics-fullscreen-player ${!controlsVisible ? 'controls-hidden' : ''}`}
+          data-testid="lyrics-fs-player"
+        >
+          <button
+            className="lyrics-fs-play-btn"
+            onClick={onTogglePlay}
+            title={isPlaying ? "Pause" : "Play"}
+            data-testid="lyrics-fs-play-btn"
+          >
+            {isPlaying ? (
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M8 5v14l11-7z"/>
+              </svg>
+            )}
+          </button>
+          <span className="lyrics-fs-time">{formatLyricsTime(currentTime)}</span>
+          <input
+            type="range"
+            min={0}
+            max={duration || 100}
+            step={0.5}
+            value={currentTime || 0}
+            onChange={(e) => onSeek && onSeek(parseFloat(e.target.value))}
+            className="lyrics-fs-slider"
+            title="Seek position"
+            data-testid="lyrics-fs-slider"
+          />
+          <span className="lyrics-fs-time">{formatLyricsTime(duration)}</span>
+        </div>
+      )}
     </div>
   )
 }
