@@ -512,7 +512,7 @@ def parse_args():
     parser.add_argument("--model", default="small", choices=["tiny", "base", "small", "medium", "large-v3"], help="Default Whisper model")
     parser.add_argument("--cpu-threads", type=int, default=None, help="Limit CPU threads used by Whisper")
     parser.add_argument("--max-ram-mb", type=int, default=4096, help="RAM ceiling before unloading models (MB)")
-    parser.add_argument("--cooldown-sec", type=float, default=0.5, help="Cooldown pause between songs to prevent continuous 100% GPU heat (seconds)")
+    parser.add_argument("--cooldown-sec", type=float, default=0.5, help="Cooldown pause between songs to prevent continuous full GPU heat (seconds)")
     parser.add_argument("--no-low-priority", action="store_true", help="Do not lower process priority")
     return parser.parse_args()
 
