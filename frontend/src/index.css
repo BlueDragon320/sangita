@@ -537,6 +537,13 @@ input, button, select, textarea {
   scroll-behavior: smooth;
 }
 
+.main-scroll-body.lyrics-mode {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
 .main-scroll-body::-webkit-scrollbar {
   width: 6px;
 }
@@ -3370,7 +3377,8 @@ input, button, select, textarea {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: calc(100vh - 180px);
+  height: 100%;
+  min-height: 0;
   width: 100%;
   position: relative;
   overflow: hidden;
@@ -3517,9 +3525,16 @@ input, button, select, textarea {
   min-height: 0;
   overflow-y: auto;
   scroll-behavior: smooth;
-  padding: 40px 48px 140px 48px;
-  mask-image: linear-gradient(to bottom, transparent 0%, black 6%, black 94%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 6%, black 94%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%);
+}
+
+.lyrics-scroll-body.is-synced-mode {
+  padding: clamp(140px, 40vh, 320px) 48px clamp(160px, 45vh, 380px) 48px;
+}
+
+.lyrics-scroll-body.is-plain-mode {
+  padding: 48px 48px 140px 48px;
 }
 
 .lyrics-lines-wrapper {

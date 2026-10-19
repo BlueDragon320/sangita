@@ -1278,7 +1278,7 @@ export default function App() {
             onOpenMobileMenu={() => setMobileMenuOpen(true)}
           />
 
-          <div className="main-scroll-body">
+          <div className={`main-scroll-body ${showLyrics && currentTrack ? 'lyrics-mode' : ''}`}>
             {showLyrics && currentTrack ? (
               <ErrorBoundary onReset={() => setShowLyrics(false)} resetLabel="Return to Library">
                 <LyricsView

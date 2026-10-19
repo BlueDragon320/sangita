@@ -165,15 +165,58 @@ export default function LyricsView({
     }, 4000)
   }, [])
 
+  const hasMountedRef = useRef(false)
+
   // Auto-scroll active line to center when not interrupted
   useEffect(() => {
-    if (!userIsScrolling && activeLineRef.current && activeIndex >= 0) {
-      if (typeof activeLineRef.current.scrollIntoView === 'function') {
-        activeLineRef.current.scrollIntoView({
-          behavior: 'smooth',
+    if (userIsScrolling) return
+
+    const container = containerRef.current
+
+    if (activeIndex < 0) {
+      if (container && container.scrollTop > 0) {
+        if (typeof container.scrollTo === 'function') {
+          container.scrollTo({ top: 0, behavior: hasMountedRef.current ? 'smooth' : 'auto' })
+        } else {
+          container.scrollTop = 0
+        }
+      }
+      hasMountedRef.current = true
+      return
+    }
+
+    const activeLine = activeLineRef.current
+    if (container && activeLine) {
+      const containerRect = container.getBoundingClientRect()
+      const activeRect = activeLine.getBoundingClientRect()
+      const currentScrollTop = container.scrollTop
+
+      // Target scrollTop that aligns the center of the active line with the center of the container
+      const relativeTop = activeRect.top - containerRect.top + currentScrollTop
+      const targetScrollTop = Math.max(
+        0,
+        relativeTop - (containerRect.height / 2) + (activeRect.height / 2)
+      )
+
+      const behavior = hasMountedRef.current ? 'smooth' : 'auto'
+      if (typeof container.scrollTo === 'function') {
+        container.scrollTo({
+          top: targetScrollTop,
+          behavior
+        })
+      } else if (typeof activeLine.scrollIntoView === 'function') {
+        activeLine.scrollIntoView({
+          behavior,
           block: 'center'
         })
       }
+      hasMountedRef.current = true
+    } else if (activeLine?.scrollIntoView) {
+      activeLine.scrollIntoView({
+        behavior: hasMountedRef.current ? 'smooth' : 'auto',
+        block: 'center'
+      })
+      hasMountedRef.current = true
     }
   }, [activeIndex, userIsScrolling])
 
@@ -185,7 +228,22 @@ export default function LyricsView({
 
   const resumeAutoScroll = () => {
     setUserIsScrolling(false)
-    if (activeLineRef.current && typeof activeLineRef.current.scrollIntoView === 'function') {
+    const container = containerRef.current
+    const activeLine = activeLineRef.current
+    if (container && activeLine) {
+      const containerRect = container.getBoundingClientRect()
+      const activeRect = activeLine.getBoundingClientRect()
+      const relativeTop = activeRect.top - containerRect.top + container.scrollTop
+      const targetScrollTop = Math.max(
+        0,
+        relativeTop - (containerRect.height / 2) + (activeRect.height / 2)
+      )
+      if (typeof container.scrollTo === 'function') {
+        container.scrollTo({ top: targetScrollTop, behavior: 'smooth' })
+      } else if (typeof activeLine.scrollIntoView === 'function') {
+        activeLine.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    } else if (activeLineRef.current && typeof activeLineRef.current.scrollIntoView === 'function') {
       activeLineRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
   }
@@ -272,7 +330,7 @@ export default function LyricsView({
 
       {/* Main Lyrics Body */}
       <div
-        className="lyrics-scroll-body"
+        className={`lyrics-scroll-body ${isSynced ? 'is-synced-mode' : 'is-plain-mode'}`}
         ref={containerRef}
         onWheel={handleUserScroll}
         onTouchMove={handleUserScroll}
