@@ -199,6 +199,7 @@ export default function App() {
   }, [])
 
   const handleViewChange = useCallback((newView) => {
+    setShowLyrics(false);
     if (newView === 'admin') {
       if (role === 'admin') {
         setView('admin');
@@ -710,6 +711,14 @@ export default function App() {
       console.error('Failed to save Top 10 playlist:', err)
     }
   }, [userStats, token, fetchPlaylists])
+
+  const prevPlaylistRef = useRef(currentPlaylist)
+  useEffect(() => {
+    if (prevPlaylistRef.current && currentPlaylist && prevPlaylistRef.current !== currentPlaylist) {
+      setShowLyrics(false)
+    }
+    prevPlaylistRef.current = currentPlaylist
+  }, [currentPlaylist])
 
   useEffect(() => {
     if (!currentPlaylist || !playlists[currentPlaylist]) return
@@ -1246,6 +1255,7 @@ export default function App() {
             setView('music');
             setSearchQuery('');
             setCurrentPlaylist(name);
+            setShowLyrics(false);
             setMobileMenuOpen(false);
             window.history.pushState({}, '', '/');
           }}
@@ -1461,6 +1471,7 @@ export default function App() {
           onCreated={(newPlName) => {
             fetchPlaylists()
             setCurrentPlaylist(newPlName)
+            setShowLyrics(false)
             setView('music')
           }}
           token={token}

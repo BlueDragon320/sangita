@@ -134,5 +134,12 @@ describe('App Component Full Integration', () => {
       expect(screen.getByTestId('lyrics-view')).toBeInTheDocument()
       expect(screen.getByText('Testing song 1 lyrics')).toBeInTheDocument()
     })
+
+    // Click a different playlist in the sidebar to ensure lyrics page is minimized
+    fireEvent.click(screen.getByTestId('sidebar-playlist-Favorites'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('lyrics-view')).not.toBeInTheDocument()
+    })
   })
 })
