@@ -322,6 +322,50 @@ class TestAdminAPI(unittest.TestCase):
             self.assertEqual(res.status_code, 200)
 
 
+    def test_login_lockout_after_three_failed_attempts(self):
+        # Clean any existing lockouts for test IP
+        test_ip = "192.168.99.99"
+        headers = {"X-Forwarded-For": test_ip}
+
+        # Attempt 1: wrong password -> 401 (2 attempts remaining)
+        res1 = self.client.post('/api/login', headers=headers, json={
+            'username': 'admin',
+            'password': 'wrong_password_1'
+        })
+        self.assertEqual(res1.status_code, 401)
+        self.assertIn('2 attempts remaining', res1.get_json()['error'])
+
+        # Attempt 2: wrong password -> 401 (1 attempt remaining)
+        res2 = self.client.post('/api/login', headers=headers, json={
+            'username': 'admin',
+            'password': 'wrong_password_2'
+        })
+        self.assertEqual(res2.status_code, 401)
+        self.assertIn('1 attempt remaining', res2.get_json()['error'])
+
+        # Attempt 3: wrong password -> 429 (locked out for 5 minutes)
+        res3 = self.client.post('/api/login', headers=headers, json={
+            'username': 'admin',
+            'password': 'wrong_password_3'
+        })
+        self.assertEqual(res3.status_code, 429)
+        data3 = res3.get_json()
+        self.assertIn('Too many failed login attempts', data3['error'])
+        self.assertIn('Locked out', data3['error'])
+        self.assertTrue(data3.get('retry_after', 0) > 0)
+        self.assertIn('Retry-After', res3.headers)
+
+        # Attempt 4 while locked -> immediately 429 without checking password
+        res4 = self.client.post('/api/login', headers=headers, json={
+            'username': 'admin',
+            'password': 'wrong_password_4'
+        })
+        self.assertEqual(res4.status_code, 429)
+        self.assertIn('Too many failed login attempts', res4.get_json()['error'])
+
+        # Cleanup lockout for test_ip
+        app_mod._clear_login_lockout('admin', test_ip)
+
 if __name__ == '__main__':
     unittest.main()
 

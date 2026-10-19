@@ -145,6 +145,14 @@ def init_db():
             UNIQUE (username, name)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS login_lockouts (
+            lock_key TEXT PRIMARY KEY,
+            failed_attempts INTEGER DEFAULT 0,
+            locked_until REAL DEFAULT 0,
+            last_attempt REAL DEFAULT 0
+        )
+    """)
     
     # Simple migration: if user_totals is empty, populate from existing play_events
     try:
@@ -253,21 +261,174 @@ def require_admin(f):
         return f(*args, **kwargs)
     return decorated
 
+MAX_FAILED_LOGIN_ATTEMPTS = 3
+LOGIN_LOCKOUT_SECONDS = 300  # 5-minute break if password attempts fail 3 times
+
+def _get_client_ip():
+    if request.headers.get("X-Forwarded-For"):
+        return request.headers.get("X-Forwarded-For").split(",")[0].strip()
+    return request.remote_addr or "127.0.0.1"
+
+def _check_login_lockout(username, ip):
+    """
+    Checks if client IP or username@IP is currently locked out.
+    Returns (is_locked, remaining_seconds).
+    """
+    now = time.time()
+    user_norm = (username or "").strip().lower()
+    keys = [f"ip:{ip}"]
+    if user_norm:
+        keys.append(f"user_ip:{user_norm}@{ip}")
+
+    try:
+        conn = get_db()
+        placeholders = ",".join("?" for _ in keys)
+        rows = conn.execute(
+            f"SELECT lock_key, failed_attempts, locked_until FROM login_lockouts WHERE lock_key IN ({placeholders})",
+            keys
+        ).fetchall()
+        conn.close()
+
+        max_remaining = 0
+        for r in rows:
+            locked_until = r["locked_until"] or 0
+            if locked_until > now:
+                rem = locked_until - now
+                if rem > max_remaining:
+                    max_remaining = rem
+
+        if max_remaining > 0:
+            return True, int(max_remaining)
+        return False, 0
+    except Exception as e:
+        print(f"[Lockout Check Error] {e}")
+        return False, 0
+
+def _record_failed_login(username, ip):
+    """
+    Increments failed attempts for IP and username@IP.
+    If failed_attempts >= MAX_FAILED_LOGIN_ATTEMPTS, locks for 5 minutes.
+    Returns (is_locked, remaining_seconds, remaining_attempts).
+    """
+    now = time.time()
+    user_norm = (username or "").strip().lower()
+    keys = [f"ip:{ip}"]
+    if user_norm:
+        keys.append(f"user_ip:{user_norm}@{ip}")
+
+    try:
+        conn = get_db()
+        max_attempts = 0
+        is_locked = False
+        remaining = 0
+
+        for key in keys:
+            row = conn.execute(
+                "SELECT failed_attempts, locked_until FROM login_lockouts WHERE lock_key = ?",
+                (key,)
+            ).fetchone()
+
+            current_count = 0
+            if row:
+                if (row["locked_until"] or 0) > 0 and (row["locked_until"] or 0) <= now:
+                    current_count = 0
+                else:
+                    current_count = row["failed_attempts"] or 0
+
+            new_count = current_count + 1
+            max_attempts = max(max_attempts, new_count)
+
+            locked_until = 0
+            if new_count >= MAX_FAILED_LOGIN_ATTEMPTS:
+                locked_until = now + LOGIN_LOCKOUT_SECONDS
+                is_locked = True
+                remaining = LOGIN_LOCKOUT_SECONDS
+
+            conn.execute("""
+                INSERT INTO login_lockouts (lock_key, failed_attempts, locked_until, last_attempt)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(lock_key) DO UPDATE SET
+                    failed_attempts = excluded.failed_attempts,
+                    locked_until = excluded.locked_until,
+                    last_attempt = excluded.last_attempt
+            """, (key, new_count, locked_until, now))
+
+        conn.commit()
+        conn.close()
+
+        remaining_attempts = max(0, MAX_FAILED_LOGIN_ATTEMPTS - max_attempts)
+        return is_locked, remaining, remaining_attempts
+    except Exception as e:
+        print(f"[Record Failed Login Error] {e}")
+        return False, 0, 0
+
+def _clear_login_lockout(username, ip):
+    """
+    Resets failed login attempts upon successful login.
+    """
+    user_norm = (username or "").strip().lower()
+    keys = [f"ip:{ip}"]
+    if user_norm:
+        keys.append(f"user_ip:{user_norm}@{ip}")
+
+    try:
+        conn = get_db()
+        placeholders = ",".join("?" for _ in keys)
+        conn.execute(f"DELETE FROM login_lockouts WHERE lock_key IN ({placeholders})", keys)
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True) or {}
-    username = data.get("username")
-    password = data.get("password")
-    
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    ip = _get_client_ip()
+
+    # 1. Enforce 5-minute lockout if already triggered
+    is_locked, remaining_sec = _check_login_lockout(username, ip)
+    if is_locked:
+        mins = remaining_sec // 60
+        secs = remaining_sec % 60
+        time_msg = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+        resp = jsonify({
+            "error": f"Too many failed login attempts. Locked out for {time_msg}. Please wait before trying again.",
+            "retry_after": remaining_sec
+        })
+        resp.headers["Retry-After"] = str(remaining_sec)
+        return resp, 429
+
     users = load_users()
     user = users.get(username)
     if user and check_password_hash(user["password_hash"], password):
+        # Successful login: clear failed attempts
+        _clear_login_lockout(username, ip)
         return jsonify({
             "token": _make_token(username),
             "username": username,
             "role": user.get("role", "user")
         })
-    return jsonify({"error": "Invalid username or password"}), 401
+
+    # 2. Record failed attempt and lock out if threshold reached
+    is_now_locked, remaining_sec, remaining_attempts = _record_failed_login(username, ip)
+    if is_now_locked:
+        mins = remaining_sec // 60
+        secs = remaining_sec % 60
+        time_msg = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+        resp = jsonify({
+            "error": f"Too many failed login attempts. Locked out for {time_msg}. Please wait before trying again.",
+            "retry_after": remaining_sec
+        })
+        resp.headers["Retry-After"] = str(remaining_sec)
+        return resp, 429
+
+    if remaining_attempts > 0:
+        msg = f"Invalid username or password ({remaining_attempts} attempt{'s' if remaining_attempts > 1 else ''} remaining before 5-minute lockout)"
+    else:
+        msg = "Invalid username or password"
+    return jsonify({"error": msg}), 401
 
 @app.route("/api/me")
 @require_auth
