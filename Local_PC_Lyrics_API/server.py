@@ -220,6 +220,15 @@ app = Flask(
     template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"),
     static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 )
+app.config["DEBUG"] = False
+app.config["ENV"] = "production"
+
+@app.after_request
+def add_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
 
 # Global State
 SERVER_START_TIME = time.time()
@@ -1248,5 +1257,5 @@ if __name__ == "__main__":
     print("=" * 65)
     print("  Ready to accept local or remote transcription requests.\n")
 
-    app.run(host=args.host, port=args.port, threaded=True)
+    app.run(host=args.host, port=args.port, threaded=True, debug=False)
 

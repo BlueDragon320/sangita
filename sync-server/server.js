@@ -5,14 +5,42 @@ const { createServer } = require('http');
 const { Server }      = require('socket.io');
 const Redis           = require('ioredis');
 const crypto          = require('crypto');
+const fs              = require('fs');
+const path            = require('path');
 
-const SECRET_KEY  = process.env.SECRET_KEY  || 'change-this-secret';
+function getSecretKey() {
+  if (process.env.SECRET_KEY && process.env.SECRET_KEY !== 'change-this-secret') {
+    return process.env.SECRET_KEY;
+  }
+  const candidatePaths = [
+    path.join(__dirname, '..', 'data', '.secret_key'),
+    path.join(__dirname, '..', 'backend', 'data', '.secret_key'),
+  ];
+  for (const p of candidatePaths) {
+    try {
+      if (fs.existsSync(p)) {
+        const val = fs.readFileSync(p, 'utf8').trim();
+        if (val.length >= 32) return val;
+      }
+    } catch (_) {}
+  }
+  return process.env.SECRET_KEY || 'change-this-secret';
+}
+
+const SECRET_KEY  = getSecretKey();
 const REDIS_URL   = process.env.REDIS_URL   || 'redis://localhost:6379';
 const PORT        = Number(process.env.SYNC_PORT || 3001);
 const DEVICE_TTL  = 30;   // seconds — refreshed by HEARTBEAT every 25s
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 const app        = express();
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
 const httpServer = createServer(app);
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 

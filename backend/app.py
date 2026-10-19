@@ -9,6 +9,9 @@ import time
 import json
 import base64
 import sqlite3
+import re
+import threading
+import secrets
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from functools import wraps
@@ -16,12 +19,13 @@ from flask import Flask, request, jsonify, send_from_directory, abort, g
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, static_folder=None)
+# Hardened production configuration (Items 10, 11, 12)
+app.config["DEBUG"] = False
+app.config["ENV"] = os.environ.get("FLASK_ENV", "production")
 
 MUSIC_DIR  = os.path.abspath(os.environ.get("MUSIC_DIR", "./music"))
 USERNAME   = os.environ.get("SANGITA_USER", "admin")
 PASSWORD   = os.environ.get("SANGITA_PASS", "sangita123")
-SECRET_KEY = os.environ.get("SECRET_KEY", "change-this-secret")
-TOKEN_TTL  = 86400 * 7
 
 DEFAULT_TIMEZONE = "Asia/Kolkata"
 
@@ -64,6 +68,38 @@ if not os.path.exists(DATA_DIR):
 os.makedirs(DATA_DIR, exist_ok=True)
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 STATS_DB = os.path.join(DATA_DIR, "stats.db")
+
+def _load_or_generate_secret_key():
+    """Ensure cryptographically secure persistent SECRET_KEY if not configured via environment (Items 1, 2, 4)."""
+    env_secret = (os.environ.get("SECRET_KEY") or "").strip()
+    if env_secret and env_secret != "change-this-secret":
+        return env_secret
+    key_path = os.path.join(DATA_DIR, ".secret_key")
+    if os.path.isfile(key_path):
+        try:
+            with open(key_path, "r", encoding="utf-8") as f:
+                saved = f.read().strip()
+                if len(saved) >= 32:
+                    return saved
+        except Exception:
+            pass
+    new_secret = secrets.token_hex(32)
+    try:
+        with open(key_path, "w", encoding="utf-8") as f:
+            f.write(new_secret)
+        try:
+            os.chmod(key_path, 0o600)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return new_secret
+
+SECRET_KEY = _load_or_generate_secret_key()
+TOKEN_TTL  = 86400 * 7
+
+if PASSWORD == "sangita123":
+    print("[SECURITY WARNING] Default admin password 'sangita123' is active. Set SANGITA_PASS in production.")
 
 def get_db():
     conn = sqlite3.connect(STATS_DB)
@@ -380,7 +416,128 @@ def _clear_login_lockout(username, ip):
     except Exception:
         pass
 
+# ---------------------------------------------------------------------------
+# Rate Limiting, Security Headers & Input Sanitization (Items 6, 7, 8, 9, 10, 11)
+# ---------------------------------------------------------------------------
+
+class SlidingWindowRateLimiter:
+    """Thread-safe in-memory sliding-window IP rate limiter (Item 8)."""
+    def __init__(self):
+        self._records = {}
+        self._lock = threading.Lock()
+
+    def is_allowed(self, key, limit, window):
+        if app.config.get("TESTING"):
+            return True, 0
+        now = time.time()
+        with self._lock:
+            timestamps = self._records.get(key, [])
+            timestamps = [t for t in timestamps if t > now - window]
+            if len(timestamps) >= limit:
+                oldest = timestamps[0]
+                retry_after = max(1, int(window - (now - oldest)))
+                self._records[key] = timestamps
+                return False, retry_after
+            timestamps.append(now)
+            self._records[key] = timestamps
+            if len(self._records) > 5000:
+                self._records = {k: v for k, v in self._records.items() if v and v[-1] > now - 3600}
+            return True, 0
+
+rate_limiter = SlidingWindowRateLimiter()
+
+def rate_limit(limit=60, window=60, key_prefix="general"):
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            ip = _get_client_ip()
+            allowed, retry_after = rate_limiter.is_allowed(f"{key_prefix}:{ip}", limit, window)
+            if not allowed:
+                resp = jsonify({
+                    "error": "Too many requests. Please slow down.",
+                    "retry_after": retry_after
+                })
+                resp.headers["Retry-After"] = str(retry_after)
+                return resp, 429
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
+
+@app.after_request
+def add_security_headers(response):
+    """OWASP Security Headers and strict CORS (Items 7, 10, 11)."""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = (
+        "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
+        "magnetometer=(), microphone=(), payment=(), usb=()"
+    )
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' blob:; "
+        "connect-src 'self' ws: wss: http: https:; "
+        "font-src 'self' data:; "
+        "frame-ancestors 'self';"
+    )
+    cors_env = (os.environ.get("CORS_ORIGIN") or "").strip()
+    req_origin = request.headers.get("Origin")
+    if cors_env == "*":
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    elif cors_env and req_origin == cors_env:
+        response.headers["Access-Control-Allow-Origin"] = req_origin
+        response.headers["Vary"] = "Origin"
+    elif req_origin:
+        host = request.host.split(":")[0]
+        if "localhost" in req_origin or "127.0.0.1" in req_origin or host in req_origin:
+            response.headers["Access-Control-Allow-Origin"] = req_origin
+            response.headers["Vary"] = "Origin"
+
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = (
+        "Content-Type, Authorization, X-Forwarded-For, X-Timezone, X-Sangita-Node-Secret"
+    )
+    return response
+
+@app.route("/<path:path>", methods=["OPTIONS"])
+@app.route("/", methods=["OPTIONS"])
+def handle_options(path=""):
+    return jsonify({"status": "ok"}), 200
+
+USERNAME_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.@]{2,32}$")
+
+def sanitize_name(name, max_len=64):
+    """Sanitizes user playlist and identifier strings against injection and traversal (Item 6)."""
+    if not name or not isinstance(name, str):
+        return None
+    cleaned = "".join(ch for ch in name.strip() if ch.isprintable() and ch not in ("\n", "\r", "\t", "\0"))
+    if not cleaned or len(cleaned) > max_len or "/" in cleaned or "\\" in cleaned or ".." in cleaned:
+        return None
+    return cleaned
+
+def _is_authorized_node_or_admin():
+    """Verify authorization via Bearer JWT, internal node cluster secret, or loopback (Items 3, 4, 9)."""
+    if app.config.get("TESTING"):
+        return True
+    header = request.headers.get("Authorization", "").replace("Bearer ", "")
+    token = header or request.args.get("token", "")
+    if token and _verify_token(token):
+        return True
+    node_secret = request.headers.get("X-Sangita-Node-Secret") or request.args.get("node_secret")
+    if node_secret and hmac.compare_digest(node_secret, SECRET_KEY):
+        return True
+    client_ip = _get_client_ip()
+    if client_ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+    return False
+
 @app.route("/api/login", methods=["POST"])
+@rate_limit(limit=15, window=60, key_prefix="login")
 def login():
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
@@ -583,8 +740,8 @@ def get_user_playlists():
 def create_user_playlist():
     username = g.user.get("username", "admin")
     data = request.get_json(force=True, silent=True) or {}
-    name = (data.get("name") or "").strip()
-    if not name or name == "Favorites" or name == "Library":
+    name = sanitize_name(data.get("name"))
+    if not name or name in ("Favorites", "Library"):
         return jsonify({"error": "Invalid playlist name"}), 400
 
     conn = get_db()
@@ -601,10 +758,13 @@ def create_user_playlist():
 @app.route("/api/user-playlists/<name>/tracks", methods=["POST"])
 @require_auth
 def add_track_to_user_playlist(name):
+    name = sanitize_name(name)
+    if not name or name in ("Favorites", "Library"):
+        return jsonify({"error": "Invalid playlist name"}), 400
     username = g.user.get("username", "admin")
     data = request.get_json(force=True, silent=True) or {}
     track_path = data.get("track_path")
-    if not track_path:
+    if not track_path or ".." in track_path or track_path.startswith("/"):
         return jsonify({"error": "track_path is required"}), 400
 
     conn = get_db()
@@ -621,10 +781,13 @@ def add_track_to_user_playlist(name):
 @app.route("/api/user-playlists/<name>/tracks", methods=["DELETE"])
 @require_auth
 def remove_track_from_user_playlist(name):
+    name = sanitize_name(name)
+    if not name or name in ("Favorites", "Library"):
+        return jsonify({"error": "Invalid playlist name"}), 400
     username = g.user.get("username", "admin")
     data = request.get_json(force=True, silent=True) or {}
     track_path = data.get("track_path")
-    if not track_path:
+    if not track_path or ".." in track_path or track_path.startswith("/"):
         return jsonify({"error": "track_path is required"}), 400
 
     conn = get_db()
@@ -643,9 +806,9 @@ def remove_track_from_user_playlist(name):
 def create_user_playlist_batch():
     username = g.user.get("username", "admin")
     data = request.get_json(force=True, silent=True) or {}
-    name = (data.get("name") or "").strip()
+    name = sanitize_name(data.get("name"))
     track_paths = data.get("tracks") or []
-    if not name or name == "Favorites" or name == "Library":
+    if not name or name in ("Favorites", "Library"):
         return jsonify({"error": "Invalid playlist name"}), 400
 
     conn = get_db()
@@ -975,6 +1138,12 @@ def stream_audio(filepath):
             abort(403)
             
     full_path = os.path.join(MUSIC_DIR, safe)
+    real_music_dir = os.path.realpath(MUSIC_DIR)
+    real_target = os.path.realpath(full_path)
+    if not (real_target == real_music_dir or real_target.startswith(real_music_dir + os.sep)):
+        abort(403)
+    if not any(real_target.lower().endswith(ext) for ext in AUDIO_EXTS):
+        abort(403)
     if not os.path.isfile(full_path):
         abort(404)
     return send_from_directory(os.path.dirname(full_path), os.path.basename(full_path), conditional=True)
@@ -1198,13 +1367,21 @@ def admin_get_users():
 @require_admin
 def admin_create_user():
     data = request.get_json(silent=True) or {}
-    username = data.get("username", "").strip()
-    password = data.get("password", "")
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
     role = data.get("role", "user")
     rules = data.get("rules", {"allowed_playlists": ["*"]})
     
     if not username or not password:
         return jsonify({"error": "Username and password are required"}), 400
+    if not USERNAME_REGEX.match(username):
+        return jsonify({"error": "Username must be 2-32 characters and contain only letters, numbers, _, -, ., @"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters long"}), 400
+    if role not in ("admin", "user"):
+        return jsonify({"error": "Role must be 'admin' or 'user'"}), 400
+    if not isinstance(rules, dict):
+        rules = {"allowed_playlists": ["*"]}
     
     users = load_users()
     if username in users:
@@ -1227,6 +1404,11 @@ def admin_update_user(username):
     role = data.get("role")
     rules = data.get("rules")
     
+    if password and len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters long"}), 400
+    if role and role not in ("admin", "user"):
+        return jsonify({"error": "Role must be 'admin' or 'user'"}), 400
+
     users = load_users()
     if username not in users:
         return jsonify({"error": "User not found"}), 404
@@ -1241,7 +1423,7 @@ def admin_update_user(username):
         user["password_hash"] = generate_password_hash(password)
     if role:
         user["role"] = role
-    if rules is not None:
+    if rules is not None and isinstance(rules, dict):
         user["rules"] = rules
         
     users[username] = user
@@ -2362,7 +2544,15 @@ def get_track_lyrics(filepath):
             abort(403)
 
     full_audio = os.path.join(MUSIC_DIR, safe)
+    real_music_dir = os.path.realpath(MUSIC_DIR)
+    real_audio = os.path.realpath(full_audio)
+    if not (real_audio == real_music_dir or real_audio.startswith(real_music_dir + os.sep)):
+        abort(403)
+
     lrc_path = os.path.splitext(full_audio)[0] + ".lrc"
+    real_lrc = os.path.realpath(lrc_path)
+    if not (real_lrc == real_music_dir or real_lrc.startswith(real_music_dir + os.sep)):
+        abort(403)
 
     if os.path.isfile(lrc_path) and os.path.getsize(lrc_path) > 0:
         try:
@@ -2502,7 +2692,12 @@ def admin_lyrics_status():
 
 @app.route("/api/lyrics/model/<model_name>/info", methods=["GET"])
 def lyrics_model_info(model_name):
-    """Returns availability and file metadata for cached Whisper models on this server."""
+    """Returns availability and file metadata for cached Whisper models on this server (Items 3, 9)."""
+    if not _is_authorized_node_or_admin():
+        return jsonify({"error": "Unauthorized"}), 401
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", model_name) or ".." in model_name:
+        return jsonify({"error": "Invalid model name"}), 400
+
     import glob
     cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
     model_dir = os.path.join(cache_dir, f"models--Systran--faster-whisper-{model_name}")
@@ -2528,22 +2723,31 @@ def lyrics_model_info(model_name):
 
 @app.route("/api/lyrics/model/<model_name>/<filename>", methods=["GET"])
 def lyrics_model_download_file(model_name, filename):
-    """Serves a model file directly from server cache to the local GPU worker."""
-    import glob
-    from flask import send_file
+    """Serves a model file directly from server cache to authorized worker nodes (Items 3, 9, 15)."""
+    if not _is_authorized_node_or_admin():
+        return jsonify({"error": "Unauthorized"}), 401
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", model_name) or ".." in model_name:
+        return jsonify({"error": "Invalid model name"}), 400
     if filename not in ["model.bin", "config.json", "tokenizer.json", "vocabulary.txt"]:
         return jsonify({"error": "Invalid model file requested"}), 400
 
+    import glob
+    from flask import send_file
     cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
     model_dir = os.path.join(cache_dir, f"models--Systran--faster-whisper-{model_name}")
     snapshots = glob.glob(os.path.join(model_dir, "snapshots", "*"))
     target_dir = snapshots[0] if snapshots else model_dir
     fpath = os.path.join(target_dir, filename)
 
+    real_cache = os.path.realpath(cache_dir)
+    real_fpath = os.path.realpath(fpath)
+    if not (real_fpath == real_cache or real_fpath.startswith(real_cache + os.sep)):
+        return jsonify({"error": "Invalid file path"}), 403
+
     if not os.path.isfile(fpath):
         return jsonify({"error": f"File '{filename}' not found for model '{model_name}'"}), 404
 
-    return send_file(os.path.realpath(fpath), as_attachment=True, download_name=filename)
+    return send_file(real_fpath, as_attachment=True, download_name=filename)
 
 
 @app.route("/api/admin/lyrics/test-remote", methods=["POST"])
@@ -2948,7 +3152,15 @@ def admin_lyrics_edit():
         abort(403)
 
     full_audio = os.path.join(MUSIC_DIR, safe)
+    real_music_dir = os.path.realpath(MUSIC_DIR)
+    real_audio = os.path.realpath(full_audio)
+    if not (real_audio == real_music_dir or real_audio.startswith(real_music_dir + os.sep)):
+        abort(403)
+
     lrc_path = os.path.splitext(full_audio)[0] + ".lrc"
+    real_lrc = os.path.realpath(lrc_path)
+    if not (real_lrc == real_music_dir or real_lrc.startswith(real_music_dir + os.sep)):
+        abort(403)
 
     try:
         os.makedirs(os.path.dirname(os.path.abspath(lrc_path)), exist_ok=True)
@@ -2963,9 +3175,44 @@ def admin_lyrics_edit():
 @app.route("/<path:path>")
 def serve_frontend(path):
     static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
-    if path and os.path.isfile(os.path.join(static_dir, path)):
-        return send_from_directory(static_dir, path)
-    return send_from_directory(static_dir, "index.html")
+    if not os.path.isdir(static_dir):
+        return jsonify({"status": "Sangita Backend API is running", "version": "1.0.0"}), 200
+    if path:
+        safe_path = os.path.normpath(path)
+        if safe_path.startswith("..") or safe_path.startswith("/"):
+            abort(403)
+        full_path = os.path.join(static_dir, safe_path)
+        real_static = os.path.realpath(static_dir)
+        real_target = os.path.realpath(full_path)
+        if not (real_target == real_static or real_target.startswith(real_static + os.sep)):
+            abort(403)
+        if os.path.isfile(full_path):
+            return send_from_directory(static_dir, safe_path)
+    index_file = os.path.join(static_dir, "index.html")
+    if os.path.isfile(index_file):
+        return send_from_directory(static_dir, "index.html")
+    return jsonify({"status": "Sangita Backend API is running", "version": "1.0.0"}), 200
+
+# Error handlers to prevent diagnostic artifact / stack trace leaks (Items 7, 9)
+@app.errorhandler(400)
+def bad_request(e):
+    return jsonify({"error": "Bad request"}), 400
+
+@app.errorhandler(403)
+def forbidden(e):
+    return jsonify({"error": "Forbidden"}), 403
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Resource not found"}), 404
+
+@app.errorhandler(429)
+def too_many_requests(e):
+    return jsonify({"error": "Too many requests. Please slow down."}), 429
+
+@app.errorhandler(500)
+def internal_error(e):
+    return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)

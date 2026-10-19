@@ -1,23 +1,51 @@
-.env
-frontend/node_modules/
-frontend/dist/
-__pycache__/
-*.pyc
-backend/static/
-music/
-.DS_Store
-Thumbs.db
-node_modules/
+# Environment & Secrets (Items 1, 2, 15, 18)
+.env*
+!.env.example
+*.key
+*.pem
+*.crt
+*.cert
+*.p12
+*.pfx
+credentials.json
+secrets.json
+.secret_key
+*.token
+
+# Databases & local persistent state (Item 16)
+*.db
+*.sqlite
+*.sqlite3
 data/
 backend/data/
+
+# Audio library storage
+music/
+
+# Node.js dependencies & builds (Items 13, 14, 15)
+node_modules/
+frontend/node_modules/
+sync-server/node_modules/
+frontend/dist/
+backend/static/
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
 .venv/
 backend/.venv/
 *.log
 *.local
 
-# Reference documentation
+# Testing, coverage & IDE artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+Thumbs.db
+
+# Documentation references
 CODEBASE.md
 markdown_files/
 
-# Testing & cache
-.pytest_cache/
