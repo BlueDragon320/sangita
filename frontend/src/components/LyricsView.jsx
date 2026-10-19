@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 
-function strHue(str) {
-  let h = 0
-  for (const c of (str || '')) h = (h * 31 + c.charCodeAt(0)) | 0
-  return Math.abs(h) % 360
-}
 
 function parseLRC(lrcText) {
-  if (!lrcText || typeof lrcText !== 'string') return { lines: [], isSynced: false }
+  if (!lrcText || typeof lrcText !== 'string') return { lines: [], isSynced: false, offsetSec: 0 }
+
+  // Check for standard LRC metadata offset tag: [offset:+/-ms]
+  const offsetMatch = lrcText.match(/\[offset:\s*([+-]?\d+)\]/i)
+  const fileOffsetSec = offsetMatch ? (parseInt(offsetMatch[1], 10) / 1000.0) : 0
 
   const lines = []
   const rawLines = lrcText.split(/\r?\n/)
@@ -20,6 +19,9 @@ function parseLRC(lrcText) {
     const trimmed = raw.trim()
     if (!trimmed) continue
 
+    // Skip metadata tags like [ti:], [ar:], [al:], [offset:]
+    if (/^\[(ti|ar|al|by|offset|length|re|ve):/i.test(trimmed)) continue
+
     // Find all timestamps in this line
     const matches = [...trimmed.matchAll(timeRegex)]
     if (matches.length > 0) {
@@ -30,7 +32,8 @@ function parseLRC(lrcText) {
         const sec = parseInt(m[2], 10)
         const msStr = m[3] || '0'
         const ms = parseFloat(`0.${msStr}`)
-        const timeInSec = min * 60 + sec + ms
+        // Add file-level offset if present
+        const timeInSec = Math.max(0, (min * 60 + sec + ms) + fileOffsetSec)
         lines.push({ time: timeInSec, text })
       }
     } else if (!hasTimestamp && !trimmed.startsWith('[')) {
@@ -42,20 +45,20 @@ function parseLRC(lrcText) {
   if (hasTimestamp) {
     lines.sort((a, b) => (a.time || 0) - (b.time || 0))
 
-    // Prepend intro instrumental note line if first lyric line starts after 3s
-    if (lines.length > 0 && lines[0].time > 3) {
+    // Prepend intro instrumental note line if first lyric line starts after 4s
+    if (lines.length > 0 && lines[0].time > 4) {
       lines.unshift({ time: 0, text: '♪', isInstrumental: true })
     }
 
-    // Insert instrumental note lines for long gaps (>= 8 seconds) between lyrics
+    // Insert instrumental note lines ONLY for long gaps (>= 12 seconds) between lyrics
     const withInstrumentals = []
     for (let i = 0; i < lines.length; i++) {
       withInstrumentals.push(lines[i])
       if (i < lines.length - 1) {
         const gap = lines[i + 1].time - lines[i].time
-        if (gap >= 8) {
+        if (gap >= 12) {
           withInstrumentals.push({
-            time: lines[i].time + 4,
+            time: lines[i].time + 6,
             text: '♪',
             isInstrumental: true
           })
@@ -63,10 +66,10 @@ function parseLRC(lrcText) {
       }
     }
 
-    return { lines: withInstrumentals, isSynced: true }
+    return { lines: withInstrumentals, isSynced: true, offsetSec: fileOffsetSec }
   }
 
-  return { lines, isSynced: false }
+  return { lines, isSynced: false, offsetSec: 0 }
 }
 
 export default function LyricsView({
@@ -86,6 +89,43 @@ export default function LyricsView({
   const userScrollTimeoutRef = useRef(null)
   const [userIsScrolling, setUserIsScrolling] = useState(false)
 
+  const trackKey = track?.path || track?.name || 'default'
+  const [userOffsetSec, setUserOffsetSec] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`sangita_lyrics_offset_${trackKey}`)
+      return saved ? parseFloat(saved) : 0
+    } catch {
+      return 0
+    }
+  })
+
+  // Update offset when track changes
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`sangita_lyrics_offset_${trackKey}`)
+      setUserOffsetSec(saved ? parseFloat(saved) : 0)
+    } catch {
+      setUserOffsetSec(0)
+    }
+  }, [trackKey])
+
+  const handleAdjustOffset = (delta) => {
+    setUserOffsetSec((prev) => {
+      const next = Math.round((prev + delta) * 10) / 10
+      try {
+        localStorage.setItem(`sangita_lyrics_offset_${trackKey}`, next.toString())
+      } catch {}
+      return next
+    })
+  }
+
+  const handleResetOffset = () => {
+    setUserOffsetSec(0)
+    try {
+      localStorage.removeItem(`sangita_lyrics_offset_${trackKey}`)
+    } catch {}
+  }
+
   const rawLyrics = lyricsData?.raw || ''
   const hasLyrics = !!lyricsData?.has_lyrics
 
@@ -93,10 +133,10 @@ export default function LyricsView({
     return parseLRC(rawLyrics)
   }, [rawLyrics])
 
-  // Find active line index based on currentTime + 150ms lookahead
+  // Find active line index based on currentTime + 150ms lookahead + user calibration
   const activeIndex = useMemo(() => {
     if (!isSynced || lines.length === 0) return -1
-    const target = currentTime + 0.15
+    const target = currentTime + 0.15 + userOffsetSec
 
     let found = -1
     for (let i = 0; i < lines.length; i++) {
@@ -107,7 +147,7 @@ export default function LyricsView({
       }
     }
     return found
-  }, [lines, currentTime, isSynced])
+  }, [lines, currentTime, isSynced, userOffsetSec])
 
   // Handle user manual scroll interruption
   const handleUserScroll = useCallback(() => {
@@ -154,10 +194,6 @@ export default function LyricsView({
   return (
     <div
       className="lyrics-view-container"
-      style={{
-        '--lyrics-hue': `${hue}deg`,
-        background: `radial-gradient(circle at 50% 20%, hsl(${hue}, 45%, 16%) 0%, var(--bg) 80%)`
-      }}
       data-testid="lyrics-view"
     >
       {/* Top Floating Header */}
@@ -173,6 +209,35 @@ export default function LyricsView({
         </div>
 
         <div className="lyrics-header-actions">
+          {isSynced && (
+            <div className="lyrics-sync-nudge-group" title="Fine-tune audio/lyrics synchronization if early or late">
+              <button
+                className="btn-sync-nudge"
+                onClick={() => handleAdjustOffset(-0.5)}
+                title="Shift lyrics earlier (-0.5s)"
+                data-testid="lyrics-nudge-earlier"
+              >
+                -0.5s
+              </button>
+              <button
+                className={`btn-sync-offset-pill ${userOffsetSec !== 0 ? 'calibrated' : ''}`}
+                onClick={handleResetOffset}
+                title="Click to reset sync calibration to 0.0s"
+                data-testid="lyrics-offset-reset"
+              >
+                {userOffsetSec === 0 ? 'Sync: 0.0s' : `${userOffsetSec > 0 ? '+' : ''}${userOffsetSec.toFixed(1)}s`}
+              </button>
+              <button
+                className="btn-sync-nudge"
+                onClick={() => handleAdjustOffset(+0.5)}
+                title="Shift lyrics later (+0.5s)"
+                data-testid="lyrics-nudge-later"
+              >
+                +0.5s
+              </button>
+            </div>
+          )}
+
           {userIsScrolling && isSynced && (
             <button
               className="btn-sync-scroll"
@@ -214,7 +279,7 @@ export default function LyricsView({
           </div>
         ) : !hasLyrics || lines.length === 0 ? (
           <div className="lyrics-empty-state" data-testid="lyrics-empty">
-            <div className={`music-note-card ${isPlaying ? 'glowing' : ''}`} title="Playing music">
+            <div className="music-note-card" title="Playing music">
               <span className="music-note-symbol">♪</span>
             </div>
             <h3>No lyrics avaliable Sorry :)</h3>

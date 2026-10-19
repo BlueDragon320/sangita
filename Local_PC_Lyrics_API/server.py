@@ -806,6 +806,7 @@ def transcribe():
             # High-fidelity music transcription kwargs:
             # vad_filter is disabled because Silero VAD treats music/singing with instruments as background noise
             # and erroneously cuts out 95% of song vocals.
+            # word_timestamps=True produces millisecond-accurate cross-attention DTW vocal alignment.
             transcribe_kwargs = dict(
                 language=lang_param,
                 beam_size=beam_size or 5,
@@ -814,7 +815,8 @@ def transcribe():
                 vad_filter=False,
                 condition_on_previous_text=False,
                 no_speech_threshold=0.85,
-                compression_ratio_threshold=2.4
+                compression_ratio_threshold=2.4,
+                word_timestamps=True
             )
 
             # Safeguarded transcription with auto-recovery on CPU if GPU execution fails
@@ -853,13 +855,16 @@ def transcribe():
                 re.compile(r"like and subscribe", re.I),
                 re.compile(r"this is the end of this video", re.I),
                 re.compile(r"see you in the next", re.I),
+                re.compile(r"hope you enjoyed", re.I),
+                re.compile(r"at the end of", re.I),
+                re.compile(r"first part of our day", re.I),
             ]
             MUSIC_NOISE_PATTERNS = [
                 re.compile(r"^\s*[\(\[\{]?(music|applause|cheering|instrumental|laughter|singing)[\)\]\}]?\s*$", re.I),
                 re.compile(r"^[♪♫#\*\s]+$"),
             ]
 
-            # Format into LRC timestamped lines
+            # Format into LRC timestamped lines with exact word-level vocal alignment
             lrc_lines = []
             last_text = ""
             repetition_count = 0
@@ -882,20 +887,74 @@ def transcribe():
                 if any(p.match(text) for p in MUSIC_NOISE_PATTERNS):
                     continue
 
-                # Anti-repetition & hallucination guards
-                norm = text.lower().strip()
-                if norm == last_text:
-                    repetition_count += 1
-                    if repetition_count > 2:
-                        continue
-                else:
-                    last_text = norm
-                    repetition_count = 1
+                words = getattr(seg, "words", None)
+                if not words or not isinstance(words, (list, tuple)):
+                    # Fallback to segment boundary if word alignment is unavailable
+                    norm = text.lower().strip()
+                    if norm == last_text:
+                        repetition_count += 1
+                        if repetition_count > 2:
+                            continue
+                    else:
+                        last_text = norm
+                        repetition_count = 1
 
-                start_s = float(seg.start)
-                m = int(start_s // 60)
-                s = start_s % 60
-                lrc_lines.append(f"[{m:02d}:{s:05.2f}] {text}")
+                    start_s = float(seg.start)
+                    m = int(start_s // 60)
+                    s = start_s % 60
+                    lrc_lines.append(f"[{m:02d}:{s:05.2f}] {text}")
+                    continue
+
+                # Split segment words into individual lyrical lines based on natural phrasing:
+                # 1. Punctuation pauses (commas, periods, exclamation, question marks)
+                # 2. Audible vocal pauses (gap >= 0.55s between words)
+                # 3. Phrasing length ceiling (8+ words)
+                current_line_words = []
+                for i, w in enumerate(words):
+                    w_text = (getattr(w, "word", "") or "").strip()
+                    if not w_text:
+                        continue
+                    current_line_words.append(w)
+
+                    has_pause_punct = any(w_text.endswith(p) for p in [",", ".", "!", "?", ";", ":"])
+                    has_gap = False
+                    if i < len(words) - 1:
+                        next_w = words[i + 1]
+                        if (getattr(next_w, "start", 0) - getattr(w, "end", 0)) >= 0.55:
+                            has_gap = True
+
+                    is_long = len(current_line_words) >= 8
+
+                    if (has_gap or (has_pause_punct and len(current_line_words) >= 3) or is_long) and i < len(words) - 1:
+                        line_str = " ".join((getattr(item, "word", "") or "").strip() for item in current_line_words).strip()
+                        if line_str and not any(p.search(line_str) for p in WATERMARK_PATTERNS):
+                            norm = line_str.lower()
+                            if norm == last_text:
+                                repetition_count += 1
+                            else:
+                                last_text = norm
+                                repetition_count = 1
+                            if repetition_count <= 2:
+                                line_start = float(current_line_words[0].start)
+                                m = int(line_start // 60)
+                                s = line_start % 60
+                                lrc_lines.append(f"[{m:02d}:{s:05.2f}] {line_str}")
+                        current_line_words = []
+
+                if current_line_words:
+                    line_str = " ".join((getattr(item, "word", "") or "").strip() for item in current_line_words).strip()
+                    if line_str and not any(p.search(line_str) for p in WATERMARK_PATTERNS):
+                        norm = line_str.lower()
+                        if norm == last_text:
+                            repetition_count += 1
+                        else:
+                            last_text = norm
+                            repetition_count = 1
+                        if repetition_count <= 2:
+                            line_start = float(current_line_words[0].start)
+                            m = int(line_start // 60)
+                            s = line_start % 60
+                            lrc_lines.append(f"[{m:02d}:{s:05.2f}] {line_str}")
 
             lrc_content = "\n".join(lrc_lines)
             duration_sec = round(time.time() - start_time, 2)

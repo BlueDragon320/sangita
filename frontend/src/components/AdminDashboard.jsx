@@ -2963,7 +2963,7 @@ export default function AdminDashboard({
                     style={{
                       height: '100%',
                       width: `${lyricsStatus.job.total_songs > 0 ? (lyricsStatus.job.current_index / lyricsStatus.job.total_songs) * 100 : 0}%`,
-                      background: 'linear-gradient(90deg, var(--emerald) 0%, #10B981 100%)',
+                      background: 'var(--emerald)',
                       borderRadius: 4,
                       transition: 'width 0.4s ease'
                     }}
@@ -3292,10 +3292,7 @@ export default function AdminDashboard({
               </div>
 
               {/* CARD 2: ⚡ Remote GPU Acceleration & Zero-Trace Node (All Local PC Options Here!) */}
-              <div className="lyrics-card" style={{
-                border: lyricsConfig.remote_whisper_enabled ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border)',
-                background: lyricsConfig.remote_whisper_enabled ? 'linear-gradient(180deg, rgba(16, 185, 129, 0.04) 0%, var(--card) 100%)' : 'var(--card)'
-              }}>
+              <div className="lyrics-card">
                 <div className="lyrics-card-header">
                   <div>
                     <div className="lyrics-card-title">
@@ -4156,12 +4153,11 @@ export default function AdminDashboard({
                   onClick={() => setLyricsConfig(c => ({ ...c, model_source: 'online' }))}
                   style={{
                     border: (lyricsConfig.model_source || 'online') === 'online' ? '1.5px solid var(--emerald)' : '1px solid var(--border)',
-                    background: (lyricsConfig.model_source || 'online') === 'online' ? 'rgba(16, 185, 129, 0.08)' : 'rgba(255, 255, 255, 0.02)',
-                    borderRadius: 10,
+                    background: (lyricsConfig.model_source || 'online') === 'online' ? 'var(--surface)' : 'transparent',
+                    borderRadius: 8,
                     padding: 14,
                     cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    boxShadow: (lyricsConfig.model_source || 'online') === 'online' ? '0 0 14px rgba(16, 185, 129, 0.15)' : 'none'
+                    transition: 'border-color 0.15s ease'
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>
@@ -4172,7 +4168,7 @@ export default function AdminDashboard({
                     PC downloads directly from official HuggingFace CDN or uses local cache. Fastest direct transfer.
                   </div>
                   <div style={{ marginTop: 10 }}>
-                    <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.2)', color: 'var(--emerald)', fontWeight: 800 }}>
+                    <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: 4, background: 'var(--border)', color: 'var(--text-dim)', fontWeight: 700 }}>
                       RECOMMENDED
                     </span>
                   </div>
@@ -4182,13 +4178,12 @@ export default function AdminDashboard({
                 <div
                   onClick={() => setLyricsConfig(c => ({ ...c, model_source: 'server' }))}
                   style={{
-                    border: lyricsConfig.model_source === 'server' ? '1.5px solid #3b82f6' : '1px solid var(--border)',
-                    background: lyricsConfig.model_source === 'server' ? 'rgba(59, 130, 246, 0.08)' : 'rgba(255, 255, 255, 0.02)',
-                    borderRadius: 10,
+                    border: lyricsConfig.model_source === 'server' ? '1.5px solid var(--emerald)' : '1px solid var(--border)',
+                    background: lyricsConfig.model_source === 'server' ? 'var(--surface)' : 'transparent',
+                    borderRadius: 8,
                     padding: 14,
                     cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    boxShadow: lyricsConfig.model_source === 'server' ? '0 0 14px rgba(59, 130, 246, 0.15)' : 'none'
+                    transition: 'border-color 0.15s ease'
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>
@@ -4199,7 +4194,7 @@ export default function AdminDashboard({
                     Streams model weights directly from this Sangita server instance over local LAN without internet access.
                   </div>
                   <div style={{ marginTop: 10 }}>
-                    <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: 4, background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', fontWeight: 800 }}>
+                    <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: 4, background: 'var(--border)', color: 'var(--text-dim)', fontWeight: 700 }}>
                       LAN STREAM
                     </span>
                   </div>
@@ -4208,9 +4203,9 @@ export default function AdminDashboard({
 
               {/* Ephemeral RAM Toggle */}
               <div style={{
-                background: lyricsConfig.ephemeral_ram !== false ? 'rgba(16, 185, 129, 0.06)' : 'rgba(255, 255, 255, 0.02)',
-                border: lyricsConfig.ephemeral_ram !== false ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid var(--border)',
-                borderRadius: 10,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
                 padding: '12px 14px',
                 display: 'flex',
                 alignItems: 'center',
@@ -4220,7 +4215,7 @@ export default function AdminDashboard({
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span>🛡️ Direct Ephemeral RAM Storage (/dev/shm)</span>
-                    <span style={{ fontSize: '10px', padding: '1px 5px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.2)', color: 'var(--emerald)', fontWeight: 800 }}>
+                    <span style={{ fontSize: '10px', padding: '1px 5px', borderRadius: 4, background: 'var(--border)', color: 'var(--text-dim)', fontWeight: 700 }}>
                       ZERO LOCAL DISK FOOTPRINT
                     </span>
                   </div>

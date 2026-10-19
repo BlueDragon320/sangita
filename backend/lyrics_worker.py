@@ -72,6 +72,9 @@ WATERMARK_PATTERNS = [
     re.compile(r"like and subscribe", re.I),
     re.compile(r"this is the end of this video", re.I),
     re.compile(r"see you in the next", re.I),
+    re.compile(r"hope you enjoyed", re.I),
+    re.compile(r"at the end of", re.I),
+    re.compile(r"first part of our day", re.I),
 ]
 
 MUSIC_NOISE_PATTERNS = [
@@ -439,6 +442,7 @@ def transcribe_with_whisper(audio_path, model_name, language, cores, whisper_hol
     lang_param = None if (not language or language == "auto") else language
 
     # vad_filter is disabled because Silero VAD strips 95% of music vocals
+    # word_timestamps=True produces millisecond-accurate cross-attention DTW vocal alignment
     segments, info = model.transcribe(
         audio_path,
         language=lang_param,
@@ -448,7 +452,8 @@ def transcribe_with_whisper(audio_path, model_name, language, cores, whisper_hol
         vad_filter=False,
         condition_on_previous_text=False,
         no_speech_threshold=0.85,
-        compression_ratio_threshold=2.4
+        compression_ratio_threshold=2.4,
+        word_timestamps=True
     )
 
     detected_lang = getattr(info, "language", language or "unknown")
@@ -471,26 +476,73 @@ def transcribe_with_whisper(audio_path, model_name, language, cores, whisper_hol
         if any(pat.match(text) for pat in MUSIC_NOISE_PATTERNS):
             continue
 
-        norm_text = text.lower().strip()
-        if norm_text == last_text:
-            repetition_count += 1
-            if repetition_count > 2:
+        words = getattr(seg, "words", None)
+        if not words or not isinstance(words, (list, tuple)):
+            norm_text = text.lower().strip()
+            if norm_text == last_text:
+                repetition_count += 1
+                if repetition_count > 2:
+                    continue
+            else:
+                last_text = norm_text
+                repetition_count = 1
+
+            start_s = float(seg.start)
+            m = int(start_s // 60)
+            s = start_s % 60
+            formatted_lines.append(f"[{m:02d}:{s:05.2f}] {text}")
+            continue
+
+        # Split segment words into individual lyrical lines based on natural phrasing:
+        # 1. Punctuation pauses (commas, periods, exclamation, question marks)
+        # 2. Audible vocal pauses (gap >= 0.55s between words)
+        # 3. Phrasing length ceiling (8+ words)
+        current_line_words = []
+        for i, w in enumerate(words):
+            w_text = (getattr(w, "word", "") or "").strip()
+            if not w_text:
                 continue
-        else:
-            last_text = norm_text
-            repetition_count = 1
+            current_line_words.append(w)
 
-        start_s = float(seg.start)
-        end_s = float(seg.end)
+            has_pause_punct = any(w_text.endswith(p) for p in [",", ".", "!", "?", ";", ":"])
+            has_gap = False
+            if i < len(words) - 1:
+                next_w = words[i + 1]
+                if (getattr(next_w, "start", 0) - getattr(w, "end", 0)) >= 0.55:
+                    has_gap = True
 
-        # Long silence drift clamp: If segment > 15s with <= 3 words
-        word_count = len(text.split())
-        if (end_s - start_s) > 15.0 and word_count <= 3:
-            start_s = max(start_s, end_s - 3.0)
+            is_long = len(current_line_words) >= 8
 
-        m = int(start_s // 60)
-        s = start_s % 60
-        formatted_lines.append(f"[{m:02d}:{s:05.2f}] {text}")
+            if (has_gap or (has_pause_punct and len(current_line_words) >= 3) or is_long) and i < len(words) - 1:
+                line_str = " ".join((getattr(item, "word", "") or "").strip() for item in current_line_words).strip()
+                if line_str and not any(p.search(line_str) for p in WATERMARK_PATTERNS):
+                    norm = line_str.lower()
+                    if norm == last_text:
+                        repetition_count += 1
+                    else:
+                        last_text = norm
+                        repetition_count = 1
+                    if repetition_count <= 2:
+                        line_start = float(current_line_words[0].start)
+                        m = int(line_start // 60)
+                        s = line_start % 60
+                        formatted_lines.append(f"[{m:02d}:{s:05.2f}] {line_str}")
+                current_line_words = []
+
+        if current_line_words:
+            line_str = " ".join((getattr(item, "word", "") or "").strip() for item in current_line_words).strip()
+            if line_str and not any(p.search(line_str) for p in WATERMARK_PATTERNS):
+                norm = line_str.lower()
+                if norm == last_text:
+                    repetition_count += 1
+                else:
+                    last_text = norm
+                    repetition_count = 1
+                if repetition_count <= 2:
+                    line_start = float(current_line_words[0].start)
+                    m = int(line_start // 60)
+                    s = line_start % 60
+                    formatted_lines.append(f"[{m:02d}:{s:05.2f}] {line_str}")
 
     lrc_content = "\n".join(formatted_lines)
     return lrc_content, detected_lang
