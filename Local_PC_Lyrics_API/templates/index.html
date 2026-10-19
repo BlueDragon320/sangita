@@ -523,6 +523,55 @@
       box-shadow: 0 20px 45px rgba(0, 0, 0, 0.5);
     }
 
+    .modal-box.modal-lg {
+      max-width: 700px;
+    }
+
+    .model-source-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1rem 0 1.25rem 0;
+    }
+
+    .model-source-card {
+      border: 1px solid var(--border-color);
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 12px;
+      padding: 1.1rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .model-source-card:hover {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.05);
+    }
+
+    .model-source-card.selected {
+      border-color: var(--accent-emerald);
+      background: rgba(16, 185, 129, 0.12);
+      box-shadow: 0 0 16px rgba(16, 185, 129, 0.2);
+    }
+
+    .source-card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-weight: 700;
+      font-size: 0.95rem;
+      color: var(--text-main);
+    }
+
+    .source-card-desc {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
     .modal-header {
       padding: 1.25rem 1.5rem;
       border-bottom: 1px solid var(--border-color);
@@ -608,11 +657,17 @@
       <div class="banner-privacy-left">
         <span class="banner-privacy-icon">🛡️</span>
         <div class="banner-privacy-text">
-          <h4>Strict Ephemeral Audio Storage</h4>
-          <p>Audio sent by Sangita server is streamed, transcribed in GPU memory, and immediately deleted from local disk after lyrics are returned.</p>
+          <h4>Strict Ephemeral Audio & Model Storage</h4>
+          <p>Audio is streamed, transcribed in GPU/RAM memory, and immediately deleted. Model files live in volatile RAM (<code id="bannerRamPath">/dev/shm</code>) and leave zero permanent data on local disk.</p>
         </div>
       </div>
-      <div>
+      <div style="display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap;">
+        <button class="btn btn-emerald" onclick="openModelFlowModal()" style="font-size: 0.78rem; padding: 0.4rem 0.85rem;">
+          ⚡ Delivery Flow (Online vs Server)
+        </button>
+        <button class="btn" onclick="purgeRAMModel()" style="border-color: rgba(244, 63, 94, 0.4); color: #f43f5e; font-size: 0.78rem; padding: 0.4rem 0.85rem;" title="Unloads model from GPU and wipes all RAM-disk temp data">
+          🗑️ Purge RAM Data
+        </button>
         <span class="badge-pill badge-success" style="font-size: 0.75rem;">ZERO DISK RETENTION</span>
       </div>
     </div>
@@ -628,6 +683,7 @@
               <span id="jobMetaClient">Client: Waiting</span>
               <span>•</span>
               <span id="jobMetaModel">Model: small</span>
+              <span id="jobMetaCache">• Cache: Checking...</span>
               <span>•</span>
               <span id="jobMetaElapsed">Elapsed: 0.0s</span>
             </div>
@@ -686,6 +742,22 @@
         <div class="stat-sub">Host Memory Footprint</div>
         <div class="progress-bar-bg">
           <div class="progress-bar-fill fill-emerald" id="ramBar" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <!-- Ephemeral RAM Isolation Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">🛡️ Ephemeral RAM Isolation</span>
+          <span class="card-badge" id="ramDiskBadge" style="color: var(--accent-emerald);">ZERO TRACE</span>
+        </div>
+        <div class="stat-main">
+          <span class="stat-number" id="ramModelSize">0</span>
+          <span class="stat-unit">MB in RAM</span>
+        </div>
+        <div class="stat-sub" id="ramModelPath">RAM Disk: /dev/shm (Auto-Wipe on Exit)</div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill fill-emerald" id="ramModelBar" style="width: 100%;"></div>
         </div>
       </div>
     </div>
@@ -816,6 +888,106 @@
     </div>
   </div>
 
+  <!-- Model Flow Delivery & Ephemeral RAM Modal -->
+  <div class="modal-backdrop" id="modelFlowModal">
+    <div class="modal-box modal-lg">
+      <div class="modal-header">
+        <div class="modal-title" style="display: flex; align-items: center; gap: 8px;">
+          <span>⚡ Whisper Model Delivery & Ephemeral RAM Flow</span>
+        </div>
+        <button class="modal-close" onclick="closeModelFlowModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.1rem; line-height: 1.55;">
+          Choose how the Whisper model is delivered to this GPU node. When loaded, models reside in volatile 
+          <strong style="color: var(--accent-emerald);">RAM / GPU memory</strong> and leave <strong style="color: var(--accent-emerald);">zero permanent data on local disk</strong>.
+        </p>
+
+        <label style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); display: block; margin-bottom: 0.2rem;">
+          1. Choose Model Delivery Source
+        </label>
+
+        <div class="model-source-cards">
+          <!-- Option 1: Online -->
+          <div class="model-source-card selected" id="cardSourceOnline" onclick="selectModelSource('online')">
+            <div class="source-card-header">
+              <span style="font-size: 1.3rem;">🌐</span>
+              <span>Online (HuggingFace CDN)</span>
+            </div>
+            <div class="source-card-desc">
+              Download directly from HuggingFace official CDN or use local cache. Fastest direct delivery.
+            </div>
+            <div style="margin-top: auto; padding-top: 0.5rem;">
+              <span class="badge-pill badge-success" style="font-size: 0.7rem;">RECOMMENDED</span>
+            </div>
+          </div>
+
+          <!-- Option 2: From Sangita Server -->
+          <div class="model-source-card" id="cardSourceServer" onclick="selectModelSource('server')">
+            <div class="source-card-header">
+              <span style="font-size: 1.3rem;">🖥️</span>
+              <span>From Sangita Server</span>
+            </div>
+            <div class="source-card-desc">
+              Stream weights directly from your Sangita server over local network LAN without internet access.
+            </div>
+            <div style="margin-top: auto; padding-top: 0.5rem;">
+              <span class="badge-pill" style="font-size: 0.7rem; background: rgba(59, 130, 246, 0.2); color: #60a5fa;">LAN DIRECT</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sangita Server URL input (shown if server selected) -->
+        <div id="serverUrlContainer" style="display: none; margin-bottom: 1.25rem; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-color); border-radius: 10px; padding: 0.85rem;">
+          <label style="font-size: 0.8rem; font-weight: 600; display: block; margin-bottom: 0.35rem; color: var(--text-main);">
+            Sangita Central Server Address (LAN / Localhost):
+          </label>
+          <input type="text" id="sangitaServerUrlInput" placeholder="http://192.168.1.100:5000 or http://localhost:5000" style="width: 100%; background: #07090e; border: 1px solid var(--border-color); color: var(--text-main); padding: 0.5rem 0.75rem; border-radius: 8px; font-family: var(--font-mono); font-size: 0.82rem;" />
+          <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 0.35rem;">
+            Streams model.bin and configs directly via LAN HTTP from Sangita's <code>/api/lyrics/model</code> endpoint into volatile RAM.
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+          <div>
+            <label style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); display: block; margin-bottom: 0.4rem;">
+              2. Whisper Model Size
+            </label>
+            <select id="modalSelectModel" style="width: 100%; background: #0b0f19; border: 1px solid var(--border-color); color: var(--text-main); padding: 0.5rem 0.75rem; border-radius: 8px; font-family: var(--font-main); font-size: 0.82rem;">
+              <option value="small" selected>small (460MB — Balanced, High Accuracy)</option>
+              <option value="base">base (140MB — Ultra Fast, Low RAM)</option>
+              <option value="tiny">tiny (75MB — Minimal Footprint)</option>
+              <option value="medium">medium (1.5GB — Highest Precision)</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); display: block; margin-bottom: 0.4rem;">
+              3. Ephemeral RAM Target
+            </label>
+            <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.8rem; color: var(--accent-emerald); display: flex; align-items: center; gap: 0.5rem;">
+              <span>🛡️</span>
+              <span id="ramTargetPath">/dev/shm (POSIX RAM Disk)</span>
+            </div>
+            <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 0.35rem;">
+              Zero disk wear; completely wiped on exit or purge.
+            </div>
+          </div>
+        </div>
+
+        <!-- Status / progress message -->
+        <div id="modelLoadStatusBox" style="display: none; padding: 0.85rem 1rem; border-radius: 10px; font-size: 0.82rem; margin-top: 0.75rem; line-height: 1.45;">
+          <div id="modelLoadStatusMsg"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModelFlowModal()" id="btnCancelModelFlow">Cancel</button>
+        <button class="btn btn-emerald" id="btnSubmitModelFlow" onclick="submitModelLoadFlow()">
+          ⚡ Stream & Load Model to RAM
+        </button>
+      </div>
+    </div>
+  </div>
+
   <footer>
     Sangita Remote GPU Whisper Node • Lightweight AI Acceleration for Low-Spec Servers • Open Source
   </footer>
@@ -837,9 +1009,17 @@
     function renderTelemetry(data) {
       // 1. GPU
       const gpu = data.gpu || {};
-      document.getElementById('gpuName').textContent = gpu.name || 'CPU (No GPU Detected)';
-      document.getElementById('gpuBadge').textContent = gpu.has_cuda ? 'CUDA ACTIVE' : 'CPU MODE';
-      document.getElementById('gpuBadge').style.color = gpu.has_cuda ? 'var(--accent-emerald)' : 'var(--text-muted)';
+      document.getElementById('gpuName').textContent = gpu.status_msg || gpu.name || 'CPU (No GPU Detected)';
+      if (gpu.has_cuda && gpu.cuda_runtime_ready) {
+        document.getElementById('gpuBadge').textContent = 'CUDA ACTIVE ⚡';
+        document.getElementById('gpuBadge').style.color = 'var(--accent-emerald)';
+      } else if (gpu.has_cuda && !gpu.cuda_runtime_ready) {
+        document.getElementById('gpuBadge').textContent = 'CUDA LIBS MISSING (CPU)';
+        document.getElementById('gpuBadge').style.color = 'var(--accent-amber)';
+      } else {
+        document.getElementById('gpuBadge').textContent = 'CPU MODE';
+        document.getElementById('gpuBadge').style.color = 'var(--text-muted)';
+      }
       
       const vramUsed = gpu.used_vram_mb || 0;
       const vramTotal = gpu.total_vram_mb || 0;
@@ -864,7 +1044,29 @@
       document.getElementById('ramPct').textContent = `${Math.round(ram.percent || 0)}%`;
       document.getElementById('ramBar').style.width = `${Math.min(100, ram.percent || 0)}%`;
 
-      // 4. Active Job
+      // 4. Model Cache Status & Ephemeral RAM
+      if (data.model_status) {
+        const ms = data.model_status;
+        const cacheEl = document.getElementById('jobMetaCache');
+        if (cacheEl) {
+          cacheEl.textContent = ms.cached 
+            ? `• Model Loaded (${ms.size_mb} MB) ✅` 
+            : `• Model Not Loaded (~460 MB download on first run) ⏳`;
+        }
+      }
+      if (data.storage_info) {
+        const s = data.storage_info;
+        const ramSizeEl = document.getElementById('ramModelSize');
+        if (ramSizeEl) ramSizeEl.textContent = s.size_mb || 0;
+        const ramPathEl = document.getElementById('ramModelPath');
+        if (ramPathEl) ramPathEl.textContent = `RAM Disk: ${s.ram_dir || '/dev/shm'} (Auto-Wipe on Exit)`;
+        const bannerPathEl = document.getElementById('bannerRamPath');
+        if (bannerPathEl && s.ram_dir) bannerPathEl.textContent = s.ram_dir;
+        const ramTargetEl = document.getElementById('ramTargetPath');
+        if (ramTargetEl && s.ram_dir) ramTargetEl.textContent = s.ram_dir;
+      }
+
+      // 5. Active Job
       const job = data.active_job || {};
       const jobCard = document.getElementById('activeJobCard');
       const headerDot = document.getElementById('headerStatusDot');
@@ -880,7 +1082,7 @@
         document.getElementById('jobMetaModel').textContent = `Model: ${job.model || 'small'}`;
         document.getElementById('jobMetaElapsed').textContent = `Elapsed: ${job.elapsed_sec || 0}s`;
         document.getElementById('jobStatePill').className = 'badge-pill badge-speed';
-        document.getElementById('jobStatePill').textContent = 'TRANSCRIBING ON GPU...';
+        document.getElementById('jobStatePill').textContent = 'TRANSCRIBING...';
       } else {
         jobCard.classList.remove('is-active');
         headerDot.className = 'status-dot';
@@ -893,7 +1095,7 @@
         document.getElementById('jobStatePill').textContent = 'READY FOR JOBS';
       }
 
-      // 5. History Table
+      // 6. History Table
       if (Array.isArray(data.history)) {
         historyData = data.history;
         renderHistory(data.history);
@@ -916,28 +1118,37 @@
         return;
       }
 
-      tbody.innerHTML = list.map(item => `
+      tbody.innerHTML = list.map(item => {
+        const isErr = item.status === 'error' || item.language === 'error';
+        const langBadge = isErr 
+          ? `<span class="badge-pill" style="background: rgba(244, 63, 94, 0.2); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.4);" title="${escapeHtml(item.error_message || 'Error occurred')}">⚠️ ERROR</span>`
+          : `<span class="badge-pill badge-lang">${item.language || 'auto'}</span>`;
+        const actionBtn = isErr
+          ? `<button class="btn" style="background: rgba(244, 63, 94, 0.2); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.4); padding: 0.25rem 0.65rem; font-size: 0.75rem;" onclick="openModal('${item.id}')">⚠️ View Error</button>`
+          : `<button class="btn btn-emerald" style="padding: 0.25rem 0.65rem; font-size: 0.75rem;" onclick="openModal('${item.id}')">📄 View Lyrics</button>`;
+
+        return `
         <tr>
           <td style="font-weight: 600; color: #f1f5f9;">${escapeHtml(item.filename)}</td>
           <td><span class="badge-pill badge-speed">⚡ ${item.duration_sec}s</span></td>
-          <td><span class="badge-pill badge-lang">${item.language || 'auto'}</span></td>
+          <td>${langBadge}</td>
           <td>${item.lines_count || 0} lines</td>
           <td style="font-size: 0.75rem; font-family: var(--font-mono);">${item.device || 'cuda'}</td>
           <td style="color: var(--text-dim); font-size: 0.78rem;">${item.timestamp}</td>
-          <td>
-            <button class="btn btn-emerald" style="padding: 0.25rem 0.65rem; font-size: 0.75rem;" onclick="openModal('${item.id}')">
-              📄 View Lyrics
-            </button>
-          </td>
+          <td>${actionBtn}</td>
         </tr>
-      `).join('');
+      `}).join('');
     }
 
     function openModal(id) {
       const item = historyData.find(x => x.id === id);
       if (!item) return;
-      document.getElementById('modalSongTitle').textContent = `Lyrics: ${item.filename} (${item.duration_sec}s on ${item.device})`;
-      document.getElementById('modalLyricsContent').textContent = item.lrc || '(No lyrics generated or error occurred)';
+      document.getElementById('modalSongTitle').textContent = `${item.status === 'error' ? '⚠️ Error' : 'Lyrics'}: ${item.filename} (${item.duration_sec}s on ${item.device})`;
+      if (item.status === 'error' || item.error_message) {
+        document.getElementById('modalLyricsContent').textContent = `⚠️ Transcription Error:\n${item.error_message || 'Unknown error occurred during transcription'}\n\nDevice: ${item.device}\nTimestamp: ${item.timestamp}\nDuration: ${item.duration_sec}s`;
+      } else {
+        document.getElementById('modalLyricsContent').textContent = item.lrc || '(No lyrics generated)';
+      }
       document.getElementById('lyricsModal').classList.add('open');
     }
 
@@ -1018,6 +1229,113 @@
         }
       } catch (e) {
         alert('Failed to save settings: ' + e.message);
+      }
+    }
+
+    let currentModelSource = 'online';
+
+    function openModelFlowModal() {
+      const box = document.getElementById('modelLoadStatusBox');
+      if (box) box.style.display = 'none';
+      document.getElementById('modelFlowModal').classList.add('open');
+    }
+
+    function closeModelFlowModal() {
+      document.getElementById('modelFlowModal').classList.remove('open');
+    }
+
+    function selectModelSource(src) {
+      currentModelSource = src;
+      const cardOnline = document.getElementById('cardSourceOnline');
+      const cardServer = document.getElementById('cardSourceServer');
+      const serverUrlContainer = document.getElementById('serverUrlContainer');
+
+      if (src === 'online') {
+        cardOnline.classList.add('selected');
+        cardServer.classList.remove('selected');
+        serverUrlContainer.style.display = 'none';
+      } else {
+        cardServer.classList.add('selected');
+        cardOnline.classList.remove('selected');
+        serverUrlContainer.style.display = 'block';
+        const urlInput = document.getElementById('sangitaServerUrlInput');
+        if (urlInput && !urlInput.value) {
+          const host = window.location.hostname || 'localhost';
+          urlInput.value = `http://${host}:5000`;
+        }
+      }
+    }
+
+    async function submitModelLoadFlow() {
+      const model = document.getElementById('modalSelectModel').value;
+      const serverUrl = document.getElementById('sangitaServerUrlInput').value.trim();
+      const statusBox = document.getElementById('modelLoadStatusBox');
+      const statusMsg = document.getElementById('modelLoadStatusMsg');
+      const submitBtn = document.getElementById('btnSubmitModelFlow');
+      const cancelBtn = document.getElementById('btnCancelModelFlow');
+
+      if (currentModelSource === 'server' && !serverUrl) {
+        alert('Please enter your Sangita Central Server URL (e.g. http://192.168.1.100:5000)');
+        return;
+      }
+
+      statusBox.style.display = 'block';
+      statusBox.style.background = 'rgba(59, 130, 246, 0.15)';
+      statusBox.style.border = '1px solid rgba(59, 130, 246, 0.3)';
+      statusBox.style.color = '#93c5fd';
+      statusMsg.innerHTML = `⏳ <strong>Streaming model '${model}' directly to RAM...</strong><br>Fetching weights from ${currentModelSource === 'server' ? 'Sangita server LAN' : 'HuggingFace CDN'} directly into volatile GPU/RAM memory...`;
+      submitBtn.disabled = true;
+      cancelBtn.disabled = true;
+
+      try {
+        const payload = {
+          source: currentModelSource,
+          model: model,
+          server_url: currentModelSource === 'server' ? serverUrl : null
+        };
+        const res = await fetch('/api/model/load', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          statusBox.style.background = 'rgba(16, 185, 129, 0.15)';
+          statusBox.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+          statusBox.style.color = '#34d399';
+          statusMsg.innerHTML = `✅ <strong>Model Loaded Successfully into RAM/GPU!</strong><br>${data.message}`;
+          setTimeout(() => {
+            closeModelFlowModal();
+            fetchTelemetry();
+          }, 1800);
+        } else {
+          statusBox.style.background = 'rgba(244, 63, 94, 0.15)';
+          statusBox.style.border = '1px solid rgba(244, 63, 94, 0.3)';
+          statusBox.style.color = '#f87171';
+          statusMsg.innerHTML = `❌ <strong>Failed to load model:</strong><br>${data.error || 'Unknown error'}`;
+        }
+      } catch (err) {
+        statusBox.style.background = 'rgba(244, 63, 94, 0.15)';
+        statusBox.style.border = '1px solid rgba(244, 63, 94, 0.3)';
+        statusBox.style.color = '#f87171';
+        statusMsg.innerHTML = `❌ <strong>Network Error:</strong> ${err.message}`;
+      } finally {
+        submitBtn.disabled = false;
+        cancelBtn.disabled = false;
+      }
+    }
+
+    async function purgeRAMModel() {
+      if (!confirm('Purge Whisper model from RAM and wipe all ephemeral RAM-disk files?\n\nThis unloads GPU/VRAM and deletes all temporary memory files immediately with zero disk traces left.')) {
+        return;
+      }
+      try {
+        const res = await fetch('/api/model/purge', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || 'RAM model wiped cleanly.');
+        fetchTelemetry();
+      } catch (err) {
+        alert('Error purging RAM data: ' + err.message);
       }
     }
 

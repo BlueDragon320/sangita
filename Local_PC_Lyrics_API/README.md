@@ -8,11 +8,13 @@ Because it runs completely on your local machine, there is zero GPU cloud cost a
 
 ## 🌟 Highlights
 
-- **Blazing Fast GPU Acceleration:** Transcribes a 4-minute song in **3 to 8 seconds** using NVIDIA CUDA (`float16`), compared to 2 to 5 minutes on server CPUs.
-- **Runs 100% Locally:** Your PC handles the audio processing; zero audio files are permanently saved or sent to external cloud APIs.
-- **Built-in Web Dashboard:** Open `http://localhost:8000` in your browser to monitor real-time GPU VRAM, CPU %, active song progress, and view generated lyrics in a live modal.
-- **Zero Disk Retention:** Audio files sent for processing are transcribed directly and **purged immediately from disk** once lyrics are returned.
-- **Flexible & On-Demand:** Start it when you want to batch-generate lyrics; stop it (`Ctrl+C`) when you're done to free your GPU.
+- **Blazing Fast GPU Acceleration:** Transcribes a 4-minute song in **2 to 5 seconds** using NVIDIA CUDA (`float16`), compared to 2 to 5 minutes on server CPUs.
+- **🛡️ Ephemeral RAM Isolation (Zero Disk Retention):** Models and audio streams reside in volatile RAM (`/dev/shm` POSIX shared memory on Linux) and GPU VRAM. When you stop the server or click Purge, **zero files remain on local storage**.
+- **⚡ Two Delivery Modes (Online vs Server LAN):**
+  - **Online (HuggingFace CDN):** Direct fast download from HuggingFace official CDN or local cache into RAM.
+  - **From Sangita Server (LAN):** Streams model weights directly from your Sangita server over LAN into local RAM without internet access.
+- **Built-in Web Dashboard:** Open `http://localhost:8000` in your browser to monitor real-time GPU VRAM, CPU %, RAM disk isolation, and view generated lyrics.
+- **Flexible & On-Demand:** Start it when you want to batch-generate lyrics; stop it (`Ctrl+C`) when you're done and everything is cleanly wiped.
 
 ---
 

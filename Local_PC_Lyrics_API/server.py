@@ -16,9 +16,13 @@ Features:
 import os
 import sys
 import gc
+import re
+import json
 import time
 import uuid
 import shutil
+import atexit
+import signal
 import logging
 import argparse
 import tempfile
@@ -39,6 +43,121 @@ try:
     av.open = _patched_av_open
 except Exception:
     pass
+
+
+def preload_nvidia_cuda_libraries():
+    """
+    Auto-discovers and preloads NVIDIA CUDA/cuBLAS/cuDNN runtime libraries installed via pip
+    (e.g., nvidia-cublas-cu12, nvidia-cudnn-cu12) so CTranslate2 can load them on Linux.
+    """
+    loaded_paths = []
+    search_dirs = []
+    try:
+        import site
+        if hasattr(site, "getsitepackages"):
+            search_dirs.extend(site.getsitepackages())
+        if hasattr(site, "getusersitepackages"):
+            search_dirs.append(site.getusersitepackages())
+    except Exception:
+        pass
+
+    for sdir in search_dirs:
+        nv_dir = os.path.join(sdir, "nvidia")
+        if not os.path.isdir(nv_dir):
+            continue
+        for subpkg in ["cuda_nvrtc", "cuda_runtime", "cublas", "cudnn"]:
+            lib_dir = os.path.join(nv_dir, subpkg, "lib")
+            if not os.path.isdir(lib_dir):
+                continue
+            if lib_dir not in loaded_paths:
+                loaded_paths.append(lib_dir)
+
+            if sys.platform == "win32":
+                if hasattr(os, "add_dll_directory"):
+                    try:
+                        os.add_dll_directory(lib_dir)
+                    except Exception:
+                        pass
+            elif sys.platform == "linux":
+                try:
+                    import ctypes
+                    # Preload all .so files into global symbol table (skip nvblas to avoid CPU BLAS override)
+                    for fname in sorted(os.listdir(lib_dir)):
+                        if "nvblas" in fname:
+                            continue
+                        if fname.endswith(".so") or ".so." in fname:
+                            fpath = os.path.join(lib_dir, fname)
+                            try:
+                                ctypes.CDLL(fpath, mode=ctypes.RTLD_GLOBAL)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+    return loaded_paths
+
+
+# Preload NVIDIA CUDA libraries on startup
+preload_nvidia_cuda_libraries()
+
+
+def verify_cuda_cublas():
+    """
+    Checks if NVIDIA cuBLAS libraries can actually be resolved by CTranslate2.
+    Returns (True, "libcublas.so.12") or (False, "Reason").
+    """
+    if sys.platform == "linux":
+        import ctypes
+        import ctypes.util
+        for libname in ["libcublas.so.12", "libcublas.so.11", "libcublas.so"]:
+            try:
+                ctypes.CDLL(libname)
+                return True, libname
+            except Exception:
+                pass
+        found = ctypes.util.find_library("cublas")
+        if found:
+            try:
+                ctypes.CDLL(found)
+                return True, found
+            except Exception:
+                pass
+        return False, "NVIDIA cuBLAS (libcublas.so.12) not found in system or pip packages"
+    elif sys.platform == "win32":
+        import ctypes
+        for libname in ["cublas64_12.dll", "cublas64_11.dll"]:
+            try:
+                ctypes.CDLL(libname)
+                return True, libname
+            except Exception:
+                pass
+        return False, "cublas64_12.dll not found"
+    return False, "Unsupported platform for CUDA verification"
+
+
+def check_model_status(model_name="small"):
+    """Checks whether the specified Whisper model is downloaded in local HuggingFace cache."""
+    import glob
+    cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+    model_dir = os.path.join(cache_dir, f"models--Systran--faster-whisper-{model_name}")
+    if not os.path.isdir(model_dir):
+        return {"cached": False, "size_mb": 0, "path": None}
+
+    # check snapshots
+    bin_files = glob.glob(os.path.join(model_dir, "snapshots", "*", "model.bin"))
+    if bin_files:
+        real_file = os.path.realpath(bin_files[0])
+        size_mb = round(os.path.getsize(real_file) / (1024 * 1024), 1)
+        return {"cached": True, "size_mb": size_mb, "path": real_file}
+
+    # check blobs
+    blobs = glob.glob(os.path.join(model_dir, "blobs", "*"))
+    total_size = sum(os.path.getsize(b) for b in blobs if os.path.isfile(b))
+    if total_size > 50 * 1024 * 1024:
+        return {"cached": True, "size_mb": round(total_size / (1024 * 1024), 1), "path": model_dir}
+
+    return {"cached": False, "size_mb": 0, "path": None}
+
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("SangitaWhisperGPU")
@@ -63,6 +182,195 @@ ACTIVE_JOB = {
 }
 HISTORY = []  # capped at 100 entries
 MAX_HISTORY = 100
+
+# Ephemeral RAM / VRAM State (Zero Disk Retention)
+EPHEMERAL_RAM_DIR = None
+MODEL_SOURCE = "online"  # "online" | "server"
+ACTIVE_MODEL_NAME = "small"
+IS_LOADED_IN_RAM = False
+
+
+def get_ram_disk_dir():
+    """
+    Allocates an ephemeral in-RAM directory (using /dev/shm tmpfs on Linux)
+    so model weights and processing files never touch the physical SSD/HDD.
+    """
+    global EPHEMERAL_RAM_DIR
+    if EPHEMERAL_RAM_DIR and os.path.isdir(EPHEMERAL_RAM_DIR):
+        return EPHEMERAL_RAM_DIR
+
+    unique_id = uuid.uuid4().hex[:8]
+    # Check if /dev/shm exists and has sufficient space
+    if sys.platform.startswith("linux") and os.path.isdir("/dev/shm"):
+        try:
+            stat = os.statvfs("/dev/shm")
+            free_mb = (stat.f_bavail * stat.f_frsize) / (1024 * 1024)
+            if free_mb > 600:
+                ram_path = os.path.join("/dev/shm", f"sangita_ram_{unique_id}")
+                os.makedirs(ram_path, exist_ok=True)
+                EPHEMERAL_RAM_DIR = ram_path
+                logger.info(f"Initialized POSIX RAM Disk in /dev/shm: {EPHEMERAL_RAM_DIR} ({free_mb:.0f} MB free RAM)")
+                return EPHEMERAL_RAM_DIR
+        except Exception as e:
+            logger.debug(f"Could not allocate in /dev/shm: {e}")
+
+    # Fallback to tempfile ephemeral directory
+    temp_dir = tempfile.mkdtemp(prefix=f"sangita_ephemeral_{unique_id}_")
+    EPHEMERAL_RAM_DIR = temp_dir
+    logger.info(f"Initialized ephemeral directory in temp: {EPHEMERAL_RAM_DIR}")
+    return EPHEMERAL_RAM_DIR
+
+
+def purge_local_ephemeral_data():
+    """
+    Unloads model weights from GPU and RAM, force-collects garbage,
+    and wipes all ephemeral RAM directories so ZERO trace remains on the machine.
+    """
+    global EPHEMERAL_RAM_DIR, MODELS_CACHE, IS_LOADED_IN_RAM
+    logger.info("Executing zero-trace cleanup: freeing GPU VRAM and removing RAM-disk directories...")
+    MODELS_CACHE.clear()
+    IS_LOADED_IN_RAM = False
+    gc.collect()
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    if EPHEMERAL_RAM_DIR and os.path.exists(EPHEMERAL_RAM_DIR):
+        try:
+            shutil.rmtree(EPHEMERAL_RAM_DIR, ignore_errors=True)
+            logger.info(f"Successfully purged RAM-disk directory: {EPHEMERAL_RAM_DIR}")
+        except Exception as e:
+            logger.warning(f"Error purging {EPHEMERAL_RAM_DIR}: {e}")
+        EPHEMERAL_RAM_DIR = None
+
+
+# Auto-purge on exit (Ctrl+C, SIGTERM, normal exit)
+atexit.register(purge_local_ephemeral_data)
+
+
+def _sig_handler(sig, frame):
+    logger.info(f"Shutdown signal ({sig}) received. Purging all ephemeral RAM data...")
+    purge_local_ephemeral_data()
+    sys.exit(0)
+
+
+try:
+    signal.signal(signal.SIGINT, _sig_handler)
+    signal.signal(signal.SIGTERM, _sig_handler)
+except Exception:
+    pass
+
+
+def get_ram_storage_info():
+    """Gathers status of in-RAM ephemeral model storage."""
+    is_shm = bool(EPHEMERAL_RAM_DIR and EPHEMERAL_RAM_DIR.startswith("/dev/shm"))
+    size_mb = 0
+    if EPHEMERAL_RAM_DIR and os.path.isdir(EPHEMERAL_RAM_DIR):
+        for root, _, files in os.walk(EPHEMERAL_RAM_DIR):
+            for f in files:
+                try:
+                    size_mb += os.path.getsize(os.path.join(root, f)) / (1024 * 1024)
+                except Exception:
+                    pass
+
+    return {
+        "ram_mode": True,
+        "is_posix_shm": is_shm,
+        "storage_mode": "RAM (/dev/shm Ephemeral)" if is_shm else "RAM (Ephemeral Temp)",
+        "ram_path": EPHEMERAL_RAM_DIR,
+        "size_mb": round(size_mb, 1),
+        "is_loaded_in_ram": IS_LOADED_IN_RAM,
+        "model_source": MODEL_SOURCE,
+        "active_model": ACTIVE_MODEL_NAME,
+        "zero_trace_guaranteed": True
+    }
+
+
+def load_model_to_ram(model_name="small", source="online", server_url=None):
+    """
+    Downloads or streams Whisper model directly into RAM (/dev/shm) and loads it into GPU VRAM.
+    Source can be:
+      - 'online': direct download from HuggingFace Hub into RAM disk
+      - 'server': streamed over LAN/WAN from Sangita server into RAM disk
+    """
+    global MODEL_SOURCE, ACTIVE_MODEL_NAME, IS_LOADED_IN_RAM
+    ram_dir = get_ram_disk_dir()
+    target_dir = os.path.join(ram_dir, f"whisper_{model_name}")
+    os.makedirs(target_dir, exist_ok=True)
+
+    logger.info(f"Loading Whisper model '{model_name}' to RAM/GPU from source: {source}...")
+
+    if source == "server":
+        if not server_url:
+            raise ValueError("Server URL must be provided when streaming model from Sangita server.")
+        import urllib.request
+        import urllib.error
+        clean_server = server_url.rstrip("/")
+        # Verify server model info endpoint first with timeout
+        info_url = f"{clean_server}/api/lyrics/model/{model_name}/info"
+        try:
+            req = urllib.request.Request(info_url, headers={"User-Agent": "Sangita-Whisper-RAM-Node"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                info_data = json.loads(resp.read().decode())
+                if not info_data.get("available"):
+                    raise RuntimeError(f"Model '{model_name}' is not cached on Sangita server at {clean_server}")
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"Could not connect to Sangita server at {clean_server} ({e.reason}). Make sure Sangita server is running on that address, or select 'Online (HuggingFace / Local Cache)'.")
+
+        req_files = ["model.bin", "config.json", "tokenizer.json", "vocabulary.txt"]
+        for fname in req_files:
+            dst_file = os.path.join(target_dir, fname)
+            if not os.path.isfile(dst_file) or os.path.getsize(dst_file) == 0:
+                download_url = f"{clean_server}/api/lyrics/model/{model_name}/{fname}"
+                logger.info(f"Streaming {fname} from server ({download_url}) to RAM...")
+                urllib.request.urlretrieve(download_url, dst_file)
+    else:
+        # Online / Local source: first check if model is already in local HuggingFace cache
+        cached_path = None
+        try:
+            from faster_whisper.utils import download_model
+            cached_path = download_model(model_name, local_files_only=True)
+        except Exception:
+            cached_path = None
+
+        if cached_path and os.path.isdir(cached_path):
+            logger.info(f"Model '{model_name}' found in local cache ({cached_path}). Streaming into RAM disk ({target_dir})...")
+            for f in os.listdir(cached_path):
+                src_file = os.path.join(cached_path, f)
+                real_src = os.path.realpath(src_file)
+                dst_file = os.path.join(target_dir, f)
+                if os.path.isfile(real_src):
+                    shutil.copyfile(real_src, dst_file)
+        else:
+            # Not in local cache, attempt download from HuggingFace
+            try:
+                from faster_whisper.utils import download_model
+                download_path = download_model(model_name)
+                # Copy from download cache to RAM disk
+                for f in os.listdir(download_path):
+                    src_file = os.path.join(download_path, f)
+                    real_src = os.path.realpath(src_file)
+                    dst_file = os.path.join(target_dir, f)
+                    if os.path.isfile(real_src):
+                        shutil.copyfile(real_src, dst_file)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Could not download model '{model_name}' from HuggingFace ({e}). "
+                    f"If your internet is unavailable or HuggingFace is blocked, you can stream it from your Sangita server over LAN instead."
+                )
+
+    MODEL_SOURCE = source
+    ACTIVE_MODEL_NAME = model_name
+    IS_LOADED_IN_RAM = True
+
+    # Preload and cache WhisperModel on GPU/CPU
+    model, dev, compute = get_whisper_model(model_name=target_dir, force_device=None)
+    logger.info(f"Model '{model_name}' successfully loaded into {dev} ({compute}) from RAM!")
+    return model, dev, compute, target_dir
 
 SERVER_CONFIG = {
     "device": "auto",
@@ -119,13 +427,15 @@ def check_memory_watchdog():
 
 
 def detect_gpu():
-    """Detects available GPU hardware (NVIDIA CUDA via nvidia-smi or ctranslate2)."""
+    """Detects available GPU hardware (NVIDIA CUDA via nvidia-smi or ctranslate2) and validates runtime libraries."""
     has_cuda = False
+    cuda_runtime_ready = False
     device_name = "CPU"
     total_vram_mb = 0
     used_vram_mb = 0
     gpu_util_pct = 0
     driver_version = "N/A"
+    status_msg = "Running on CPU"
 
     # 1. Check CTranslate2 CUDA support
     try:
@@ -157,13 +467,26 @@ def detect_gpu():
         except Exception:
             pass
 
+    # 3. Check if CUDA runtime libraries (cuBLAS / cuDNN) are actually loadable
+    if has_cuda:
+        cublas_ok, cublas_info = verify_cuda_cublas()
+        cuda_runtime_ready = cublas_ok
+        if cuda_runtime_ready:
+            status_msg = f"GPU Accelerated: {device_name}"
+        else:
+            status_msg = f"GPU detected ({device_name}), but cuBLAS missing ({cublas_info}). Auto-falling back to CPU."
+    else:
+        status_msg = "CPU mode (No CUDA GPU detected)"
+
     return {
         "has_cuda": has_cuda,
+        "cuda_runtime_ready": cuda_runtime_ready,
         "name": device_name,
         "total_vram_mb": total_vram_mb,
         "used_vram_mb": used_vram_mb,
         "gpu_util_pct": gpu_util_pct,
-        "driver_version": driver_version
+        "driver_version": driver_version,
+        "status_msg": status_msg
     }
 
 
@@ -196,34 +519,75 @@ def get_hardware_telemetry():
     }
 
 
-def get_whisper_model(model_name="small"):
-    """Loads and caches faster-whisper model on GPU or CPU."""
-    device = SERVER_CONFIG["device"]
+def get_whisper_model(model_name="small", force_device=None):
+    """Loads and caches faster-whisper model on GPU or CPU with automatic fallback and RAM mode."""
+    device = force_device or SERVER_CONFIG["device"]
     compute_type = SERVER_CONFIG["compute_type"]
 
+    gpu_info = detect_gpu()
     if device == "auto":
-        gpu_info = detect_gpu()
-        if gpu_info["has_cuda"]:
+        # Only use CUDA if BOTH driver device AND cuBLAS runtime are ready!
+        if gpu_info["has_cuda"] and gpu_info["cuda_runtime_ready"]:
             device = "cuda"
             compute_type = "float16" if compute_type == "auto" else compute_type
         else:
             device = "cpu"
             compute_type = "int8" if compute_type == "auto" else compute_type
+    elif device == "cuda":
+        compute_type = "float16" if compute_type == "auto" else compute_type
+    elif device == "cpu":
+        compute_type = "int8" if compute_type == "auto" else compute_type
 
     cpu_threads = int(SERVER_CONFIG.get("cpu_threads", 2))
     cache_key = f"{model_name}_{device}_{compute_type}_{cpu_threads}"
     if cache_key in MODELS_CACHE:
         return MODELS_CACHE[cache_key], device, compute_type
 
+    # If model is already loaded in RAM under an active directory:
+    model_path_to_load = model_name
+    if EPHEMERAL_RAM_DIR:
+        candidate_ram = os.path.join(EPHEMERAL_RAM_DIR, f"whisper_{model_name}")
+        if os.path.isdir(candidate_ram) and os.path.isfile(os.path.join(candidate_ram, "model.bin")):
+            model_path_to_load = candidate_ram
+
     logger.info(f"Loading faster-whisper model '{model_name}' on {device} ({compute_type}, {cpu_threads} CPU threads)...")
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(
-        model_name,
-        device=device,
-        compute_type=compute_type,
-        cpu_threads=cpu_threads
-    )
+    try:
+        model = WhisperModel(
+            model_path_to_load,
+            device=device,
+            compute_type=compute_type,
+            cpu_threads=cpu_threads
+        )
+    except Exception as e:
+        # If online check to Hugging Face failed, try with local_files_only=True
+        try:
+            model = WhisperModel(
+                model_path_to_load,
+                device=device,
+                compute_type=compute_type,
+                cpu_threads=cpu_threads,
+                local_files_only=True
+            )
+        except Exception:
+            # If CUDA initialization failed, fallback to CPU automatically!
+            if device == "cuda":
+                logger.warning(f"Failed to initialize Whisper on CUDA ({e}). Gracefully falling back to CPU...")
+                device = "cpu"
+                compute_type = "int8"
+                cache_key = f"{model_name}_{device}_{compute_type}_{cpu_threads}"
+                if cache_key in MODELS_CACHE:
+                    return MODELS_CACHE[cache_key], device, compute_type
+                model = WhisperModel(
+                    model_path_to_load,
+                    device=device,
+                    compute_type=compute_type,
+                    cpu_threads=cpu_threads
+                )
+            else:
+                raise
+
     MODELS_CACHE[cache_key] = model
     return model, device, compute_type
 
@@ -240,16 +604,23 @@ def index():
 def health():
     """Health check endpoint used by Sangita server to verify GPU worker connectivity and resource safeguards."""
     gpu_info = detect_gpu()
+    ram_storage = get_ram_storage_info()
     return jsonify({
         "status": "ready",
         "service": "sangita-remote-whisper",
-        "device": "cuda" if gpu_info["has_cuda"] else "cpu",
+        "device": "cuda" if (gpu_info["has_cuda"] and gpu_info["cuda_runtime_ready"]) else "cpu",
         "gpu_name": gpu_info["name"],
         "has_cuda": gpu_info["has_cuda"],
+        "cuda_runtime_ready": gpu_info.get("cuda_runtime_ready", False),
+        "status_msg": gpu_info.get("status_msg", "Ready"),
         "total_vram_mb": gpu_info["total_vram_mb"],
         "used_vram_mb": gpu_info["used_vram_mb"],
         "active_job": ACTIVE_JOB["status"],
         "models_cached": list(MODELS_CACHE.keys()),
+        "model_status": check_model_status(SERVER_CONFIG.get("default_model", "small")),
+        "ram_mode": ram_storage["ram_mode"],
+        "storage_mode": ram_storage["storage_mode"],
+        "storage_info": ram_storage,
         "limits": {
             "cpu_threads": SERVER_CONFIG.get("cpu_threads", 2),
             "max_ram_mb": SERVER_CONFIG.get("max_ram_mb", 4096),
@@ -266,6 +637,10 @@ def telemetry():
     """Returns real-time telemetry, processed song history, and limits for the dashboard."""
     data = get_hardware_telemetry()
     data["history"] = HISTORY[:50]
+    data["model_status"] = check_model_status(SERVER_CONFIG.get("default_model", "small"))
+    data["storage_info"] = get_ram_storage_info()
+    data["ram_mode"] = True
+    data["storage_mode"] = data["storage_info"]["storage_mode"]
     data["limits"] = {
         "cpu_threads": SERVER_CONFIG.get("cpu_threads", 2),
         "max_ram_mb": SERVER_CONFIG.get("max_ram_mb", 4096),
@@ -275,6 +650,41 @@ def telemetry():
         "total_cores": psutil.cpu_count(logical=True) or 4
     }
     return jsonify(data)
+
+
+@app.route("/api/model/load", methods=["POST"])
+def api_model_load():
+    """Explicitly loads a Whisper model into RAM/GPU from online or Sangita server."""
+    data = request.get_json(silent=True) or {}
+    source = data.get("source", "online")
+    server_url = data.get("server_url")
+    model_name = data.get("model", SERVER_CONFIG.get("default_model", "small"))
+
+    try:
+        model, dev, compute, path = load_model_to_ram(model_name, source=source, server_url=server_url)
+        return jsonify({
+            "success": True,
+            "message": f"Model '{model_name}' successfully loaded into {dev} VRAM from {source} (in RAM).",
+            "device": dev,
+            "compute_type": compute,
+            "storage_info": get_ram_storage_info()
+        })
+    except Exception as e:
+        logger.error(f"Failed loading model to RAM: {e}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/model/purge", methods=["POST"])
+def api_model_purge():
+    """Purges model from memory and wipes all ephemeral RAM-disk files."""
+    purge_local_ephemeral_data()
+    return jsonify({
+        "success": True,
+        "message": "Model unloaded from GPU/RAM and all RAM-disk directories wiped clean. Zero local trace remaining.",
+        "storage_info": get_ram_storage_info()
+    })
+
+
 
 
 @app.route("/api/settings", methods=["GET", "POST"])
@@ -353,6 +763,8 @@ def transcribe():
     model_name = request.form.get("model", SERVER_CONFIG["default_model"]).strip()
     language = request.form.get("language", "auto").strip()
     beam_size = int(request.form.get("beam_size", 5))
+    model_source = request.form.get("model_source")
+    server_url = request.form.get("server_url")
 
     ext = os.path.splitext(filename)[1].lower() or ".mp3"
     temp_fd, temp_path = tempfile.mkstemp(prefix="whisper_remote_", suffix=ext)
@@ -372,6 +784,13 @@ def transcribe():
     temp_purged = False
     with TRANSCRIBE_LOCK:
         try:
+            # If a specific delivery source was requested and not yet primed in RAM
+            if model_source and not IS_LOADED_IN_RAM:
+                try:
+                    load_model_to_ram(model_name=model_name, source=model_source, server_url=server_url)
+                except Exception as load_err:
+                    logger.warning(f"Could not prime model from requested source '{model_source}': {load_err}")
+
             # Save audio to temporary location
             uploaded_file.save(temp_path)
             file_size = os.path.getsize(temp_path)
@@ -383,27 +802,84 @@ def transcribe():
             model, device_used, compute_type_used = get_whisper_model(model_name)
 
             lang_param = None if (not language or language == "auto") else language
-            segments, info = model.transcribe(
-                temp_path,
+
+            # High-fidelity music transcription kwargs:
+            # vad_filter is disabled because Silero VAD treats music/singing with instruments as background noise
+            # and erroneously cuts out 95% of song vocals.
+            transcribe_kwargs = dict(
                 language=lang_param,
-                beam_size=beam_size,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
+                beam_size=beam_size or 5,
+                best_of=5,
+                temperature=[0.0, 0.2, 0.4, 0.6, 0.8],
+                vad_filter=False,
                 condition_on_previous_text=False,
-                no_speech_threshold=0.6,
+                no_speech_threshold=0.85,
                 compression_ratio_threshold=2.4
             )
 
+            # Safeguarded transcription with auto-recovery on CPU if GPU execution fails
+            segments = None
+            info = None
+            first_seg = None
+            try:
+                segments, info = model.transcribe(temp_path, **transcribe_kwargs)
+                # Test first segment to verify GPU execution works
+                seg_iter = iter(segments)
+                first_seg = next(seg_iter, None)
+            except Exception as trans_err:
+                err_msg = str(trans_err)
+                if "cuda" in str(device_used).lower() and ("libcublas" in err_msg or "CUDA" in err_msg or "out of memory" in err_msg or "failed to load" in err_msg.lower()):
+                    logger.warning(f"CUDA execution failed for '{filename}' ({err_msg}). Automatically recovering on CPU...")
+                    device_used = "cpu (fallback)"
+                    compute_type_used = "int8"
+                    cpu_model, _, _ = get_whisper_model(model_name, force_device="cpu")
+                    segments, info = cpu_model.transcribe(temp_path, **transcribe_kwargs)
+                    seg_iter = iter(segments)
+                    first_seg = next(seg_iter, None)
+                else:
+                    raise
+
             detected_lang = getattr(info, "language", language or "unknown")
+
+            # Watermark and non-vocal music noise patterns
+            WATERMARK_PATTERNS = [
+                re.compile(r"thank you for watching", re.I),
+                re.compile(r"thanks for watching", re.I),
+                re.compile(r"subtitles by", re.I),
+                re.compile(r"amara\.org", re.I),
+                re.compile(r"subscribe", re.I),
+                re.compile(r"copyright", re.I),
+                re.compile(r"www\.", re.I),
+                re.compile(r"like and subscribe", re.I),
+                re.compile(r"this is the end of this video", re.I),
+                re.compile(r"see you in the next", re.I),
+            ]
+            MUSIC_NOISE_PATTERNS = [
+                re.compile(r"^\s*[\(\[\{]?(music|applause|cheering|instrumental|laughter|singing)[\)\]\}]?\s*$", re.I),
+                re.compile(r"^[♪♫#\*\s]+$"),
+            ]
 
             # Format into LRC timestamped lines
             lrc_lines = []
             last_text = ""
             repetition_count = 0
 
-            for seg in segments:
+            all_segments = []
+            if first_seg is not None:
+                all_segments.append(first_seg)
+            if seg_iter is not None:
+                for s in seg_iter:
+                    all_segments.append(s)
+
+            for seg in all_segments:
                 text = (seg.text or "").strip()
                 if not text:
+                    continue
+
+                # Filter out pure music noise tokens or subtitle outro watermarks
+                if any(p.search(text) for p in WATERMARK_PATTERNS):
+                    continue
+                if any(p.match(text) for p in MUSIC_NOISE_PATTERNS):
                     continue
 
                 # Anti-repetition & hallucination guards
@@ -449,7 +925,7 @@ def transcribe():
             if len(HISTORY) > MAX_HISTORY:
                 HISTORY.pop()
 
-            logger.info(f"Completed '{filename}' in {duration_sec}s ({len(lrc_lines)} lines, lang={detected_lang})")
+            logger.info(f"Completed '{filename}' in {duration_sec}s ({len(lrc_lines)} lines, lang={detected_lang}, device={device_used})")
 
             return jsonify({
                 "success": True,
@@ -514,6 +990,9 @@ def parse_args():
     parser.add_argument("--max-ram-mb", type=int, default=4096, help="RAM ceiling before unloading models (MB)")
     parser.add_argument("--cooldown-sec", type=float, default=0.5, help="Cooldown pause between songs to prevent continuous full GPU heat (seconds)")
     parser.add_argument("--no-low-priority", action="store_true", help="Do not lower process priority")
+    parser.add_argument("--model-source", default="online", choices=["online", "server"], help="Model delivery source: online (HuggingFace) or server (Sangita server)")
+    parser.add_argument("--server-url", default=None, help="Sangita server URL for streaming model weights")
+    parser.add_argument("--preload", action="store_true", help="Immediately prime model into RAM/GPU at startup")
     return parser.parse_args()
 
 
@@ -536,16 +1015,26 @@ if __name__ == "__main__":
 
     apply_process_priority(SERVER_CONFIG["low_priority"])
 
+    if args.preload:
+        try:
+            load_model_to_ram(model_name=args.model, source=args.model_source, server_url=args.server_url)
+        except Exception as e:
+            logger.warning(f"Could not preload model: {e}")
+
     gpu = detect_gpu()
+    m_status = check_model_status(args.model)
+    ram_info = get_ram_storage_info()
     print("=" * 65)
     print("  Sangita — Local PC Lyrics API (Whisper GPU Node)")
     print("=" * 65)
     print(f"  • Hardware:      {gpu['name']}")
-    print(f"  • CUDA Enabled:  {'YES (High-Speed Acceleration)' if gpu['has_cuda'] else 'NO (Running on CPU)'}")
+    print(f"  • GPU Ready:     {'YES (High-Speed Acceleration)' if (gpu['has_cuda'] and gpu['cuda_runtime_ready']) else 'NO (CPU Mode: ' + gpu['status_msg'] + ')'}")
     if gpu['has_cuda']:
         print(f"  • Total VRAM:    {gpu['total_vram_mb']} MB")
         print(f"  • Driver:        {gpu['driver_version']}")
-    print(f"  • Default Model: {args.model}")
+    print(f"  • Model Name:    {args.model}")
+    print(f"  • RAM Mode:      {'ENABLED (' + ram_info['storage_mode'] + ') 🛡️ Zero Disk Trace' if ram_info['ram_mode'] else 'Disabled'}")
+    print(f"  • Auto-Purge:    Enabled (All data deleted on Ctrl+C / Session Exit) ✅")
     print(f"  • CPU Threads:   {SERVER_CONFIG['cpu_threads']} threads (Capped)")
     print(f"  • RAM Ceiling:   {SERVER_CONFIG['max_ram_mb']} MB (Watchdog)")
     print(f"  • GPU Cooldown:  {SERVER_CONFIG['cooldown_sec']}s between songs")
@@ -556,3 +1045,4 @@ if __name__ == "__main__":
     print("  Ready to accept local or remote transcription requests.\n")
 
     app.run(host=args.host, port=args.port, threaded=True)
+

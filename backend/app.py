@@ -2216,6 +2216,29 @@ def get_track_lyrics(filepath):
     return jsonify({"has_lyrics": False, "raw": "", "filepath": safe}), 200
 
 
+def _get_lyrics_node_config():
+    cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
+    if os.path.isfile(cfg_file):
+        try:
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _update_lyrics_node_config(updates):
+    try:
+        cfg = _get_lyrics_node_config()
+        cfg.update(updates)
+        cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
+        with open(cfg_file, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+        return cfg
+    except Exception:
+        return {}
+
+
 @app.route("/api/admin/lyrics/status", methods=["GET"])
 @require_admin
 def admin_lyrics_status():
@@ -2293,24 +2316,73 @@ def admin_lyrics_status():
             "error": str(e)
         }
 
-    saved_remote_url = ""
-    saved_only_gpu = False
-    try:
-        cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
-        if os.path.isfile(cfg_file):
-            with open(cfg_file, "r") as f:
-                cfg_data = json.load(f)
-                saved_remote_url = cfg_data.get("remote_whisper_url", "")
-                saved_only_gpu = bool(cfg_data.get("only_remote_gpu", False))
-    except Exception:
-        pass
+    node_cfg = _get_lyrics_node_config()
+    saved_remote_url = node_cfg.get("remote_whisper_url", "")
+    saved_only_gpu = bool(node_cfg.get("only_remote_gpu", False))
+    saved_model_source = node_cfg.get("model_source", "online")
+    saved_ephemeral_ram = bool(node_cfg.get("ephemeral_ram", True))
 
     return jsonify({
         "job": status_data,
         "resources": resources,
         "remote_whisper_url": saved_remote_url,
-        "only_remote_gpu": saved_only_gpu
+        "only_remote_gpu": saved_only_gpu,
+        "model_source": saved_model_source,
+        "ephemeral_ram": saved_ephemeral_ram,
+        "model": node_cfg.get("model", "small"),
+        "compute_type": node_cfg.get("compute_type", "auto"),
+        "cooldown_sec": float(node_cfg.get("cooldown_sec", 0.5)),
+        "cpu_threads": int(node_cfg.get("cpu_threads", 2)),
+        "max_ram_mb": int(node_cfg.get("max_ram_mb", 4096)),
+        "low_priority": bool(node_cfg.get("low_priority", True)),
+        "remote_settings": node_cfg.get("remote_settings", {})
     })
+
+
+@app.route("/api/lyrics/model/<model_name>/info", methods=["GET"])
+def lyrics_model_info(model_name):
+    """Returns availability and file metadata for cached Whisper models on this server."""
+    import glob
+    cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+    model_dir = os.path.join(cache_dir, f"models--Systran--faster-whisper-{model_name}")
+    if not os.path.isdir(model_dir):
+        return jsonify({"available": False, "model": model_name, "files": []}), 404
+
+    snapshots = glob.glob(os.path.join(model_dir, "snapshots", "*"))
+    target_dir = snapshots[0] if snapshots else model_dir
+    files = {}
+    for req_file in ["model.bin", "config.json", "tokenizer.json", "vocabulary.txt"]:
+        fpath = os.path.join(target_dir, req_file)
+        if os.path.isfile(fpath):
+            files[req_file] = os.path.getsize(fpath)
+
+    total_mb = round(sum(files.values()) / (1024 * 1024), 1)
+    return jsonify({
+        "available": len(files) >= 3,
+        "model": model_name,
+        "total_mb": total_mb,
+        "files": files
+    })
+
+
+@app.route("/api/lyrics/model/<model_name>/<filename>", methods=["GET"])
+def lyrics_model_download_file(model_name, filename):
+    """Serves a model file directly from server cache to the local GPU worker."""
+    import glob
+    from flask import send_file
+    if filename not in ["model.bin", "config.json", "tokenizer.json", "vocabulary.txt"]:
+        return jsonify({"error": "Invalid model file requested"}), 400
+
+    cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+    model_dir = os.path.join(cache_dir, f"models--Systran--faster-whisper-{model_name}")
+    snapshots = glob.glob(os.path.join(model_dir, "snapshots", "*"))
+    target_dir = snapshots[0] if snapshots else model_dir
+    fpath = os.path.join(target_dir, filename)
+
+    if not os.path.isfile(fpath):
+        return jsonify({"error": f"File '{filename}' not found for model '{model_name}'"}), 404
+
+    return send_file(os.path.realpath(fpath), as_attachment=True, download_name=filename)
 
 
 @app.route("/api/admin/lyrics/test-remote", methods=["POST"])
@@ -2319,7 +2391,13 @@ def admin_lyrics_test_remote():
     import time
     import requests
     data = request.get_json(silent=True) or {}
-    url = (data.get("url") or data.get("remote_whisper_url") or "").strip()
+    raw_url = data.get("url") if "url" in data else data.get("remote_whisper_url")
+    if raw_url is not None:
+        url = str(raw_url).strip()
+    else:
+        node_cfg = _get_lyrics_node_config()
+        url = str(node_cfg.get("remote_whisper_url", "")).strip()
+
     if not url:
         return jsonify({"online": False, "error": "No remote URL provided"}), 400
 
@@ -2330,18 +2408,11 @@ def admin_lyrics_test_remote():
         latency_ms = int((time.time() - start_t) * 1000)
         if res.status_code == 200:
             info = res.json()
-            # Remember URL for user convenience
-            try:
-                cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
-                cur_cfg = {}
-                if os.path.isfile(cfg_file):
-                    with open(cfg_file, "r") as f:
-                        cur_cfg = json.load(f)
-                cur_cfg["remote_whisper_url"] = clean_url
-                with open(cfg_file, "w") as f:
-                    json.dump(cur_cfg, f)
-            except Exception:
-                pass
+            # Remember URL & node limits for user convenience
+            _update_lyrics_node_config({
+                "remote_whisper_url": clean_url,
+                "remote_settings": info.get("limits", {})
+            })
 
             return jsonify({
                 "online": True,
@@ -2349,9 +2420,14 @@ def admin_lyrics_test_remote():
                 "device": info.get("device", "unknown"),
                 "gpu_name": info.get("gpu_name", "Unknown GPU"),
                 "has_cuda": info.get("has_cuda", False),
+                "cuda_runtime_ready": info.get("cuda_runtime_ready", False),
+                "status_msg": info.get("status_msg", "Ready"),
                 "total_vram_mb": info.get("total_vram_mb", 0),
                 "used_vram_mb": info.get("used_vram_mb", 0),
                 "active_job": info.get("active_job", "idle"),
+                "model_status": info.get("model_status", {}),
+                "ram_mode": info.get("ram_mode", False),
+                "storage_mode": info.get("storage_mode", "RAM (Ephemeral)"),
                 "limits": info.get("limits", {})
             })
         else:
@@ -2364,6 +2440,115 @@ def admin_lyrics_test_remote():
             "online": False,
             "error": f"Unreachable ({e})"
         }), 200
+
+
+@app.route("/api/admin/lyrics/remote-prime", methods=["POST"])
+@require_admin
+def admin_lyrics_remote_prime():
+    """Triggers model pre-warming and RAM streaming directly on the remote PC GPU node."""
+    import requests
+    data = request.get_json(silent=True) or {}
+    node_cfg = _get_lyrics_node_config()
+    url = (data.get("url") or data.get("node_url") or data.get("remote_whisper_url") or node_cfg.get("remote_whisper_url") or "").strip()
+    if not url:
+        return jsonify({"success": False, "error": "No remote PC Whisper URL provided"}), 400
+
+    clean_url = url.rstrip("/")
+    model = (data.get("model") or node_cfg.get("model") or "small").strip()
+    source = (data.get("source") or data.get("model_source") or node_cfg.get("model_source") or "online").strip()
+    compute_type = (data.get("compute_type") or node_cfg.get("compute_type") or "auto").strip()
+    ram_mode = bool(data.get("ram_mode", data.get("ephemeral_ram", node_cfg.get("ephemeral_ram", True))))
+
+    server_url = (data.get("server_url") or "").strip()
+    if not server_url and source == "server":
+        server_url = request.host_url.rstrip("/")
+
+    payload = {
+        "model": model,
+        "source": source,
+        "server_url": server_url,
+        "compute_type": compute_type,
+        "ram_mode": ram_mode
+    }
+
+    _update_lyrics_node_config({
+        "remote_whisper_url": clean_url,
+        "model": model,
+        "model_source": source,
+        "compute_type": compute_type,
+        "ephemeral_ram": ram_mode
+    })
+
+    try:
+        res = requests.post(f"{clean_url}/api/model/load", json=payload, timeout=120)
+        resp_data = res.json() if res.status_code == 200 else {"error": res.text}
+        return jsonify(resp_data), res.status_code
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to prime remote node: {e}"}), 502
+
+
+@app.route("/api/admin/lyrics/remote-purge", methods=["POST"])
+@require_admin
+def admin_lyrics_remote_purge():
+    """Wipes VRAM and cleans all ephemeral RAM-disk files on the remote PC node."""
+    import requests
+    data = request.get_json(silent=True) or {}
+    node_cfg = _get_lyrics_node_config()
+    url = (data.get("url") or data.get("node_url") or data.get("remote_whisper_url") or node_cfg.get("remote_whisper_url") or "").strip()
+    if not url:
+        return jsonify({"success": False, "error": "No remote PC Whisper URL provided"}), 400
+
+    clean_url = url.rstrip("/")
+    try:
+        res = requests.post(f"{clean_url}/api/model/purge", json={}, timeout=15)
+        resp_data = res.json() if res.status_code == 200 else {"error": res.text}
+        return jsonify(resp_data), res.status_code
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to purge remote node: {e}"}), 502
+
+
+@app.route("/api/admin/lyrics/remote-settings", methods=["GET", "POST"])
+@require_admin
+def admin_lyrics_remote_settings():
+    """Synchronizes or reads hardware safeguards (CPU threads, RAM limit, GPU cooldown) on the remote PC."""
+    import requests
+    node_cfg = _get_lyrics_node_config()
+
+    if request.method == "GET":
+        url = (request.args.get("url") or request.args.get("node_url") or node_cfg.get("remote_whisper_url") or "").strip()
+        if not url:
+            return jsonify({"error": "No remote PC Whisper URL provided"}), 400
+        clean_url = url.rstrip("/")
+        try:
+            res = requests.get(f"{clean_url}/api/settings", timeout=5)
+            if res.status_code == 200:
+                settings_data = res.json()
+                _update_lyrics_node_config({"remote_settings": settings_data.get("limits", {})})
+                return jsonify(settings_data)
+            return jsonify({"error": f"Remote node returned HTTP {res.status_code}"}), res.status_code
+        except Exception as e:
+            return jsonify({"error": f"Unreachable remote node: {e}"}), 502
+
+    # POST
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or data.get("node_url") or data.get("remote_whisper_url") or node_cfg.get("remote_whisper_url") or "").strip()
+    if not url:
+        return jsonify({"success": False, "error": "No remote PC Whisper URL provided"}), 400
+
+    clean_url = url.rstrip("/")
+    forward_keys = ["cpu_threads", "max_ram_mb", "cooldown_sec", "low_priority", "compute_type"]
+    node_payload = {k: data[k] for k in forward_keys if k in data}
+
+    saved_updates = dict(node_payload)
+    saved_updates["remote_whisper_url"] = clean_url
+    _update_lyrics_node_config(saved_updates)
+
+    try:
+        res = requests.post(f"{clean_url}/api/settings", json=node_payload, timeout=8)
+        resp_data = res.json() if res.status_code == 200 else {"error": res.text}
+        return jsonify(resp_data), res.status_code
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to update remote settings: {e}"}), 502
 
 
 @app.route("/api/admin/lyrics/start", methods=["POST"])
@@ -2396,6 +2581,8 @@ def admin_lyrics_start():
     api = bool(data.get("api", True))
     remote_whisper_url = str(data.get("remote_whisper_url") or data.get("remote_url") or "").strip()
     only_remote_gpu = bool(data.get("only_remote_gpu", False))
+    model_source = str(data.get("model_source", "online")).strip()
+    ephemeral_ram = bool(data.get("ephemeral_ram", True))
 
     worker_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lyrics_worker.py")
     cmd = [
@@ -2422,23 +2609,26 @@ def admin_lyrics_start():
         cmd.append("--no-api")
     if remote_whisper_url:
         cmd.extend(["--remote-whisper-url", remote_whisper_url])
+        if model_source:
+            cmd.extend(["--model-source", model_source])
+            if model_source == "server":
+                server_base = (data.get("server_url") or request.host_url).rstrip("/")
+                cmd.extend(["--server-url", server_base])
+        if ephemeral_ram:
+            cmd.append("--ephemeral-ram")
     if only_remote_gpu:
         cmd.append("--only-remote-gpu")
 
-    if remote_whisper_url or "only_remote_gpu" in data:
-        try:
-            cfg_file = os.path.join(DATA_DIR, "lyrics_node_config.json")
-            cur_cfg = {}
-            if os.path.isfile(cfg_file):
-                with open(cfg_file, "r") as f:
-                    cur_cfg = json.load(f)
-            if remote_whisper_url:
-                cur_cfg["remote_whisper_url"] = remote_whisper_url
-            cur_cfg["only_remote_gpu"] = only_remote_gpu
-            with open(cfg_file, "w") as f:
-                json.dump(cur_cfg, f)
-        except Exception:
-            pass
+    if remote_whisper_url or "only_remote_gpu" in data or "model_source" in data:
+        updates = {
+            "only_remote_gpu": only_remote_gpu,
+            "model_source": model_source,
+            "ephemeral_ram": ephemeral_ram,
+            "model": model
+        }
+        if remote_whisper_url:
+            updates["remote_whisper_url"] = remote_whisper_url
+        _update_lyrics_node_config(updates)
 
     try:
         proc = subprocess.Popen(

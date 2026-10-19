@@ -101,5 +101,66 @@ class TestWhisperGPUServer(unittest.TestCase):
         self.assertIn("limits", health_data)
         self.assertEqual(health_data["limits"]["cpu_threads"], 4)
 
+    def test_model_status_reported_in_health_and_telemetry(self):
+        res = self.client.get('/health')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertIn("model_status", data)
+        self.assertIn("cached", data["model_status"])
+
+        res_tel = self.client.get('/api/telemetry')
+        self.assertEqual(res_tel.status_code, 200)
+        data_tel = res_tel.get_json()
+        self.assertIn("model_status", data_tel)
+
+    @patch("Local_PC_Lyrics_API.server.get_whisper_model")
+    def test_transcribe_cuda_fallback_to_cpu(self, mock_get_model):
+        # 1st call on cuda raises RuntimeError (like missing cublas)
+        mock_cuda_model = MagicMock()
+        mock_cuda_model.transcribe.side_effect = RuntimeError("Library libcublas.so.12 is not found or cannot be loaded")
+
+        # 2nd call on cpu succeeds
+        mock_cpu_seg = MagicMock(start=1.0, end=4.0, text="Fallback CPU lyrics", no_speech_prob=0.01, compression_ratio=1.0)
+        mock_cpu_info = MagicMock(language="en")
+        mock_cpu_model = MagicMock()
+        mock_cpu_model.transcribe.return_value = ([mock_cpu_seg], mock_cpu_info)
+
+        def side_effect(model_name="small", force_device=None):
+            if force_device == "cpu":
+                return (mock_cpu_model, "cpu", "int8")
+            return (mock_cuda_model, "cuda", "float16")
+
+        mock_get_model.side_effect = side_effect
+
+        data = {
+            "audio": (io.BytesIO(b"MOCK_AUDIO"), "fallback_song.mp3"),
+            "model": "small"
+        }
+        res = self.client.post('/transcribe', data=data, content_type='multipart/form-data')
+        self.assertEqual(res.status_code, 200)
+        resp_data = res.get_json()
+        self.assertTrue(resp_data["success"])
+        self.assertIn("cpu (fallback)", resp_data["device"])
+        self.assertIn("Fallback CPU lyrics", resp_data["lrc"])
+
+    @patch("Local_PC_Lyrics_API.server.load_model_to_ram")
+    def test_model_load_endpoint(self, mock_load):
+        mock_load.return_value = (MagicMock(), "cuda", "float16", "/dev/shm/test")
+        res = self.client.post('/api/model/load', json={"source": "online", "model": "small"})
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["device"], "cuda")
+        self.assertIn("storage_info", data)
+
+    def test_model_purge_endpoint(self):
+        res = self.client.post('/api/model/purge')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data["success"])
+        self.assertIn("storage_info", data)
+
+
 if __name__ == "__main__":
     unittest.main()
+

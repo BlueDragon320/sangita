@@ -230,11 +230,21 @@ export default function AdminDashboard({
     song: '',
     remote_whisper_enabled: false,
     remote_whisper_url: '',
-    only_remote_gpu: false
+    only_remote_gpu: false,
+    model_source: 'online',
+    ephemeral_ram: true,
+    // Remote PC hardware safeguards
+    pc_cpu_threads: 2,
+    pc_max_ram_mb: 4096,
+    pc_cooldown_sec: 0.5,
+    pc_compute_type: 'auto',
+    pc_low_priority: true
   })
   const hasLoadedLyricsNodeConfigRef = useRef(false)
+  const [remoteModelModalOpen, setRemoteModelModalOpen] = useState(false)
   const [remoteGpuTestLoading, setRemoteGpuTestLoading] = useState(false)
   const [remoteGpuTestResult, setRemoteGpuTestResult] = useState(null)
+  const [nodeOpStatus, setNodeOpStatus] = useState(null)
   const [lyricsActionLoading, setLyricsActionLoading] = useState(false)
   const [lyricsEditModal, setLyricsEditModal] = useState({
     open: false,
@@ -321,6 +331,25 @@ export default function AdminDashboard({
             if (data.only_remote_gpu !== undefined) {
               next.only_remote_gpu = Boolean(data.only_remote_gpu)
             }
+            if (data.model_source !== undefined) {
+              next.model_source = data.model_source
+            }
+            if (data.ephemeral_ram !== undefined) {
+              next.ephemeral_ram = Boolean(data.ephemeral_ram)
+            }
+            if (data.model) next.model = data.model
+            if (data.compute_type) next.pc_compute_type = data.compute_type
+            if (data.cooldown_sec !== undefined) next.pc_cooldown_sec = data.cooldown_sec
+            if (data.cpu_threads !== undefined) next.pc_cpu_threads = data.cpu_threads
+            if (data.max_ram_mb !== undefined) next.pc_max_ram_mb = data.max_ram_mb
+            if (data.low_priority !== undefined) next.pc_low_priority = data.low_priority
+            if (data.remote_settings) {
+              if (data.remote_settings.cpu_threads !== undefined) next.pc_cpu_threads = data.remote_settings.cpu_threads
+              if (data.remote_settings.max_ram_mb !== undefined) next.pc_max_ram_mb = data.remote_settings.max_ram_mb
+              if (data.remote_settings.cooldown_sec !== undefined) next.pc_cooldown_sec = data.remote_settings.cooldown_sec
+              if (data.remote_settings.compute_type !== undefined) next.pc_compute_type = data.remote_settings.compute_type
+              if (data.remote_settings.low_priority !== undefined) next.pc_low_priority = data.remote_settings.low_priority
+            }
             return next
           })
         }
@@ -348,10 +377,119 @@ export default function AdminDashboard({
       })
       const data = await res.json()
       setRemoteGpuTestResult(data)
+      if (data.online && data.limits) {
+        setLyricsConfig(c => ({
+          ...c,
+          pc_cpu_threads: data.limits.cpu_threads ?? c.pc_cpu_threads,
+          pc_max_ram_mb: data.limits.max_ram_mb ?? c.pc_max_ram_mb,
+          pc_cooldown_sec: data.limits.cooldown_sec ?? c.pc_cooldown_sec,
+          pc_compute_type: data.limits.compute_type ?? c.pc_compute_type,
+          pc_low_priority: data.limits.low_priority ?? c.pc_low_priority
+        }))
+      }
     } catch (err) {
       setRemoteGpuTestResult({ online: false, error: err.message })
     } finally {
       setRemoteGpuTestLoading(false)
+    }
+  }
+
+  const handleRemotePrime = async () => {
+    if (!lyricsConfig.remote_whisper_url) {
+      alert('Please enter your PC / Laptop Remote Whisper URL first.')
+      return
+    }
+    setLyricsActionLoading(true)
+    setNodeOpStatus({ type: 'info', msg: `Pre-warming & loading '${lyricsConfig.model}' model into remote PC RAM/GPU...` })
+    try {
+      const res = await fetch('/api/admin/lyrics/remote-prime', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          url: lyricsConfig.remote_whisper_url,
+          model: lyricsConfig.model,
+          source: lyricsConfig.model_source,
+          compute_type: lyricsConfig.pc_compute_type || 'auto',
+          ram_mode: lyricsConfig.ephemeral_ram !== false
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success !== false) {
+        setNodeOpStatus({ type: 'success', msg: `⚡ Model '${lyricsConfig.model}' primed successfully in remote PC RAM/GPU!` })
+        fetchLyricsStatus()
+      } else {
+        setNodeOpStatus({ type: 'error', msg: `❌ Failed to prime model: ${data.error || res.statusText}` })
+      }
+    } catch (err) {
+      setNodeOpStatus({ type: 'error', msg: `❌ Error priming node: ${err.message}` })
+    } finally {
+      setLyricsActionLoading(false)
+      setTimeout(() => setNodeOpStatus(null), 8000)
+    }
+  }
+
+  const handleRemotePurge = async () => {
+    if (!lyricsConfig.remote_whisper_url) return
+    if (!window.confirm('Purge remote node memory? This will unload Whisper from PC GPU/RAM and wipe all ephemeral RAM-disk directories clean (zero local trace).')) return
+    setLyricsActionLoading(true)
+    setNodeOpStatus({ type: 'info', msg: 'Purging remote PC memory and wiping ephemeral RAM files...' })
+    try {
+      const res = await fetch('/api/admin/lyrics/remote-purge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ url: lyricsConfig.remote_whisper_url })
+      })
+      const data = await res.json()
+      if (res.ok && data.success !== false) {
+        setNodeOpStatus({ type: 'success', msg: '🗑️ Remote memory purged: GPU VRAM freed and RAM files wiped clean.' })
+        fetchLyricsStatus()
+      } else {
+        setNodeOpStatus({ type: 'error', msg: `❌ Failed to purge node: ${data.error || res.statusText}` })
+      }
+    } catch (err) {
+      setNodeOpStatus({ type: 'error', msg: `❌ Error purging node: ${err.message}` })
+    } finally {
+      setLyricsActionLoading(false)
+      setTimeout(() => setNodeOpStatus(null), 8000)
+    }
+  }
+
+  const handleSyncRemoteSettings = async () => {
+    if (!lyricsConfig.remote_whisper_url) return
+    setLyricsActionLoading(true)
+    try {
+      const res = await fetch('/api/admin/lyrics/remote-settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          url: lyricsConfig.remote_whisper_url,
+          cpu_threads: lyricsConfig.pc_cpu_threads,
+          max_ram_mb: lyricsConfig.pc_max_ram_mb,
+          cooldown_sec: lyricsConfig.pc_cooldown_sec,
+          low_priority: lyricsConfig.pc_low_priority,
+          compute_type: lyricsConfig.pc_compute_type
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success !== false) {
+        setNodeOpStatus({ type: 'success', msg: '💾 Hardware safeguards synchronized and applied to remote PC.' })
+      } else {
+        setNodeOpStatus({ type: 'error', msg: `❌ Failed to sync settings: ${data.error || res.statusText}` })
+      }
+    } catch (err) {
+      setNodeOpStatus({ type: 'error', msg: `❌ Error saving settings: ${err.message}` })
+    } finally {
+      setLyricsActionLoading(false)
+      setTimeout(() => setNodeOpStatus(null), 6000)
     }
   }
 
@@ -395,8 +533,12 @@ export default function AdminDashboard({
       if (!payload.remote_whisper_enabled) {
         delete payload.remote_whisper_url
         delete payload.only_remote_gpu
+        delete payload.model_source
+        delete payload.ephemeral_ram
       } else {
         payload.only_remote_gpu = Boolean(lyricsConfig.only_remote_gpu)
+        payload.model_source = payload.model_source || 'online'
+        payload.ephemeral_ram = payload.ephemeral_ram !== undefined ? Boolean(payload.ephemeral_ram) : true
       }
       if (payload.scope === 'playlist') {
         if (!payload.playlist) {
@@ -434,6 +576,14 @@ export default function AdminDashboard({
       alert(`Error starting worker: ${e.message}`)
     } finally {
       setLyricsActionLoading(false)
+    }
+  }
+
+  const handleInitiateLyricsStart = () => {
+    if (lyricsConfig.remote_whisper_enabled) {
+      setRemoteModelModalOpen(true)
+    } else {
+      handleStartLyricsWorker()
     }
   }
 
@@ -2653,83 +2803,71 @@ export default function AdminDashboard({
               TAB 6: LYRICS ENGINE
              ========================================================================= */
           <div className="lyrics-engine-view" data-testid="lyrics-engine-content">
-            {/* 1. Live Telemetry KPI Cards */}
-            <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-              {/* Host CPU & Per-Core */}
-              <div className="kpi-card">
-                <div className="kpi-header">
-                  <span className="kpi-label">Host CPU Utilization</span>
-                  <ActivityIcon />
+            {/* 1. Hero Header & Quick Command Center */}
+            <div className="lyrics-hero-header">
+              <div className="lyrics-hero-title-group">
+                <div className="lyrics-hero-title-row">
+                  <div className="lyrics-hero-title">🎵 Lyrics Caption & Sync Engine</div>
+                  {lyricsStatus?.job?.state === 'running' ? (
+                    <span className="lyrics-hero-badge running">
+                      <span className="live-dot-pulse" />
+                      Generating Lyrics ({lyricsStatus.job.current_index || 0} / {lyricsStatus.job.total_songs || 0})
+                    </span>
+                  ) : lyricsStatus?.job?.state === 'stopped' ? (
+                    <span className="lyrics-hero-badge idle" style={{ borderColor: 'rgba(239, 68, 68, 0.4)', color: '#f87171' }}>
+                      🛑 Stopped
+                    </span>
+                  ) : (
+                    <span className="lyrics-hero-badge idle">
+                      🟢 Engine Idle & Ready
+                    </span>
+                  )}
+                  {lyricsConfig.remote_whisper_enabled && (
+                    <span className="source-pill" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--emerald)', border: '1px solid rgba(16, 185, 129, 0.35)', fontSize: '10.5px' }}>
+                      ⚡ GPU Offload Active
+                    </span>
+                  )}
+                  {lyricsConfig.only_remote_gpu && (
+                    <span className="source-pill" style={{ background: 'rgba(99, 102, 241, 0.18)', color: '#A5B4FC', border: '1px solid rgba(99, 102, 241, 0.4)', fontSize: '10.5px' }}>
+                      🛡️ 0% Server CPU
+                    </span>
+                  )}
                 </div>
-                <div className="kpi-value">
-                  {lyricsStatus?.resources?.host_cpu_percent !== undefined
-                    ? `${lyricsStatus.resources.host_cpu_percent.toFixed(1)}%`
-                    : '—'}
+                <div className="lyrics-hero-subtitle">
+                  Full-song lyrics transcription with zero-cutoff guarantee. Synchronizes online LRCLIB metadata and offloads AI transcription to your local PC NVIDIA GPU in RAM.
                 </div>
-                <div className="kpi-subtext">
-                  {lyricsStatus?.resources?.cpu_count || 4} Cores Pinning Engine
-                </div>
-                {/* Per-Core mini visualizer */}
-                {Array.isArray(lyricsStatus?.resources?.per_core_percent) && (
-                  <div className="per-core-grid" title="Per-Core Load" style={{ marginTop: 8 }}>
-                    {lyricsStatus.resources.per_core_percent.map((pct, idx) => (
-                      <div key={idx} className="core-bar-wrapper">
-                        <span className="core-label">C{idx}</span>
-                        <div className="core-bar-track">
-                          <div
-                            className="core-bar-fill"
-                            style={{
-                              width: `${Math.min(100, Math.max(0, pct))}%`,
-                              background: pct > 80 ? '#EF4444' : pct > 50 ? '#F59E0B' : 'var(--emerald)'
-                            }}
-                          />
-                        </div>
-                        <span className="core-pct">{Math.round(pct)}%</span>
-                      </div>
-                    ))}
-                  </div>
+              </div>
+
+              <div className="lyrics-hero-actions">
+                {lyricsStatus?.job?.state === 'running' ? (
+                  <button
+                    className="lyrics-main-cta stop"
+                    onClick={handleStopLyricsWorker}
+                    disabled={lyricsActionLoading}
+                    data-testid="btn-stop-lyrics-worker"
+                  >
+                    <TrashIcon />
+                    <span>{lyricsActionLoading ? 'Stopping…' : 'Stop Lyrics Generation'}</span>
+                  </button>
+                ) : (
+                  <button
+                    className="lyrics-main-cta start"
+                    onClick={() => handleStartLyricsWorker()}
+                    disabled={lyricsActionLoading}
+                    data-testid="btn-start-lyrics-worker"
+                  >
+                    <LyricsDocIcon />
+                    <span>
+                      {lyricsActionLoading
+                        ? 'Starting…'
+                        : lyricsConfig.scope === 'playlist' && lyricsConfig.playlist
+                        ? `Start Generation (${lyricsConfig.playlist})`
+                        : lyricsConfig.scope === 'song' && lyricsConfig.song
+                        ? 'Start Generation (1 Song)'
+                        : 'Start Lyrics Generation'}
+                    </span>
+                  </button>
                 )}
-              </div>
-
-              {/* Host Memory */}
-              <div className="kpi-card">
-                <div className="kpi-header">
-                  <span className="kpi-label">Host Memory (RAM)</span>
-                  <DeviceIcon />
-                </div>
-                <div className="kpi-value">
-                  {lyricsStatus?.resources?.host_ram_used_mb !== undefined
-                    ? `${(lyricsStatus.resources.host_ram_used_mb / 1024).toFixed(2)} GB`
-                    : '—'}
-                </div>
-                <div className="kpi-subtext">
-                  of {lyricsStatus?.resources?.host_ram_total_mb ? `${(lyricsStatus.resources.host_ram_total_mb / 1024).toFixed(1)} GB Total (${lyricsStatus.resources.host_ram_percent?.toFixed(0)}%)` : '—'}
-                </div>
-                <div className="resource-bar-track" style={{ marginTop: 8 }}>
-                  <div
-                    className="resource-bar-fill"
-                    style={{
-                      width: `${Math.min(100, lyricsStatus?.resources?.host_ram_percent || 0)}%`,
-                      background: (lyricsStatus?.resources?.host_ram_percent || 0) > 85 ? '#EF4444' : 'var(--emerald)'
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Overall Coverage / Summary */}
-              <div className="kpi-card">
-                <div className="kpi-header">
-                  <span className="kpi-label">Catalog Coverage</span>
-                  <MusicIcon />
-                </div>
-                <div className="kpi-value">
-                  {lyricsStatus?.job?.current_index !== undefined && lyricsStatus?.job?.total_songs
-                    ? `${lyricsStatus.job.current_index} / ${lyricsStatus.job.total_songs}`
-                    : `${lyricsLogs.filter(l => l.status === 'success' || l.source).length} Processed`}
-                </div>
-                <div className="kpi-subtext">
-                  {lyricsStatus?.job?.eta_seconds ? `ETA: ${formatDuration(lyricsStatus.job.eta_seconds)}` : 'Ready for batch runs'}
-                </div>
               </div>
             </div>
 
@@ -2888,68 +3026,155 @@ export default function AdminDashboard({
               )
             )}
 
-            {/* 3. Resource Governance & Generator Controls */}
-            <div className="admin-panel lyrics-generator-panel">
-              <div className="admin-panel-header">
-                <div>
-                  <div className="admin-panel-title">Lyrics Caption Generation Controls</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 2 }}>
-                    Capped background worker running with CPU affinity, OS nice(10) priority, and memory watchdogs.
-                  </div>
+            {/* 3. Real-Time Telemetry KPI Cards */}
+            <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', marginTop: 14 }}>
+              {/* Host CPU & Per-Core */}
+              <div className="kpi-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Host CPU Utilization</span>
+                  <ActivityIcon />
                 </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  {lyricsStatus?.job?.state === 'running' ? (
-                    <button
-                      className="admin-nav-btn danger"
-                      onClick={handleStopLyricsWorker}
-                      disabled={lyricsActionLoading}
-                      data-testid="btn-stop-lyrics-worker"
-                    >
-                      <TrashIcon />
-                      <span>{lyricsActionLoading ? 'Stopping…' : 'Stop Lyrics Generation'}</span>
-                    </button>
-                  ) : (
-                    <button
-                      className="admin-nav-btn primary"
-                      onClick={() => handleStartLyricsWorker()}
-                      disabled={lyricsActionLoading}
-                      data-testid="btn-start-lyrics-worker"
-                    >
-                      <LyricsDocIcon />
-                      <span>
-                        {lyricsActionLoading
-                          ? 'Starting…'
-                          : lyricsConfig.scope === 'playlist' && lyricsConfig.playlist
-                          ? `Start Lyrics Caption Generation (${lyricsConfig.playlist})`
-                          : lyricsConfig.scope === 'song' && lyricsConfig.song
-                          ? 'Start Lyrics Caption Generation (1 Song)'
-                          : 'Start Lyrics Caption Generation'}
-                      </span>
-                    </button>
-                  )}
+                <div className="kpi-value">
+                  {lyricsStatus?.resources?.host_cpu_percent !== undefined
+                    ? `${lyricsStatus.resources.host_cpu_percent.toFixed(1)}%`
+                    : '—'}
+                </div>
+                <div className="kpi-subtext">
+                  {lyricsStatus?.resources?.cpu_count || 4} Cores Pinning Engine
+                </div>
+                {Array.isArray(lyricsStatus?.resources?.per_core_percent) && (
+                  <div className="per-core-grid" title="Per-Core Load" style={{ marginTop: 8 }}>
+                    {lyricsStatus.resources.per_core_percent.map((pct, idx) => (
+                      <div key={idx} className="core-bar-wrapper">
+                        <span className="core-label">C{idx}</span>
+                        <div className="core-bar-track">
+                          <div
+                            className="core-bar-fill"
+                            style={{
+                              width: `${Math.min(100, Math.max(0, pct))}%`,
+                              background: pct > 80 ? '#EF4444' : pct > 50 ? '#F59E0B' : 'var(--emerald)'
+                            }}
+                          />
+                        </div>
+                        <span className="core-pct">{Math.round(pct)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Host Memory */}
+              <div className="kpi-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Host Memory (RAM)</span>
+                  <DeviceIcon />
+                </div>
+                <div className="kpi-value">
+                  {lyricsStatus?.resources?.host_ram_used_mb !== undefined
+                    ? `${(lyricsStatus.resources.host_ram_used_mb / 1024).toFixed(2)} GB`
+                    : '—'}
+                </div>
+                <div className="kpi-subtext">
+                  of {lyricsStatus?.resources?.host_ram_total_mb ? `${(lyricsStatus.resources.host_ram_total_mb / 1024).toFixed(1)} GB Total (${lyricsStatus.resources.host_ram_percent?.toFixed(0)}%)` : '—'}
+                </div>
+                <div className="resource-bar-track" style={{ marginTop: 8 }}>
+                  <div
+                    className="resource-bar-fill"
+                    style={{
+                      width: `${Math.min(100, lyricsStatus?.resources?.host_ram_percent || 0)}%`,
+                      background: (lyricsStatus?.resources?.host_ram_percent || 0) > 85 ? '#EF4444' : 'var(--emerald)'
+                    }}
+                  />
                 </div>
               </div>
 
-              {/* Controls Grid */}
-              <div className="lyrics-controls-grid">
-                {/* 1. Target Scope Selection: All Songs, Select Playlist, Select Particular Song */}
-                <div className="form-group">
-                  <label className="form-label">Generate For</label>
-                  <select
-                    className="form-input-text"
-                    value={lyricsConfig.scope}
-                    onChange={e => setLyricsConfig(c => ({ ...c, scope: e.target.value }))}
-                    disabled={lyricsStatus?.job?.state === 'running'}
-                  >
-                    <option value="all">All Songs (Entire Library)</option>
-                    <option value="playlist">Select Playlist</option>
-                    <option value="song">Select Particular Song</option>
-                  </select>
-                  <span className="field-hint">Target scope for lyrics generation</span>
+              {/* Remote GPU Telemetry */}
+              <div className="kpi-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Remote PC GPU Node</span>
+                  <span style={{ fontSize: '16px' }}>⚡</span>
+                </div>
+                <div className="kpi-value" style={{ fontSize: '1.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {lyricsConfig.remote_whisper_enabled
+                    ? (remoteGpuTestResult?.gpu_name || 'NVIDIA CUDA')
+                    : 'Offload Disabled'}
+                </div>
+                <div className="kpi-subtext">
+                  {lyricsConfig.remote_whisper_enabled
+                    ? (remoteGpuTestResult?.online
+                        ? `${remoteGpuTestResult.total_vram_mb} MB VRAM · Latency: ${remoteGpuTestResult.latency_ms}ms`
+                        : lyricsConfig.remote_whisper_url ? 'Configured (Click Ping Node)' : 'Enter PC URL below')
+                    : 'Preserves server CPU by offloading AI to PC'}
+                </div>
+              </div>
+
+              {/* Overall Coverage / Summary */}
+              <div className="kpi-card">
+                <div className="kpi-header">
+                  <span className="kpi-label">Catalog Coverage</span>
+                  <MusicIcon />
+                </div>
+                <div className="kpi-value">
+                  {lyricsStatus?.job?.current_index !== undefined && lyricsStatus?.job?.total_songs
+                    ? `${lyricsStatus.job.current_index} / ${lyricsStatus.job.total_songs}`
+                    : `${lyricsLogs.filter(l => l.status === 'success' || l.source).length} Processed`}
+                </div>
+                <div className="kpi-subtext">
+                  {lyricsStatus?.job?.eta_seconds ? `ETA: ${formatDuration(lyricsStatus.job.eta_seconds)}` : 'Ready for batch runs'}
+                </div>
+              </div>
+            </div>
+
+            {/* 4. The 3-Card Intuitive Workstation Layout */}
+            <div className="lyrics-workstation-layout" style={{ marginTop: 18 }}>
+              {/* CARD 1: 🎯 Generation Scope & Library Targets */}
+              <div className="lyrics-card">
+                <div className="lyrics-card-header">
+                  <div>
+                    <div className="lyrics-card-title">
+                      <span>🎯</span>
+                      <span>1. Generation Scope & Targets</span>
+                    </div>
+                    <div className="lyrics-card-desc">
+                      Select which tracks to transcribe and whether to query online LRCLIB first.
+                    </div>
+                  </div>
                 </div>
 
+                {/* Target Scope Segmented Tabs */}
+                <div>
+                  <label className="form-label" style={{ marginBottom: 6 }}>Target Selection</label>
+                  <div className="lyrics-segmented-tabs">
+                    <button
+                      type="button"
+                      className={`lyrics-segmented-tab ${lyricsConfig.scope === 'all' ? 'active' : ''}`}
+                      onClick={() => setLyricsConfig(c => ({ ...c, scope: 'all' }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      Entire Library
+                    </button>
+                    <button
+                      type="button"
+                      className={`lyrics-segmented-tab ${lyricsConfig.scope === 'playlist' ? 'active' : ''}`}
+                      onClick={() => setLyricsConfig(c => ({ ...c, scope: 'playlist' }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      Select Playlist
+                    </button>
+                    <button
+                      type="button"
+                      className={`lyrics-segmented-tab ${lyricsConfig.scope === 'song' ? 'active' : ''}`}
+                      onClick={() => setLyricsConfig(c => ({ ...c, scope: 'song' }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      Single Song
+                    </button>
+                  </div>
+                </div>
+
+                {/* Conditional Pickers */}
                 {lyricsConfig.scope === 'playlist' && (
-                  <div className="form-group">
+                  <div className="form-group" style={{ animation: 'fadeIn 0.2s ease' }}>
                     <label className="form-label">Choose Playlist</label>
                     <select
                       className="form-input-text"
@@ -2969,7 +3194,7 @@ export default function AdminDashboard({
                 )}
 
                 {lyricsConfig.scope === 'song' && (
-                  <div className="form-group" style={{ minWidth: 260 }}>
+                  <div className="form-group" style={{ animation: 'fadeIn 0.2s ease' }}>
                     <label className="form-label">Choose Particular Song</label>
                     <select
                       className="form-input-text"
@@ -2988,10 +3213,10 @@ export default function AdminDashboard({
                   </div>
                 )}
 
-                {/* 2. Online API Engine Toggle Button */}
+                {/* Online API Engine Toggle Button */}
                 <div className="form-group lyrics-api-group">
                   <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span>API</span>
+                    <span>LRCLIB API Matching</span>
                     <span className={`lyrics-api-pill ${lyricsConfig.api ? 'on' : 'off'}`}>
                       {lyricsConfig.api ? 'API ON' : 'API OFF'}
                     </span>
@@ -3001,16 +3226,16 @@ export default function AdminDashboard({
                     className={`lyrics-api-button ${lyricsConfig.api ? 'active-api' : 'active-local'}`}
                     onClick={() => setLyricsConfig(c => ({ ...c, api: !c.api }))}
                     disabled={lyricsStatus?.job?.state === 'running'}
-                    title={lyricsConfig.api ? 'Online API enabled (LRCLIB with automatic local model fallback)' : 'Online API disabled (transcribe with local Whisper models directly)'}
+                    title={lyricsConfig.api ? 'Online API enabled (LRCLIB first + Whisper fallback)' : 'Online API disabled (Whisper model only)'}
                     data-testid="lyrics-api-toggle-button"
                   >
                     <div className="lyrics-api-btn-content">
                       <div className="lyrics-api-btn-left">
                         <span className="lyrics-api-btn-icon">{lyricsConfig.api ? '🌐' : '⚡'}</span>
                         <div className="lyrics-api-btn-titles">
-                          <span className="lyrics-api-btn-main">API: {lyricsConfig.api ? 'ON' : 'OFF'}</span>
+                          <span className="lyrics-api-btn-main">LRCLIB API: {lyricsConfig.api ? 'ON' : 'OFF'}</span>
                           <span className="lyrics-api-btn-sub">
-                            {lyricsConfig.api ? 'Online API + Local Fallback' : 'Direct Local Models (Whisper)'}
+                            {lyricsConfig.api ? 'Online Sync + Local Model Fallback' : 'Direct AI Transcription (Whisper Model Only)'}
                           </span>
                         </div>
                       </div>
@@ -3021,11 +3246,12 @@ export default function AdminDashboard({
                   </button>
                   <span className="field-hint">
                     {lyricsConfig.api
-                      ? 'Queries online LRCLIB first; falls back to local model if not found.'
-                      : 'Bypasses online API completely. Generates lyrics locally using Whisper.'}
+                      ? 'Queries online LRCLIB database first; falls back to Whisper AI if missing.'
+                      : 'Bypasses internet database completely. Transcribes directly using Whisper AI.'}
                   </span>
                 </div>
 
+                {/* Batch Limit */}
                 <div className="form-group">
                   <label className="form-label">Batch Limit</label>
                   <select
@@ -3042,28 +3268,364 @@ export default function AdminDashboard({
                   <span className="field-hint">Max songs processed per run</span>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">
-                    CTranslate2 Model {lyricsConfig.api ? '(Local Fallback)' : '(Primary Engine)'}
+                {/* Checkboxes */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '12px' }}>
+                    <input
+                      type="checkbox"
+                      checked={lyricsConfig.force}
+                      onChange={e => setLyricsConfig(c => ({ ...c, force: e.target.checked }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    />
+                    <span><strong>Force regenerate existing .lrc files</strong></span>
                   </label>
-                  <select
-                    className="form-input-text"
-                    value={lyricsConfig.model}
-                    onChange={e => setLyricsConfig(c => ({ ...c, model: e.target.value }))}
-                    disabled={lyricsStatus?.job?.state === 'running'}
-                  >
-                    <option value="small">Small (int8, ~460MB - Recommended CPU)</option>
-                    <option value="medium">Medium (int8, ~1.5GB - Highest Accuracy)</option>
-                    <option value="base">Base (int8, ~140MB - Fast)</option>
-                    <option value="tiny">Tiny (int8, ~75MB - Ultra Fast)</option>
-                  </select>
-                  <span className="field-hint">
-                    {lyricsConfig.api
-                      ? 'Used automatically if online API has no lyrics'
-                      : 'Whisper model used for direct local transcription'}
-                  </span>
+                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '12px' }}>
+                    <input
+                      type="checkbox"
+                      checked={lyricsConfig.demucs}
+                      onChange={e => setLyricsConfig(c => ({ ...c, demucs: e.target.checked }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    />
+                    <span>HTDemucs Vocal Separation (Isolate vocals before Whisper)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* CARD 2: ⚡ Remote GPU Acceleration & Zero-Trace Node (All Local PC Options Here!) */}
+              <div className="lyrics-card" style={{
+                border: lyricsConfig.remote_whisper_enabled ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border)',
+                background: lyricsConfig.remote_whisper_enabled ? 'linear-gradient(180deg, rgba(16, 185, 129, 0.04) 0%, var(--card) 100%)' : 'var(--card)'
+              }}>
+                <div className="lyrics-card-header">
+                  <div>
+                    <div className="lyrics-card-title">
+                      <span>⚡</span>
+                      <span>2. Remote PC GPU Node (NVIDIA CUDA)</span>
+                    </div>
+                    <div className="lyrics-card-desc">
+                      Offload AI to your laptop/PC GPU in RAM. Manage model delivery, hardware caps, and purge remotely.
+                    </div>
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '12px', fontWeight: 700, flexShrink: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={lyricsConfig.remote_whisper_enabled}
+                      onChange={e => setLyricsConfig(c => ({ ...c, remote_whisper_enabled: e.target.checked }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    />
+                    <span>Enable Offload</span>
+                  </label>
                 </div>
 
+                {lyricsConfig.remote_whisper_enabled ? (
+                  <>
+                    {/* Node URL & Test Connection */}
+                    <div>
+                      <label className="form-label">PC / Laptop Whisper API URL</label>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input
+                          type="text"
+                          className="form-input-text"
+                          placeholder="e.g. http://192.168.1.50:8000"
+                          value={lyricsConfig.remote_whisper_url}
+                          onChange={e => setLyricsConfig(c => ({ ...c, remote_whisper_url: e.target.value }))}
+                          disabled={lyricsStatus?.job?.state === 'running'}
+                          style={{ flex: 1, fontSize: '12px' }}
+                        />
+                        <button
+                          type="button"
+                          className="admin-nav-btn"
+                          onClick={handleTestRemoteGpu}
+                          disabled={remoteGpuTestLoading || !lyricsConfig.remote_whisper_url}
+                          style={{ padding: '6px 12px', fontSize: '11.5px', whiteSpace: 'nowrap' }}
+                        >
+                          {remoteGpuTestLoading ? 'Pinging…' : '🔌 Ping Node'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Test Result Pill */}
+                    {remoteGpuTestResult && (
+                      <div style={{
+                        padding: '8px 12px',
+                        borderRadius: 8,
+                        fontSize: '11px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        background: remoteGpuTestResult.online ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        border: remoteGpuTestResult.online ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+                        color: remoteGpuTestResult.online ? '#34D399' : '#FCA5A5'
+                      }}>
+                        <span>{remoteGpuTestResult.online ? '🟢' : '🔴'}</span>
+                        {remoteGpuTestResult.online ? (
+                          <div style={{ flex: 1 }}>
+                            <strong>Online & Ready:</strong> {remoteGpuTestResult.gpu_name} ({remoteGpuTestResult.has_cuda ? 'CUDA' : 'CPU'}, {remoteGpuTestResult.total_vram_mb} MB VRAM, Latency: {remoteGpuTestResult.latency_ms}ms)
+                          </div>
+                        ) : (
+                          <div style={{ flex: 1 }}>
+                            <strong>Unreachable:</strong> {remoteGpuTestResult.error} — Ensure <code>server.py</code> is running on your PC.
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Node Operation Notice */}
+                    {nodeOpStatus && (
+                      <div style={{
+                        padding: '8px 12px',
+                        borderRadius: 8,
+                        fontSize: '11.5px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        background: nodeOpStatus.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : nodeOpStatus.type === 'error' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                        border: `1px solid ${nodeOpStatus.type === 'success' ? 'rgba(16, 185, 129, 0.4)' : nodeOpStatus.type === 'error' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(59, 130, 246, 0.4)'}`,
+                        color: nodeOpStatus.type === 'success' ? '#34D399' : nodeOpStatus.type === 'error' ? '#FCA5A5' : '#93C5FD'
+                      }}>
+                        <span>{nodeOpStatus.type === 'success' ? '✓' : nodeOpStatus.type === 'error' ? '❌' : 'ℹ️'}</span>
+                        <span>{nodeOpStatus.msg}</span>
+                      </div>
+                    )}
+
+                    {/* Model Delivery Source Selection */}
+                    <div>
+                      <label className="form-label" style={{ marginBottom: 6 }}>Model Delivery Source</label>
+                      <div className="lyrics-delivery-options">
+                        <div
+                          className={`lyrics-delivery-box ${lyricsConfig.model_source !== 'server' ? 'selected' : ''}`}
+                          onClick={() => setLyricsConfig(c => ({ ...c, model_source: 'online' }))}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '12px', color: 'var(--text)' }}>
+                            <span>🌐</span>
+                            <span>Online (HuggingFace)</span>
+                          </div>
+                          <div style={{ fontSize: '10.5px', color: 'var(--text-dim)', lineHeight: 1.3 }}>
+                            PC loads directly from HuggingFace CDN or local model cache.
+                          </div>
+                        </div>
+
+                        <div
+                          className={`lyrics-delivery-box ${(lyricsConfig.model_source === 'server') ? 'selected server' : ''}`}
+                          onClick={() => setLyricsConfig(c => ({ ...c, model_source: 'server' }))}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '12px', color: 'var(--text)' }}>
+                            <span>🖥️</span>
+                            <span>Sangita Server (LAN)</span>
+                          </div>
+                          <div style={{ fontSize: '10.5px', color: 'var(--text-dim)', lineHeight: 1.3 }}>
+                            Streams model.bin directly from server memory/cache over LAN.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Ephemeral RAM Mode Toggle */}
+                    <div style={{
+                      background: lyricsConfig.ephemeral_ram !== false ? 'rgba(16, 185, 129, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                      border: lyricsConfig.ephemeral_ram !== false ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid var(--border)',
+                      borderRadius: 8,
+                      padding: '10px 12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 10
+                    }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '11.5px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span>🛡️ Volatile RAM-Disk Mode (/dev/shm)</span>
+                          <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.2)', color: 'var(--emerald)', fontWeight: 800 }}>
+                            ZERO DISK TRACE
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '10.5px', color: 'var(--text-dim)', marginTop: 2 }}>
+                          Weights stay only in PC RAM/GPU and are purged immediately when done.
+                        </div>
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', flexShrink: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={lyricsConfig.ephemeral_ram !== false}
+                          onChange={e => setLyricsConfig(c => ({ ...c, ephemeral_ram: e.target.checked }))}
+                          style={{ width: 15, height: 15, accentColor: 'var(--emerald)', cursor: 'pointer' }}
+                        />
+                      </label>
+                    </div>
+
+                    {/* Whisper Model Size */}
+                    <div className="form-group">
+                      <label className="form-label">Whisper Model Size</label>
+                      <select
+                        className="form-input-text"
+                        value={lyricsConfig.model}
+                        onChange={e => setLyricsConfig(c => ({ ...c, model: e.target.value }))}
+                        disabled={lyricsStatus?.job?.state === 'running'}
+                      >
+                        <option value="small">small (460MB — Balanced, High Accuracy, 4s/song)</option>
+                        <option value="base">base (140MB — Ultra Fast, Low RAM, 2s/song)</option>
+                        <option value="tiny">tiny (75MB — Minimal Footprint)</option>
+                        <option value="medium">medium (1.5GB — Studio Precision)</option>
+                      </select>
+                      <span className="field-hint">The AI model loaded into PC GPU VRAM</span>
+                    </div>
+
+                    {/* Remote PC Safeguards Controls */}
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-sub)', textTransform: 'uppercase', marginBottom: 6 }}>
+                        ⚙️ Remote PC Hardware Safeguards & Throttling
+                      </div>
+                      <div className="lyrics-safeguards-grid">
+                        <div>
+                          <label className="form-label" style={{ fontSize: '10.5px' }}>
+                            CPU Threads: <strong>{lyricsConfig.pc_cpu_threads}</strong>
+                          </label>
+                          <input
+                            type="range"
+                            min="1"
+                            max="16"
+                            value={lyricsConfig.pc_cpu_threads}
+                            onChange={e => setLyricsConfig(c => ({ ...c, pc_cpu_threads: parseInt(e.target.value, 10) || 1 }))}
+                            style={{ width: '100%', accentColor: '#3b82f6' }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '10.5px' }}>
+                            RAM Cap: <strong>{lyricsConfig.pc_max_ram_mb} MB</strong>
+                          </label>
+                          <input
+                            type="range"
+                            min="1024"
+                            max="16384"
+                            step="512"
+                            value={lyricsConfig.pc_max_ram_mb}
+                            onChange={e => setLyricsConfig(c => ({ ...c, pc_max_ram_mb: parseInt(e.target.value, 10) || 4096 }))}
+                            style={{ width: '100%', accentColor: 'var(--emerald)' }}
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '10.5px' }}>GPU Cooldown</label>
+                          <select
+                            className="form-input-text"
+                            value={lyricsConfig.pc_cooldown_sec}
+                            onChange={e => setLyricsConfig(c => ({ ...c, pc_cooldown_sec: parseFloat(e.target.value) || 0 }))}
+                            style={{ padding: '4px 6px', fontSize: '11px' }}
+                          >
+                            <option value="0">0.0s (Full Speed)</option>
+                            <option value="0.25">0.25s Pause</option>
+                            <option value="0.5">0.5s (Balanced)</option>
+                            <option value="1.0">1.0s (Quiet Fans)</option>
+                            <option value="2.0">2.0s (Cool)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '10.5px' }}>Precision</label>
+                          <select
+                            className="form-input-text"
+                            value={lyricsConfig.pc_compute_type}
+                            onChange={e => setLyricsConfig(c => ({ ...c, pc_compute_type: e.target.value }))}
+                            style={{ padding: '4px 6px', fontSize: '11px' }}
+                          >
+                            <option value="auto">auto (Optimal)</option>
+                            <option value="float16">float16 (Fastest CUDA)</option>
+                            <option value="int8_float16">int8_float16 (-50% VRAM)</option>
+                            <option value="int8">int8 (Low Memory)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick Remote Operations Action Bar */}
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-sub)', textTransform: 'uppercase', marginBottom: 6 }}>
+                        🕹️ Remote Node Operations (Control Local PC from Server)
+                      </div>
+                      <div className="lyrics-quick-actions-bar">
+                        <button
+                          type="button"
+                          className="lyrics-action-btn prime"
+                          onClick={handleRemotePrime}
+                          disabled={lyricsActionLoading || !lyricsConfig.remote_whisper_url}
+                          title="Pre-warms and streams model into remote PC RAM/GPU so songs transcribe instantly"
+                        >
+                          ⚡ Prime Model to RAM
+                        </button>
+                        <button
+                          type="button"
+                          className="lyrics-action-btn purge"
+                          onClick={handleRemotePurge}
+                          disabled={lyricsActionLoading || !lyricsConfig.remote_whisper_url}
+                          title="Frees PC GPU VRAM and deletes all ephemeral RAM directories (zero trace)"
+                        >
+                          🗑️ Purge Remote RAM
+                        </button>
+                        <button
+                          type="button"
+                          className="lyrics-action-btn sync"
+                          onClick={handleSyncRemoteSettings}
+                          disabled={lyricsActionLoading || !lyricsConfig.remote_whisper_url}
+                          title="Applies the hardware safeguards directly to your PC without visiting localhost:8000"
+                        >
+                          💾 Save PC Safeguards
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Exclusive GPU Mode Switch */}
+                    <div style={{
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      background: lyricsConfig.only_remote_gpu ? 'rgba(99, 102, 241, 0.12)' : 'rgba(255, 255, 255, 0.02)',
+                      border: lyricsConfig.only_remote_gpu ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid var(--border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 10
+                    }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '11.5px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span>🛡️ Exclusive GPU Mode (0% Server CPU Fallback)</span>
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: 2 }}>
+                          Never runs heavy AI models on this server. If PC GPU is offline, skips AI to protect server.
+                        </div>
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', flexShrink: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={lyricsConfig.only_remote_gpu}
+                          onChange={e => setLyricsConfig(c => ({ ...c, only_remote_gpu: e.target.checked }))}
+                          disabled={lyricsStatus?.job?.state === 'running'}
+                          style={{ width: 15, height: 15, accentColor: '#6366f1', cursor: 'pointer' }}
+                        />
+                      </label>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '12px' }}>
+                    <div style={{ fontSize: '28px', marginBottom: 8 }}>💤</div>
+                    <div>Remote GPU Offload is currently disabled.</div>
+                    <div style={{ fontSize: '11px', marginTop: 4 }}>
+                      Enable offload to accelerate transcription 5x–15x on your NVIDIA PC and keep server CPU at 0%.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* CARD 3: 💻 Server Fallback & Language Governance */}
+              <div className="lyrics-card">
+                <div className="lyrics-card-header">
+                  <div>
+                    <div className="lyrics-card-title">
+                      <span>💻</span>
+                      <span>3. Server Fallback Governance</span>
+                    </div>
+                    <div className="lyrics-card-desc">
+                      Resource pinning and language rules if running locally on server CPU.
+                    </div>
+                  </div>
+                </div>
+
+                {/* Language Detection */}
                 <div className="form-group">
                   <label className="form-label">Language Detection</label>
                   <select
@@ -3080,10 +3642,12 @@ export default function AdminDashboard({
                     <option value="ta">Tamil (ta)</option>
                     <option value="te">Telugu (te)</option>
                   </select>
+                  <span className="field-hint">Audio vocal language detection model</span>
                 </div>
 
+                {/* Server CPU Cores Cap */}
                 <div className="form-group">
-                  <label className="form-label">CPU Cores Cap</label>
+                  <label className="form-label">Server CPU Cores Cap</label>
                   <input
                     type="number"
                     min="1"
@@ -3093,11 +3657,12 @@ export default function AdminDashboard({
                     onChange={e => setLyricsConfig(c => ({ ...c, cores: parseInt(e.target.value, 10) || 1 }))}
                     disabled={lyricsStatus?.job?.state === 'running'}
                   />
-                  <span className="field-hint">Pins worker affinity to N cores</span>
+                  <span className="field-hint">Worker OS affinity cap (prevents CPU lockup)</span>
                 </div>
 
+                {/* Server Max RAM Limit */}
                 <div className="form-group">
-                  <label className="form-label">Max RAM Limit (MB)</label>
+                  <label className="form-label">Server Max RAM Limit (MB)</label>
                   <input
                     type="number"
                     min="512"
@@ -3107,181 +3672,25 @@ export default function AdminDashboard({
                     onChange={e => setLyricsConfig(c => ({ ...c, max_ram_mb: parseInt(e.target.value, 10) || 2048 }))}
                     disabled={lyricsStatus?.job?.state === 'running'}
                   />
-                  <span className="field-hint">Watchdog GC ceiling</span>
+                  <span className="field-hint">Watchdog GC memory ceiling</span>
                 </div>
 
-                <div className="form-group" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={lyricsConfig.demucs}
-                      onChange={e => setLyricsConfig(c => ({ ...c, demucs: e.target.checked }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    />
-                    <span><strong>HTDemucs Vocal Separation</strong></span>
-                  </label>
-                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={lyricsConfig.force}
-                      onChange={e => setLyricsConfig(c => ({ ...c, force: e.target.checked }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    />
-                    <span>Force regenerate existing .lrc</span>
-                  </label>
+                {/* Fallback Whisper Model */}
+                <div className="form-group">
+                  <label className="form-label">Server Fallback Whisper Model</label>
+                  <select
+                    className="form-input-text"
+                    value={lyricsConfig.model}
+                    onChange={e => setLyricsConfig(c => ({ ...c, model: e.target.value }))}
+                    disabled={lyricsStatus?.job?.state === 'running'}
+                  >
+                    <option value="small">Small (int8, ~460MB - Recommended CPU)</option>
+                    <option value="medium">Medium (int8, ~1.5GB - Highest Accuracy)</option>
+                    <option value="base">Base (int8, ~140MB - Fast)</option>
+                    <option value="tiny">Tiny (int8, ~75MB - Ultra Fast)</option>
+                  </select>
+                  <span className="field-hint">Model used if GPU offload is disabled or offline</span>
                 </div>
-              </div>
-
-              {/* Remote GPU Acceleration Card */}
-              <div className="remote-gpu-card" style={{
-                marginTop: 14,
-                padding: '14px 16px',
-                borderRadius: 'var(--radius-md, 12px)',
-                background: lyricsConfig.remote_whisper_enabled ? 'rgba(16, 185, 129, 0.05)' : 'rgba(255, 255, 255, 0.02)',
-                border: lyricsConfig.remote_whisper_enabled ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid var(--border)',
-                transition: 'all 0.25s ease'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: '20px' }}>⚡</span>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span>Remote GPU Acceleration (PC / Laptop Offload)</span>
-                        {lyricsConfig.remote_whisper_enabled && (
-                          <span style={{
-                            fontSize: '10px',
-                            padding: '2px 6px',
-                            borderRadius: 6,
-                            background: 'rgba(16, 185, 129, 0.2)',
-                            color: 'var(--emerald)',
-                            fontWeight: 800
-                          }}>ACTIVE</span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 2 }}>
-                        Send audio to your GPU-enabled PC/laptop to transcribe in 3–8s and preserve server CPU. Audio is deleted from PC immediately after processing.
-                      </div>
-                    </div>
-                  </div>
-
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
-                    <input
-                      type="checkbox"
-                      checked={lyricsConfig.remote_whisper_enabled}
-                      onChange={e => setLyricsConfig(c => ({ ...c, remote_whisper_enabled: e.target.checked }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    />
-                    <span>Enable Remote GPU Offload</span>
-                  </label>
-                </div>
-
-                {lyricsConfig.remote_whisper_enabled && (
-                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <div style={{ flex: 1, minWidth: 260 }}>
-                        <label style={{ fontSize: '11px', color: 'var(--text-sub)', display: 'block', marginBottom: 4 }}>
-                          PC / Laptop Whisper API URL:
-                        </label>
-                        <input
-                          type="text"
-                          className="form-input-text"
-                          placeholder="e.g. http://192.168.1.50:8000 or http://100.x.y.z:8000"
-                          value={lyricsConfig.remote_whisper_url}
-                          onChange={e => setLyricsConfig(c => ({ ...c, remote_whisper_url: e.target.value }))}
-                          disabled={lyricsStatus?.job?.state === 'running'}
-                          style={{ width: '100%', fontSize: '12px', padding: '6px 10px' }}
-                        />
-                      </div>
-                      <div style={{ alignSelf: 'flex-end' }}>
-                        <button
-                          type="button"
-                          className="admin-nav-btn"
-                          onClick={handleTestRemoteGpu}
-                          disabled={remoteGpuTestLoading || !lyricsConfig.remote_whisper_url}
-                          style={{ padding: '7px 14px', fontSize: '12px', height: 34 }}
-                        >
-                          {remoteGpuTestLoading ? 'Pinging Node…' : '🔌 Test Connection'}
-                        </button>
-                      </div>
-                    </div>
-
-                    {remoteGpuTestResult && (
-                      <div style={{
-                        marginTop: 10,
-                        padding: '8px 12px',
-                        borderRadius: 8,
-                        fontSize: '11px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        background: remoteGpuTestResult.online ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                        border: remoteGpuTestResult.online ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
-                        color: remoteGpuTestResult.online ? '#34D399' : '#FCA5A5'
-                      }}>
-                        <span>{remoteGpuTestResult.online ? '🟢' : '🔴'}</span>
-                        {remoteGpuTestResult.online ? (
-                          <div>
-                            <div>
-                              <strong>Online & Ready:</strong> {remoteGpuTestResult.gpu_name} ({remoteGpuTestResult.has_cuda ? 'NVIDIA CUDA float16' : 'CPU'}, {remoteGpuTestResult.total_vram_mb} MB VRAM, Latency: {remoteGpuTestResult.latency_ms}ms)
-                            </div>
-                            {remoteGpuTestResult.limits && (
-                              <div style={{ marginTop: 3, opacity: 0.9, fontSize: '10.5px' }}>
-                                🛡️ <strong>PC Safeguards:</strong> {remoteGpuTestResult.limits.cpu_threads} CPU Threads · {remoteGpuTestResult.limits.max_ram_mb} MB RAM Cap{remoteGpuTestResult.limits.cooldown_sec > 0 ? ` · ${remoteGpuTestResult.limits.cooldown_sec}s GPU Cooldown` : ''} · Precision: {remoteGpuTestResult.limits.compute_type || 'auto'}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <span>
-                            <strong>Node Unreachable:</strong> {remoteGpuTestResult.error} — Make sure <code>Local_PC_Lyrics_API/start.bat</code> or <code>start.sh</code> is running on your PC.
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Exclusive GPU Mode Toggle */}
-                    <div style={{
-                      marginTop: 12,
-                      padding: '10px 14px',
-                      borderRadius: 8,
-                      background: lyricsConfig.only_remote_gpu ? 'rgba(99, 102, 241, 0.12)' : 'rgba(255, 255, 255, 0.03)',
-                      border: lyricsConfig.only_remote_gpu ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(255, 255, 255, 0.06)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                      transition: 'all 0.2s ease'
-                    }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '12px', color: 'var(--text)' }}>
-                          <span>🛡️ Use Only This GPU API (Exclusive GPU Mode)</span>
-                          {lyricsConfig.only_remote_gpu && (
-                            <span style={{
-                              fontSize: '9px',
-                              padding: '1px 5px',
-                              borderRadius: 4,
-                              background: 'rgba(99, 102, 241, 0.25)',
-                              color: '#a5b4fc',
-                              fontWeight: 800,
-                              textTransform: 'uppercase'
-                            }}>0% Server CPU</span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 2 }}>
-                          Completely skips server CPU Whisper. Never runs heavy AI models on this server. If this GPU node is unreachable or fails, skips AI transcription to protect server memory and CPU.
-                        </div>
-                      </div>
-                      <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', flexShrink: 0 }}>
-                        <input
-                          type="checkbox"
-                          checked={lyricsConfig.only_remote_gpu}
-                          onChange={e => setLyricsConfig(c => ({ ...c, only_remote_gpu: e.target.checked }))}
-                          disabled={lyricsStatus?.job?.state === 'running'}
-                          style={{ width: 16, height: 16, accentColor: '#6366f1', cursor: 'pointer' }}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -3719,6 +4128,147 @@ export default function AdminDashboard({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Remote GPU Whisper Model Delivery Modal */}
+      {remoteModelModalOpen && (
+        <div className="admin-modal-backdrop" onClick={() => setRemoteModelModalOpen(false)}>
+          <div className="admin-modal" style={{ maxWidth: 620 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>⚡ Whisper Model Delivery & Zero-Trace GPU Flow</span>
+              </h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 4 }}>
+                Audio is offloaded to your PC ({lyricsConfig.remote_whisper_url || 'Remote Node'}), transcribed in GPU memory, and discarded. Choose how the AI model is streamed into RAM.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, margin: '14px 0' }}>
+              <label style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-dim)' }}>
+                1. Select Model Delivery Source
+              </label>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {/* Option 1: Online */}
+                <div
+                  onClick={() => setLyricsConfig(c => ({ ...c, model_source: 'online' }))}
+                  style={{
+                    border: (lyricsConfig.model_source || 'online') === 'online' ? '1.5px solid var(--emerald)' : '1px solid var(--border)',
+                    background: (lyricsConfig.model_source || 'online') === 'online' ? 'rgba(16, 185, 129, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                    borderRadius: 10,
+                    padding: 14,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: (lyricsConfig.model_source || 'online') === 'online' ? '0 0 14px rgba(16, 185, 129, 0.15)' : 'none'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>
+                    <span style={{ fontSize: '18px' }}>🌐</span>
+                    <span>Online (HuggingFace)</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.4 }}>
+                    PC downloads directly from official HuggingFace CDN or uses local cache. Fastest direct transfer.
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.2)', color: 'var(--emerald)', fontWeight: 800 }}>
+                      RECOMMENDED
+                    </span>
+                  </div>
+                </div>
+
+                {/* Option 2: From Sangita Server */}
+                <div
+                  onClick={() => setLyricsConfig(c => ({ ...c, model_source: 'server' }))}
+                  style={{
+                    border: lyricsConfig.model_source === 'server' ? '1.5px solid #3b82f6' : '1px solid var(--border)',
+                    background: lyricsConfig.model_source === 'server' ? 'rgba(59, 130, 246, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                    borderRadius: 10,
+                    padding: 14,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: lyricsConfig.model_source === 'server' ? '0 0 14px rgba(59, 130, 246, 0.15)' : 'none'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>
+                    <span style={{ fontSize: '18px' }}>🖥️</span>
+                    <span>From Sangita Server</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.4 }}>
+                    Streams model weights directly from this Sangita server instance over local LAN without internet access.
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: 4, background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', fontWeight: 800 }}>
+                      LAN STREAM
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Ephemeral RAM Toggle */}
+              <div style={{
+                background: lyricsConfig.ephemeral_ram !== false ? 'rgba(16, 185, 129, 0.06)' : 'rgba(255, 255, 255, 0.02)',
+                border: lyricsConfig.ephemeral_ram !== false ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid var(--border)',
+                borderRadius: 10,
+                padding: '12px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12
+              }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>🛡️ Direct Ephemeral RAM Storage (/dev/shm)</span>
+                    <span style={{ fontSize: '10px', padding: '1px 5px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.2)', color: 'var(--emerald)', fontWeight: 800 }}>
+                      ZERO LOCAL DISK FOOTPRINT
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 3 }}>
+                    Downloads/loads model directly into volatile RAM-disk and GPU VRAM. All files are automatically purged when the script finishes or exits.
+                  </div>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', flexShrink: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={lyricsConfig.ephemeral_ram !== false}
+                    onChange={e => setLyricsConfig(c => ({ ...c, ephemeral_ram: e.target.checked }))}
+                    style={{ width: 16, height: 16, accentColor: 'var(--emerald)', cursor: 'pointer' }}
+                  />
+                </label>
+              </div>
+
+              {/* Model Size Summary */}
+              <div style={{ fontSize: '11px', color: 'var(--text-sub)', display: 'flex', justifyContent: 'space-between', padding: '0 4px', flexWrap: 'wrap', gap: 6 }}>
+                <span>Target Model: <strong>{lyricsConfig.model || 'small'} (~460 MB)</strong></span>
+                <span>Language: <strong>{lyricsConfig.language || 'auto'}</strong></span>
+                <span>Offload Node: <strong>{lyricsConfig.remote_whisper_url || 'Active'}</strong></span>
+              </div>
+            </div>
+
+            <div className="modal-btn-row">
+              <button
+                type="button"
+                className="admin-nav-btn"
+                onClick={() => setRemoteModelModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="admin-nav-btn primary"
+                onClick={() => {
+                  setRemoteModelModalOpen(false)
+                  handleStartLyricsWorker({
+                    model_source: lyricsConfig.model_source || 'online',
+                    ephemeral_ram: lyricsConfig.ephemeral_ram !== false
+                  })
+                }}
+                disabled={lyricsActionLoading}
+              >
+                🚀 Start Processing (Zero-Trace GPU)
+              </button>
+            </div>
           </div>
         </div>
       )}

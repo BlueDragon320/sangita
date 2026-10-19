@@ -258,7 +258,72 @@ class TestAdminAPI(unittest.TestCase):
             self.assertFalse(data['online'])
             self.assertIn('Unreachable', data['error'])
 
+    def test_lyrics_model_streaming_endpoints(self):
+        # Model info endpoint
+        res = self.client.get('/api/lyrics/model/small/info')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data.get('model'), 'small')
+        self.assertIn('available', data)
+
+        # Non-existent file
+        res = self.client.get('/api/lyrics/model/nonexistent_model/model.bin')
+        self.assertEqual(res.status_code, 404)
+
+    def test_admin_lyrics_remote_prime_purge_settings(self):
+        from unittest.mock import patch, MagicMock
+        admin_headers = {'Authorization': f'Bearer {self.admin_token}'}
+
+        with patch('requests.post') as mock_post, patch('requests.get') as mock_get:
+            # 1. Remote Prime
+            mock_prime_res = MagicMock(status_code=200)
+            mock_prime_res.json.return_value = {"success": True, "message": "Model primed into RAM"}
+            mock_post.return_value = mock_prime_res
+
+            res = self.client.post('/api/admin/lyrics/remote-prime', headers=admin_headers, json={
+                'url': 'http://127.0.0.1:8000',
+                'model': 'small',
+                'source': 'online'
+            })
+            self.assertEqual(res.status_code, 200)
+            self.assertTrue(res.get_json()['success'])
+
+            # 2. Remote Purge
+            mock_purge_res = MagicMock(status_code=200)
+            mock_purge_res.json.return_value = {"success": True, "message": "Purged from RAM/GPU"}
+            mock_post.return_value = mock_purge_res
+
+            res = self.client.post('/api/admin/lyrics/remote-purge', headers=admin_headers, json={
+                'url': 'http://127.0.0.1:8000'
+            })
+            self.assertEqual(res.status_code, 200)
+            self.assertTrue(res.get_json()['success'])
+
+            # 3. Remote Settings POST
+            mock_settings_res = MagicMock(status_code=200)
+            mock_settings_res.json.return_value = {
+                "success": True,
+                "limits": {"cpu_threads": 4, "max_ram_mb": 8192, "cooldown_sec": 1.0}
+            }
+            mock_post.return_value = mock_settings_res
+
+            res = self.client.post('/api/admin/lyrics/remote-settings', headers=admin_headers, json={
+                'url': 'http://127.0.0.1:8000',
+                'cpu_threads': 4,
+                'max_ram_mb': 8192,
+                'cooldown_sec': 1.0
+            })
+            self.assertEqual(res.status_code, 200)
+            self.assertTrue(res.get_json()['success'])
+
+            # 4. Remote Settings GET
+            mock_get.return_value = mock_settings_res
+            res = self.client.get('/api/admin/lyrics/remote-settings?url=http://127.0.0.1:8000', headers=admin_headers)
+            self.assertEqual(res.status_code, 200)
+
+
 if __name__ == '__main__':
     unittest.main()
+
 
 

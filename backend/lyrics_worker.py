@@ -70,6 +70,13 @@ WATERMARK_PATTERNS = [
     re.compile(r"copyright", re.I),
     re.compile(r"www\.", re.I),
     re.compile(r"like and subscribe", re.I),
+    re.compile(r"this is the end of this video", re.I),
+    re.compile(r"see you in the next", re.I),
+]
+
+MUSIC_NOISE_PATTERNS = [
+    re.compile(r"^\s*[\(\[\{]?(music|applause|cheering|instrumental|laughter|singing)[\)\]\}]?\s*$", re.I),
+    re.compile(r"^[♪♫#\*\s]+$"),
 ]
 
 def signal_handler(signum, frame):
@@ -431,14 +438,16 @@ def transcribe_with_whisper(audio_path, model_name, language, cores, whisper_hol
     model = whisper_holder["model"]
     lang_param = None if (not language or language == "auto") else language
 
+    # vad_filter is disabled because Silero VAD strips 95% of music vocals
     segments, info = model.transcribe(
         audio_path,
         language=lang_param,
         beam_size=5,
-        vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
+        best_of=5,
+        temperature=[0.0, 0.2, 0.4, 0.6, 0.8],
+        vad_filter=False,
         condition_on_previous_text=False,
-        no_speech_threshold=0.6,
+        no_speech_threshold=0.85,
         compression_ratio_threshold=2.4
     )
 
@@ -454,10 +463,12 @@ def transcribe_with_whisper(audio_path, model_name, language, cores, whisper_hol
             continue
 
         # Hallucination and watermark checks
-        if getattr(seg, "no_speech_prob", 0) > 0.65 or getattr(seg, "compression_ratio", 0) > 2.4:
+        if getattr(seg, "no_speech_prob", 0) > 0.85 or getattr(seg, "compression_ratio", 0) > 2.4:
             continue
 
         if any(pat.search(text) for pat in WATERMARK_PATTERNS):
+            continue
+        if any(pat.match(text) for pat in MUSIC_NOISE_PATTERNS):
             continue
 
         norm_text = text.lower().strip()
@@ -491,7 +502,7 @@ def write_lrc_file(target_lrc_path, content):
         f.write(content.strip() + "\n")
     os.replace(tmp_path, target_lrc_path)
 
-def offload_to_remote_whisper(audio_path, remote_url, model_name, language, timeout=120):
+def offload_to_remote_whisper(audio_path, remote_url, model_name, language, model_source="online", ephemeral_ram=True, server_url=None, timeout=120):
     """
     Offloads audio file to a remote GPU Whisper microservice.
     Returns (lrc_content, detected_language) on success, or (None, None) on failure.
@@ -510,7 +521,14 @@ def offload_to_remote_whisper(audio_path, remote_url, model_name, language, time
         filename = os.path.basename(audio_path)
         with open(audio_path, "rb") as f:
             files = {"audio": (filename, f, "audio/mpeg")}
-            data = {"model": model_name, "language": language}
+            data = {
+                "model": model_name,
+                "language": language,
+                "model_source": model_source,
+                "ephemeral_ram": "true" if ephemeral_ram else "false"
+            }
+            if server_url:
+                data["server_url"] = server_url
             res = requests.post(f"{clean_url}/transcribe", files=files, data=data, timeout=timeout)
 
         if res.status_code == 200:
@@ -561,6 +579,9 @@ def main():
     parser.add_argument("--no-api", dest="api", action="store_false", default=True, help="Skip online API and transcribe directly using local model")
     parser.add_argument("--remote-whisper-url", default=os.environ.get("REMOTE_WHISPER_URL", ""), help="URL of remote GPU Whisper node (e.g. http://192.168.1.50:8000)")
     parser.add_argument("--only-remote-gpu", action="store_true", help="Strictly use remote GPU API; completely skip local server CPU Whisper")
+    parser.add_argument("--model-source", default="online", choices=["online", "server"], help="Model delivery source: online (HuggingFace) or server (Sangita server)")
+    parser.add_argument("--ephemeral-ram", action="store_true", default=True, help="Load directly into RAM/GPU with zero disk retention")
+    parser.add_argument("--server-url", default=None, help="Sangita server base URL for model streaming")
 
     args = parser.parse_args()
 
@@ -781,7 +802,10 @@ def main():
             write_status(data_dir, status_obj)
             try:
                 remote_out, detected_lang = offload_to_remote_whisper(
-                    vocal_path, args.remote_whisper_url, args.model, args.language
+                    vocal_path, args.remote_whisper_url, args.model, args.language,
+                    model_source=getattr(args, "model_source", "online"),
+                    ephemeral_ram=getattr(args, "ephemeral_ram", True),
+                    server_url=getattr(args, "server_url", None)
                 )
                 if remote_out and remote_out.strip():
                     lrc_content = remote_out
