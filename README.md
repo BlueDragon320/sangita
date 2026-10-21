@@ -4,6 +4,9 @@
 
 Sangita is a modern, self-hosted, full-stack music streaming platform designed to run smoothly on your own server or home computer. Drop your music files into a folder, open your browser, and enjoy high-fidelity streaming, multi-device synchronization, and automated time-synced lyrics with zero subscription fees.
 
+
+<img width="480" height="270" alt="image" src="https://github.com/user-attachments/assets/38ec56a5-1c75-40cb-985e-4ca9c54a3592" />
+
 ---
 
 ## Key Features
