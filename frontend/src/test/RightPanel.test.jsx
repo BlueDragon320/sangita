@@ -30,7 +30,6 @@ describe('RightPanel Component & Cover Art', () => {
     expect(screen.getByText('NOW PLAYING')).toBeInTheDocument()
     expect(screen.getByText('MP3')).toBeInTheDocument()
     expect(screen.getByText('3:32')).toBeInTheDocument()
-    expect(screen.getByText('ACTIVE')).toBeInTheDocument()
   })
 
   it('renders embedded cover image with proper cover API source', () => {
@@ -95,5 +94,26 @@ describe('RightPanel Component & Cover Art', () => {
     const closeBtn = screen.getByTestId('right-panel-close')
     fireEvent.click(closeBtn)
     expect(handleClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders data usage monitor card replacing device sync', async () => {
+    render(
+      <RightPanel
+        track={mockTrack}
+        playlist="Alan Walker"
+        isPlaying={true}
+        duration={212}
+        formatTime={(s) => '3:32'}
+        onClose={vi.fn()}
+        onTogglePlay={vi.fn()}
+        onDownload={vi.fn()}
+        token="test-token"
+        username="alex"
+      />
+    )
+
+    expect(screen.getByTestId('right-panel-data-usage')).toBeInTheDocument()
+    expect(screen.getByText('DATA USAGE')).toBeInTheDocument()
+    expect(screen.getByText('consumed today')).toBeInTheDocument()
   })
 })

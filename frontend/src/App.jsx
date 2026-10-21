@@ -1369,6 +1369,7 @@ export default function App() {
               <ErrorBoundary onReset={() => setShowLyrics(false)} resetLabel="Return to Library">
                 <LyricsView
                   track={currentTrack}
+                  audioRef={audioRef}
                   currentTime={currentTime}
                   duration={duration}
                   lyricsData={lyricsData}
@@ -1499,6 +1500,7 @@ export default function App() {
             onTogglePlay={togglePlay}
             onDownload={downloadTrack}
             token={token}
+            username={username}
             isFavorite={currentTrack ? favorites.includes(currentTrack.path) : false}
             onToggleFavorite={toggleFavorite}
             onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}

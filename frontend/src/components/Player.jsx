@@ -108,7 +108,8 @@ function Player({
               {track ? track.name : (syncState.trackId?.split('/').pop().replace(/\.[^/.]+$/, '') || 'Playing remotely')}
             </div>
             <div className="player-playlist">
-              Playing on <span className="player-device-tag">{activeDeviceName || 'another device'}</span>
+              <span className="player-playlist-name">Playing on <span className="player-device-tag">{activeDeviceName || 'another device'}</span></span>
+              <span className="player-mobile-time"> • {formatTime(remotePositionSec)} / {remoteDurationSec > 0 ? formatTime(remoteDurationSec) : '—:——'}</span>
             </div>
           </div>
           {track && (
@@ -125,13 +126,13 @@ function Player({
         <div className="player-center">
           <div className="player-controls">
             <button
-              className={`btn-icon ${isShuffle ? 'active glow' : ''}`}
+              className={`btn-icon btn-shuffle ${isShuffle ? 'active glow' : ''}`}
               onClick={() => onSendRemote({ action: 'shuffle', payload: { shuffle: !isShuffle }})}
               title={isShuffle ? "Shuffle ON" : "Shuffle OFF"}
             >
               <ShuffleIcon />
             </button>
-            <button className="btn-icon" onClick={() => onSendRemote({ action: 'prev' })} title="Previous">
+            <button className="btn-icon btn-prev" onClick={() => onSendRemote({ action: 'prev' })} title="Previous">
               <PrevIcon />
             </button>
             <button
@@ -141,11 +142,11 @@ function Player({
             >
               {remoteIsPlaying ? <PauseIcon/> : <PlayIcon/>}
             </button>
-            <button className="btn-icon" onClick={() => onSendRemote({ action: 'next' })} title="Next">
+            <button className="btn-icon btn-next" onClick={() => onSendRemote({ action: 'next' })} title="Next">
               <NextIcon />
             </button>
             <button
-              className={`btn-icon ${isLoop ? 'active glow' : ''}`}
+              className={`btn-icon btn-repeat ${isLoop ? 'active glow' : ''}`}
               onClick={() => onSendRemote({ action: 'loop', payload: { loop: !isLoop }})}
               title={isLoop ? "Repeat ON" : "Repeat OFF"}
             >
@@ -225,7 +226,8 @@ function Player({
             {track ? track.name : 'Nothing playing'}
           </div>
           <div className="player-playlist">
-            {track ? (track.playlist || playlist) : 'Select a track'}
+            <span className="player-playlist-name">{track ? (track.playlist || playlist) : 'Select a track'}</span>
+            <span className="player-mobile-time"> • {formatTime(currentTime)} / {formatTime(duration)}</span>
           </div>
         </div>
         {track && (
@@ -255,7 +257,7 @@ function Player({
       <div className="player-center">
         <div className="player-controls">
           <button
-            className={`btn-icon ${isShuffle ? 'active glow' : ''}`}
+            className={`btn-icon btn-shuffle ${isShuffle ? 'active glow' : ''}`}
             onClick={onToggleShuffle}
             data-testid="player-shuffle-btn"
             title={isShuffle ? "Shuffle ON" : "Shuffle OFF"}
@@ -263,7 +265,7 @@ function Player({
             <ShuffleIcon />
           </button>
           <button
-            className="btn-icon"
+            className="btn-icon btn-prev"
             onClick={onPrev}
             data-testid="player-prev-btn"
             title="Previous"
@@ -279,7 +281,7 @@ function Player({
             {isPlaying ? <PauseIcon/> : <PlayIcon/>}
           </button>
           <button
-            className="btn-icon"
+            className="btn-icon btn-next"
             onClick={onNext}
             data-testid="player-next-btn"
             title="Next"
@@ -287,7 +289,7 @@ function Player({
             <NextIcon />
           </button>
           <button
-            className={`btn-icon ${isLoop ? 'active glow' : ''}`}
+            className={`btn-icon btn-repeat ${isLoop ? 'active glow' : ''}`}
             onClick={onToggleLoop}
             data-testid="player-loop-btn"
             title={isLoop ? "Repeat ON" : "Repeat OFF"}

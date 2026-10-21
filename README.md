@@ -50,7 +50,7 @@ Sangita is a modern, self-hosted, full-stack music streaming platform designed t
   - Spotify Connect-style real-time control via WebSockets and Redis.
   - Use your smartphone or secondary browser tab as a remote control for your desktop or stereo playback.
 - **Modern Responsive Design**:
-  - Three curated themes: Blue Dark, Sleek Dark, and Clean Light.
+  - Curated Dark Mode and Clean Light Mode themes with adaptive contrast.
   - Mobile, tablet, and desktop optimized responsive layouts.
   - Personalized Home Dashboard with listening history, Top 10 tracks, and diurnal SVG activity charts.
 - **Docker-Ready**:

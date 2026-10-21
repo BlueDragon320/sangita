@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 
 function PlayingBars() {
   return (
@@ -71,6 +71,172 @@ function TrackRowThumb({ track, token }) {
     </div>
   )
 }
+
+function TrackRowItem({
+  track,
+  idx,
+  isActive,
+  isPlaying,
+  dur,
+  isFav,
+  token,
+  onPlayTrack,
+  onToggleFavorite,
+  onAddToPlaylist
+}) {
+  const [showMobileFav, setShowMobileFav] = useState(false)
+  const holdTimerRef = useRef(null)
+  const vanishTimerRef = useRef(null)
+
+  const isCurrentlyPlaying = isActive && isPlaying
+  const artistName = track.artist || track.playlist || 'Sangita Artist'
+
+  const clearHoldTimer = () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current)
+      holdTimerRef.current = null
+    }
+  }
+
+  const handleHoldStart = (e) => {
+    clearHoldTimer()
+    holdTimerRef.current = setTimeout(() => {
+      setShowMobileFav(true)
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(40) } catch {}
+      }
+      if (vanishTimerRef.current) clearTimeout(vanishTimerRef.current)
+      vanishTimerRef.current = setTimeout(() => {
+        setShowMobileFav(false)
+      }, 4000)
+    }, 2000)
+  }
+
+  const handleHoldEnd = () => {
+    clearHoldTimer()
+  }
+
+  const handleToggleFav = (e) => {
+    e.stopPropagation()
+    if (onToggleFavorite) {
+      onToggleFavorite(track.path)
+    }
+    // Auto vanish after 4s
+    if (vanishTimerRef.current) clearTimeout(vanishTimerRef.current)
+    vanishTimerRef.current = setTimeout(() => {
+      setShowMobileFav(false)
+    }, 4000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (holdTimerRef.current) clearTimeout(holdTimerRef.current)
+      if (vanishTimerRef.current) clearTimeout(vanishTimerRef.current)
+    }
+  }, [])
+
+  return (
+    <div
+      className={`spotify-track-row ${isActive ? 'active' : ''}`}
+      onClick={() => onPlayTrack(track, idx)}
+      style={{ animationDelay: `${Math.min(idx * 25, 500)}ms` }}
+      data-testid={`track-row-${idx}`}
+    >
+      {/* Number / Play Indicator Column */}
+      <div className="col-num">
+        {isCurrentlyPlaying ? (
+          <PlayingBars />
+        ) : (
+          <>
+            <span className="row-num-label">{idx + 1}</span>
+            <button className="row-play-btn" title="Play">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                <path d="M8 5v14l11-7z"/>
+              </svg>
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Title + Thumbnail + Artist Column */}
+      <div className="col-title">
+        <TrackRowThumb track={track} token={token} />
+        <div className="track-text-group">
+          <div className={`track-title-text ${isActive ? 'active-title' : ''}`}>
+            {track.name}
+          </div>
+          <div className="track-artist-text">
+            {artistName}
+          </div>
+        </div>
+      </div>
+
+      {/* Actions & Duration Column */}
+      <div className="col-duration">
+        <div className="track-row-actions">
+          {onAddToPlaylist && (
+            <button
+              className="btn-icon track-row-add-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                onAddToPlaylist(track)
+              }}
+              title="Add to playlist"
+              data-testid={`track-row-add-${idx}`}
+            >
+              <PlusIcon width={16} height={16} />
+            </button>
+          )}
+          {onToggleFavorite && (
+            <button
+              className={`btn-icon track-row-like-btn ${isFav ? 'active' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleFavorite(track.path)
+              }}
+              title={isFav ? "Remove from Favorites" : "Add to Favorites"}
+              data-testid={`track-row-like-${idx}`}
+            >
+              <HeartIcon filled={isFav} />
+            </button>
+          )}
+        </div>
+
+        {/* Mobile Timestamp container: hold 2s reveals favorite button, then vanishes after 2s */}
+        <div
+          className={`track-duration-timestamp-wrapper ${showMobileFav ? 'mobile-fav-visible' : ''}`}
+          onTouchStart={handleHoldStart}
+          onTouchEnd={handleHoldEnd}
+          onTouchCancel={handleHoldEnd}
+          onMouseDown={handleHoldStart}
+          onMouseUp={handleHoldEnd}
+          onMouseLeave={handleHoldEnd}
+          onClick={(e) => {
+            if (showMobileFav) {
+              e.stopPropagation()
+            }
+          }}
+          title="On phone: hold 2s to favorite"
+        >
+          {showMobileFav && onToggleFavorite ? (
+            <button
+              className={`btn-icon track-mobile-revealed-like-btn ${isFav ? 'active' : ''}`}
+              onClick={handleToggleFav}
+              title={isFav ? "Remove from Favorites" : "Add to Favorites"}
+              data-testid={`track-mobile-like-${idx}`}
+            >
+              <HeartIcon filled={isFav} />
+            </button>
+          ) : (
+            <div className="track-duration-timestamp">
+              {fmtDur(dur)}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
  
 function TrackList({
   tracks = [],
@@ -108,84 +274,25 @@ function TrackList({
  
       {/* Table Song Rows */}
       {tracks.map((track, idx) => {
-        const isActive          = idx === currentIndex
-        const isCurrentlyPlaying = isActive && isPlaying
-        const dur = durations[track.path]
-        const isFav = favorites.includes(track.path)
-        const artistName = track.artist || track.playlist || 'Sangita Artist'
- 
+        const isActive = idx === currentIndex
+        const normPath = track.path ? track.path.replace(/\\/g, '/') : ''
+        const dur = durations[track.path] ?? durations[normPath] ?? durations[normPath.replace(/\//g, '\\')] ?? track.duration
+        const isFav = favorites.includes(track.path) || favorites.includes(normPath)
+
         return (
-          <div
-            key={track.id || idx}
-            className={`spotify-track-row ${isActive ? 'active' : ''}`}
-            onClick={() => onPlayTrack(track, idx)}
-            style={{ animationDelay: `${Math.min(idx * 25, 500)}ms` }}
-            data-testid={`track-row-${idx}`}
-          >
-            {/* Number / Play Indicator Column */}
-            <div className="col-num">
-              {isCurrentlyPlaying ? (
-                <PlayingBars />
-              ) : (
-                <>
-                  <span className="row-num-label">{idx + 1}</span>
-                  <button className="row-play-btn" title="Play">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                      <path d="M8 5v14l11-7z"/>
-                    </svg>
-                  </button>
-                </>
-              )}
-            </div>
- 
-            {/* Title + Thumbnail + Artist Column */}
-            <div className="col-title">
-              <TrackRowThumb track={track} token={token} />
-              <div className="track-text-group">
-                <div className={`track-title-text ${isActive ? 'active-title' : ''}`}>
-                  {track.name}
-                </div>
-                <div className="track-artist-text">
-                  {artistName}
-                </div>
-              </div>
-            </div>
- 
-            {/* Actions & Duration Column */}
-            <div className="col-duration">
-              <div className="track-row-actions">
-                {onAddToPlaylist && (
-                  <button
-                    className="btn-icon track-row-add-btn"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onAddToPlaylist(track)
-                    }}
-                    title="Add to playlist"
-                    data-testid={`track-row-add-${idx}`}
-                  >
-                    <PlusIcon width={16} height={16} />
-                  </button>
-                )}
-                {onToggleFavorite && (
-                  <button
-                    className={`btn-icon track-row-like-btn ${isFav ? 'active' : ''}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onToggleFavorite(track.path)
-                    }}
-                    title={isFav ? "Remove from Favorites" : "Add to Favorites"}
-                    data-testid={`track-row-like-${idx}`}
-                  >
-                    <HeartIcon filled={isFav} />
-                  </button>
-                )}
-              </div>
-              <div className="track-duration-timestamp">
-                {fmtDur(dur)}
-              </div>
-            </div>
-          </div>
+          <TrackRowItem
+            key={track.id || track.path || idx}
+            track={track}
+            idx={idx}
+            isActive={isActive}
+            isPlaying={isPlaying}
+            dur={dur}
+            isFav={isFav}
+            token={token}
+            onPlayTrack={onPlayTrack}
+            onToggleFavorite={onToggleFavorite}
+            onAddToPlaylist={onAddToPlaylist}
+          />
         )
       })}
     </div>

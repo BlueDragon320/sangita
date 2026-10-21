@@ -49,7 +49,15 @@ PASSWORD   = os.environ.get("SANGITA_PASS", "sangita123")
 DEFAULT_TIMEZONE = "Asia/Kolkata"
 
 def get_tz_from_request():
-    tz_name = request.args.get("tz") or request.headers.get("X-Timezone") or DEFAULT_TIMEZONE
+    tz_name = None
+    try:
+        from flask import has_request_context
+        if has_request_context():
+            tz_name = request.args.get("tz") or request.headers.get("X-Timezone")
+    except Exception:
+        pass
+    if not tz_name:
+        tz_name = DEFAULT_TIMEZONE
     try:
         return ZoneInfo(tz_name), tz_name
     except Exception:
@@ -250,6 +258,24 @@ def init_db():
             last_attempt REAL DEFAULT 0
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_daily_data (
+            username TEXT NOT NULL,
+            date TEXT NOT NULL,
+            bytes_consumed INTEGER DEFAULT 0,
+            stream_requests INTEGER DEFAULT 0,
+            last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (username, date)
+        )
+    """)
+    try:
+        conn.execute("ALTER TABLE user_totals ADD COLUMN total_bytes INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE user_device_totals ADD COLUMN bytes_consumed INTEGER DEFAULT 0")
+    except Exception:
+        pass
     
     # Simple migration: if user_totals is empty, populate from existing play_events
     try:
@@ -286,6 +312,7 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_play_events_user_device ON play_events (username, device_id, id DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_track_totals_user ON user_track_totals (username, total_seconds DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_user_playlist ON playlist_tracks (username, playlist_name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_daily_data_user_date ON user_daily_data (username, date)")
     except Exception as e:
         print(f"[DB Index Creation Warning] {e}")
 
@@ -293,6 +320,53 @@ def init_db():
     conn.close()
 
 init_db()
+
+def format_bytes(b):
+    if not b or b <= 0:
+        return "0 B"
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if b < 1024.0:
+            return f"{b:.1f} {unit}" if unit != "B" else f"{int(b)} B"
+        b /= 1024.0
+    return f"{b:.1f} PB"
+
+def record_user_data_consumption(username, num_bytes, device_id=None):
+    if not username or not num_bytes or num_bytes <= 0:
+        return
+    try:
+        tz_obj, _ = get_tz_from_request()
+        today_str = datetime.now(tz_obj).strftime('%Y-%m-%d')
+        conn = get_db()
+        conn.execute("""
+            INSERT INTO user_daily_data (username, date, bytes_consumed, stream_requests, last_updated)
+            VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+            ON CONFLICT(username, date) DO UPDATE SET
+                bytes_consumed = bytes_consumed + ?,
+                stream_requests = stream_requests + 1,
+                last_updated = CURRENT_TIMESTAMP
+        """, (username, today_str, int(num_bytes), int(num_bytes)))
+
+        conn.execute("""
+            INSERT INTO user_totals (username, total_seconds, total_bytes)
+            VALUES (?, 0, ?)
+            ON CONFLICT(username) DO UPDATE SET
+                total_bytes = COALESCE(total_bytes, 0) + ?
+        """, (username, int(num_bytes), int(num_bytes)))
+
+        if device_id:
+            try:
+                conn.execute("""
+                    UPDATE user_device_totals
+                    SET bytes_consumed = COALESCE(bytes_consumed, 0) + ?
+                    WHERE username = ? AND device_id = ?
+                """, (int(num_bytes), username, device_id))
+            except Exception:
+                pass
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[RecordDataConsumption Error] {e}")
 
 _users_cache = {"mtime": 0, "data": None}
 
@@ -987,6 +1061,17 @@ def get_current_user_stats():
         
         top_artists = sorted(artist_map.values(), key=lambda x: (x["play_count"], x["total_seconds"]), reverse=True)[:6]
 
+        # 6. Data Consumed
+        tz_obj, _ = get_tz_from_request()
+        today_str = datetime.now(tz_obj).strftime('%Y-%m-%d')
+        daily_row = conn.execute("""
+            SELECT bytes_consumed, stream_requests
+            FROM user_daily_data
+            WHERE username = ? AND date = ?
+        """, (username, today_str)).fetchone()
+        today_bytes = daily_row["bytes_consumed"] if daily_row else 0
+        total_bytes = (row_tot["total_bytes"] if row_tot and "total_bytes" in row_tot.keys() and row_tot["total_bytes"] is not None else 0)
+
         return jsonify({
             "username": username,
             "total_seconds": total_seconds,
@@ -994,7 +1079,86 @@ def get_current_user_stats():
             "total_plays": total_plays,
             "top_tracks": top_tracks,
             "recently_played": recently_played,
-            "top_artists": top_artists
+            "top_artists": top_artists,
+            "data_consumed_today": {
+                "bytes": today_bytes,
+                "formatted": format_bytes(today_bytes),
+                "date": today_str
+            },
+            "data_consumed_total": {
+                "bytes": total_bytes,
+                "formatted": format_bytes(total_bytes)
+            }
+        })
+    finally:
+        conn.close()
+
+@app.route("/api/user/data-usage", methods=["GET", "POST"])
+@require_auth
+def user_data_usage():
+    username = g.username
+    tz_obj, _ = get_tz_from_request()
+    today_str = datetime.now(tz_obj).strftime('%Y-%m-%d')
+    
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        inc_bytes = int(data.get("bytes", 0))
+        dev_id = data.get("device_id")
+        if inc_bytes > 0:
+            record_user_data_consumption(username, inc_bytes, dev_id)
+
+    conn = get_db()
+    try:
+        today_row = conn.execute("""
+            SELECT bytes_consumed, stream_requests, last_updated
+            FROM user_daily_data
+            WHERE username = ? AND date = ?
+        """, (username, today_str)).fetchone()
+        
+        today_bytes = today_row["bytes_consumed"] if today_row else 0
+        today_reqs = today_row["stream_requests"] if today_row else 0
+        last_updated = today_row["last_updated"] if today_row else None
+
+        tot_row = conn.execute("""
+            SELECT total_bytes
+            FROM user_totals
+            WHERE username = ?
+        """, (username,)).fetchone()
+        total_bytes = (tot_row["total_bytes"] if tot_row and "total_bytes" in tot_row.keys() and tot_row["total_bytes"] is not None else 0)
+
+        # Historical daily usage for recent days (up to 7 days)
+        history_rows = conn.execute("""
+            SELECT date, bytes_consumed, stream_requests
+            FROM user_daily_data
+            WHERE username = ?
+            ORDER BY date DESC
+            LIMIT 7
+        """, (username,)).fetchall()
+        
+        history = [
+            {
+                "date": r["date"],
+                "bytes": r["bytes_consumed"],
+                "formatted": format_bytes(r["bytes_consumed"]),
+                "requests": r["stream_requests"]
+            }
+            for r in history_rows
+        ]
+
+        return jsonify({
+            "username": username,
+            "today": {
+                "date": today_str,
+                "bytes": today_bytes,
+                "formatted": format_bytes(today_bytes),
+                "requests": today_reqs,
+                "last_updated": last_updated
+            },
+            "total": {
+                "bytes": total_bytes,
+                "formatted": format_bytes(total_bytes)
+            },
+            "history": history
         })
     finally:
         conn.close()
@@ -1144,7 +1308,7 @@ def get_track_durations():
     conn = get_db()
     cached = {}
     try:
-        cached = {row["path"]: (row["mtime"], row["duration"]) for row in conn.execute("SELECT path, mtime, duration FROM track_cache").fetchall()}
+        cached = {row["path"].replace('\\', '/'): (row["mtime"], row["duration"]) for row in conn.execute("SELECT path, mtime, duration FROM track_cache").fetchall()}
     except Exception as e:
         print(f"[TrackCache Error] {e}")
 
@@ -1155,7 +1319,7 @@ def get_track_durations():
         for f in files:
             if f.lower().endswith(AUDIO_EXTS):
                 full_path = os.path.join(root, f)
-                rel_path = os.path.relpath(full_path, MUSIC_DIR)
+                rel_path = os.path.relpath(full_path, MUSIC_DIR).replace('\\', '/')
                 try:
                     mtime = os.path.getmtime(full_path)
                     if rel_path in cached and cached[rel_path][0] == mtime and cached[rel_path][1] is not None:
@@ -1217,6 +1381,18 @@ def stream_audio(filepath):
         abort(404)
     resp = send_from_directory(os.path.dirname(full_path), os.path.basename(full_path), conditional=True)
     resp.headers["Cache-Control"] = "public, max-age=86400"
+    
+    # Record data consumption for this user
+    try:
+        bytes_count = resp.calculate_content_length() or resp.content_length
+        if not bytes_count and os.path.isfile(full_path):
+            bytes_count = os.path.getsize(full_path)
+        if bytes_count and hasattr(g, "username") and g.username:
+            dev_id = request.args.get("device_id") or request.headers.get("X-Device-Id")
+            record_user_data_consumption(g.username, bytes_count, dev_id)
+    except Exception as e:
+        print(f"[Stream Data Tracking Error] {e}")
+
     return resp
 
 def process_cover_image(img_data):
@@ -1616,6 +1792,15 @@ def stats_ping():
 
     conn.commit()
     conn.close()
+
+    # 6. Record optional client-reported bytes consumed
+    try:
+        bytes_consumed = data.get("bytes_consumed")
+        if bytes_consumed and int(bytes_consumed) > 0:
+            record_user_data_consumption(g.username, int(bytes_consumed), device_id)
+    except Exception as e:
+        print(f"[Ping Data Tracking Error] {e}")
+
     return jsonify({"status": "ok"})
 
 @app.route("/api/admin/analytics", methods=["GET"])
@@ -2487,6 +2672,18 @@ def get_user_stats(username):
         WHERE username = ?
         ORDER BY last_seen DESC
     """, (username,)).fetchall()
+
+    # 8. Data Consumed
+    today_str = now.strftime('%Y-%m-%d')
+    daily_row = conn.execute("""
+        SELECT bytes_consumed, stream_requests
+        FROM user_daily_data
+        WHERE username = ? AND date = ?
+    """, (username, today_str)).fetchone()
+    today_bytes = daily_row["bytes_consumed"] if daily_row else 0
+
+    tot_row = conn.execute("SELECT total_bytes FROM user_totals WHERE username = ?", (username,)).fetchone()
+    total_bytes = (tot_row["total_bytes"] if tot_row and "total_bytes" in tot_row.keys() and tot_row["total_bytes"] is not None else 0)
         
     conn.close()
     
@@ -2502,7 +2699,16 @@ def get_user_stats(username):
         "most_played": most_played,
         "top_artists": top_artists,
         "graph_data": graph_data,
-        "devices": [dict(r) for r in devices]
+        "devices": [dict(r) for r in devices],
+        "data_consumed_today": {
+            "bytes": today_bytes,
+            "formatted": format_bytes(today_bytes),
+            "date": today_str
+        },
+        "data_consumed_total": {
+            "bytes": total_bytes,
+            "formatted": format_bytes(total_bytes)
+        }
     })
 
 # ---------------------------------------------------------------------------

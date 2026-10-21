@@ -188,17 +188,17 @@ function Hero({
         <HeroArt playlistName={playlistName || 'Library'} tracks={tracks} token={token} />
 
         <div className="hero-meta" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', flex: 1, minWidth: 0, textAlign: 'left', marginBottom: '2px' }}>
-          <span className="hero-tag" style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#FFFFFF', opacity: 0.9, marginBottom: '2px' }}>
+          <span className="hero-tag" style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text)', opacity: 0.9, marginBottom: '2px' }}>
             Public Playlist
           </span>
-          <h1 className="hero-title" title={playlistName || 'Library'} style={{ fontSize: 'clamp(2rem, 5vw, 3.8rem)', fontWeight: 800, lineHeight: 1.05, letterSpacing: '-0.04em', color: '#FFFFFF', margin: '4px 0 10px', wordBreak: 'break-word' }}>
+          <h1 className="hero-title" title={playlistName || 'Library'} style={{ fontSize: 'clamp(2rem, 5vw, 3.8rem)', fontWeight: 800, lineHeight: 1.05, letterSpacing: '-0.04em', color: 'var(--text)', margin: '4px 0 10px', wordBreak: 'break-word' }}>
             {playlistName || 'Library'}
           </h1>
-          <div className="hero-creator-row" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.88rem', color: '#FFFFFF', fontWeight: 500 }}>
+          <div className="hero-creator-row" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.88rem', color: 'var(--text)', fontWeight: 500 }}>
             <div className="hero-avatar" style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--emerald)', color: '#000000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, flexShrink: 0 }}>
               {(username || 'A')[0].toUpperCase()}
             </div>
-            <span className="hero-creator-name" style={{ fontWeight: 700, color: '#FFFFFF' }}>{username || 'Admin'}</span>
+            <span className="hero-creator-name" style={{ fontWeight: 700, color: 'var(--text)' }}>{username || 'Admin'}</span>
             <span className="hero-dot" style={{ opacity: 0.6, fontWeight: 400 }}>•</span>
             <span className="hero-stats" style={{ opacity: 0.85, fontWeight: 400, color: 'var(--text-dim)' }}>
               {formatTotalDuration(tracks, durations)}
@@ -215,7 +215,7 @@ function Hero({
             onClick={onPlay}
             title={isPlaying ? "Pause" : "Play"}
             data-testid="hero-play-btn"
-            style={{ width: 56, height: 56, borderRadius: '50%', background: '#FFFFFF', border: 'none', color: '#000000', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)', flexShrink: 0 }}
+            style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--text)', border: 'none', color: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)', flexShrink: 0 }}
           >
             {isPlaying ? (
               <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
@@ -236,17 +236,6 @@ function Hero({
           >
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
               <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zM14.83 13.41l-1.41 1.41 2.13 2.13L13.5 19H19v-5.5l-2.04 2.04z"/>
-            </svg>
-          </button>
-
-          <button
-            className="btn-action-icon"
-            onClick={onDownload}
-            title="Download current track"
-            data-testid="hero-download-btn"
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
             </svg>
           </button>
 

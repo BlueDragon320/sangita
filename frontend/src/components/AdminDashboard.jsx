@@ -3051,7 +3051,7 @@ export default function AdminDashboard({
                     <span style={{ fontWeight: 700, color: 'var(--emerald)', textTransform: 'uppercase', fontSize: '11px' }}>
                       ✓ Last Processed Song:
                     </span>
-                    <span style={{ fontWeight: 700, color: '#FFFFFF', fontSize: '13px' }}>
+                    <span style={{ fontWeight: 700, color: 'var(--text)', fontSize: '13px' }}>
                       {lyricsStatus.job.last_processed.title || lyricsStatus.job.last_processed.song}
                     </span>
                     {lyricsStatus.job.last_processed.artist && (
@@ -3667,7 +3667,7 @@ export default function AdminDashboard({
                           <span style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
                             Detected CPU
                           </span>
-                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFFFFF', marginTop: 2 }}>
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)', marginTop: 2 }}>
                             {detectedCpuModel}
                           </div>
                           <div style={{ fontSize: '10.5px', color: 'var(--emerald)' }}>
@@ -3678,7 +3678,7 @@ export default function AdminDashboard({
                           <span style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
                             System RAM
                           </span>
-                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFFFFF', marginTop: 2 }}>
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)', marginTop: 2 }}>
                             {(detectedRamMb / 1024).toFixed(1)} GB Physical RAM
                           </div>
                           <div style={{ fontSize: '10.5px', color: 'var(--text-sub)' }}>
@@ -3689,7 +3689,7 @@ export default function AdminDashboard({
                           <span style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
                             GPU Acceleration
                           </span>
-                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFFFFF', marginTop: 2 }}>
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)', marginTop: 2 }}>
                             {detectedGpuName}
                           </div>
                           <div style={{ fontSize: '10.5px', color: 'var(--emerald)' }}>
@@ -3700,7 +3700,7 @@ export default function AdminDashboard({
                           <span style={{ fontSize: '10px', color: 'var(--text-dim)', textTransform: 'uppercase', fontWeight: 700 }}>
                             Platform / OS
                           </span>
-                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFFFFF', marginTop: 2 }}>
+                          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)', marginTop: 2 }}>
                             {connectedPcStats?.specs?.os || 'Connected PC'}
                           </div>
                           <div style={{ fontSize: '10.5px', color: 'var(--text-sub)' }}>

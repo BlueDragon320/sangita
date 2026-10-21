@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import React from 'react'
 import TrackList from '../components/TrackList.jsx'
 
@@ -74,5 +74,52 @@ describe('TrackList Component & Duration Rendering', () => {
     fireEvent.click(addBtn)
 
     expect(handleAddToPlaylist).toHaveBeenCalledWith(mockTracks[0])
+  })
+
+  it('reveals favorite button when holding the timestamp for 2 seconds and hides after 4 seconds', () => {
+    vi.useFakeTimers()
+    const handleToggleFav = vi.fn()
+    render(
+      <TrackList
+        tracks={mockTracks}
+        currentIndex={0}
+        isPlaying={false}
+        onPlayTrack={vi.fn()}
+        durations={mockDurations}
+        token="token"
+        onToggleFavorite={handleToggleFav}
+        favorites={[]}
+      />
+    )
+
+    const timestampWrapper = screen.getAllByTitle('On phone: hold 2s to favorite')[0]
+    
+    // Start hold
+    fireEvent.touchStart(timestampWrapper)
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+
+    // Revealed like button should now appear
+    const mobileLikeBtn = screen.getByTestId('track-mobile-like-0')
+    expect(mobileLikeBtn).toBeInTheDocument()
+
+    // Clicking it triggers toggle
+    fireEvent.click(mobileLikeBtn)
+    expect(handleToggleFav).toHaveBeenCalledWith(mockTracks[0].path)
+
+    // Still visible after 2s
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+    expect(screen.getByTestId('track-mobile-like-0')).toBeInTheDocument()
+
+    // After remaining 2s (total 4s), it disappears
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+    expect(screen.queryByTestId('track-mobile-like-0')).not.toBeInTheDocument()
+
+    vi.useRealTimers()
   })
 })

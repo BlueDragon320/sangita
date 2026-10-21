@@ -1,7 +1,7 @@
 import React from 'react'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
-import LyricsView from '../components/LyricsView.jsx'
+import LyricsView, { findActiveLineIndex } from '../components/LyricsView.jsx'
 
 describe('LyricsView Component', () => {
   const mockTrack = {
@@ -204,10 +204,10 @@ describe('LyricsView Component', () => {
     expect(bgBtn).toHaveAttribute('title', 'Turn on moving background')
     expect(localStorage.getItem('sangita_lyrics_theme')).toBeNull()
 
-    // 1st single click: pending click started, after 1.5s delay becomes combo1 (blue-green)
+    // 1st single click: pending click started, after 1.0s delay becomes combo1 (blue-green)
     fireEvent.click(bgBtn)
     act(() => {
-      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(1000)
     })
     expect(container).toHaveClass('dynamic-bg')
     expect(container).toHaveClass('theme-combo1')
@@ -217,7 +217,7 @@ describe('LyricsView Component', () => {
     // 2nd single click with delay: becomes combo2 (sunset)
     fireEvent.click(bgBtn)
     act(() => {
-      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(1000)
     })
     expect(container).toHaveClass('theme-combo2')
     expect(localStorage.getItem('sangita_lyrics_theme')).toBe('combo2')
@@ -225,7 +225,7 @@ describe('LyricsView Component', () => {
     // 3rd single click with delay: becomes combo3 (aurora)
     fireEvent.click(bgBtn)
     act(() => {
-      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(1000)
     })
     expect(container).toHaveClass('theme-combo3')
     expect(localStorage.getItem('sangita_lyrics_theme')).toBe('combo3')
@@ -233,7 +233,7 @@ describe('LyricsView Component', () => {
     // 4th single click with delay: becomes combo4 (cosmic)
     fireEvent.click(bgBtn)
     act(() => {
-      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(1000)
     })
     expect(container).toHaveClass('theme-combo4')
     expect(localStorage.getItem('sangita_lyrics_theme')).toBe('combo4')
@@ -241,7 +241,7 @@ describe('LyricsView Component', () => {
     // 5th single click with delay: becomes red
     fireEvent.click(bgBtn)
     act(() => {
-      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(1000)
     })
     expect(container).toHaveClass('theme-red')
     expect(localStorage.getItem('sangita_lyrics_theme')).toBe('red')
@@ -249,7 +249,7 @@ describe('LyricsView Component', () => {
     // 6th single click with delay: becomes green
     fireEvent.click(bgBtn)
     act(() => {
-      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(1000)
     })
     expect(container).toHaveClass('theme-green')
     expect(localStorage.getItem('sangita_lyrics_theme')).toBe('green')
@@ -257,7 +257,7 @@ describe('LyricsView Component', () => {
     // 7th single click with delay: becomes blue
     fireEvent.click(bgBtn)
     act(() => {
-      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(1000)
     })
     expect(container).toHaveClass('theme-blue')
     expect(localStorage.getItem('sangita_lyrics_theme')).toBe('blue')
@@ -265,7 +265,7 @@ describe('LyricsView Component', () => {
     // 8th single click with delay: cycles back to default off
     fireEvent.click(bgBtn)
     act(() => {
-      vi.advanceTimersByTime(1500)
+      vi.advanceTimersByTime(1000)
     })
     expect(container).not.toHaveClass('dynamic-bg')
     expect(container).not.toHaveClass('theme-blue')
@@ -276,7 +276,7 @@ describe('LyricsView Component', () => {
     vi.useRealTimers()
   })
 
-  it('switches to black on double click (within 1.5s), and white with black font on second double click', () => {
+  it('switches to black on double click (within 1.0s), and white with black font on second double click', () => {
     vi.useFakeTimers()
     localStorage.clear()
 
@@ -341,6 +341,76 @@ describe('LyricsView Component', () => {
     expect(localStorage.getItem('sangita_lyrics_theme')).toBe('combo1')
 
     vi.useRealTimers()
+  })
+
+  it('correctly calculates active line index with binary search algorithm', () => {
+    const lines = [
+      { time: 1.0, text: 'First line' },
+      { time: 4.0, text: 'Second line' },
+      { time: 8.5, text: 'Third line' },
+      { time: 15.0, text: 'Fourth line' }
+    ]
+
+    // Before first line
+    expect(findActiveLineIndex(lines, 0.5)).toBe(-1)
+    // Exactly on first line
+    expect(findActiveLineIndex(lines, 1.0)).toBe(0)
+    // In between first and second
+    expect(findActiveLineIndex(lines, 2.5)).toBe(0)
+    // Exactly on second line
+    expect(findActiveLineIndex(lines, 4.0)).toBe(1)
+    // In between second and third
+    expect(findActiveLineIndex(lines, 6.0)).toBe(1)
+    // In between third and fourth
+    expect(findActiveLineIndex(lines, 10.0)).toBe(2)
+    // Far past fourth line
+    expect(findActiveLineIndex(lines, 25.0)).toBe(3)
+    // Empty array or null
+    expect(findActiveLineIndex([], 5.0)).toBe(-1)
+    expect(findActiveLineIndex(null, 5.0)).toBe(-1)
+  })
+
+  it('applies distance-based classes for fluid Apple Music/Spotify style styling', () => {
+    const lrcContent = `
+[00:01.00] Line 0
+[00:03.00] Line 1
+[00:05.00] Line 2
+[00:07.00] Line 3
+[00:09.00] Line 4
+[00:11.00] Line 5
+    `.trim()
+
+    render(
+      <LyricsView
+        track={mockTrack}
+        currentTime={5.0} // Target ~5.15s -> Line 2 (00:05) is active
+        duration={100}
+        lyricsData={{ has_lyrics: true, raw: lrcContent }}
+        loading={false}
+      />
+    )
+
+    const line0 = screen.getByText('Line 0').closest('.lyric-line')
+    const line1 = screen.getByText('Line 1').closest('.lyric-line')
+    const line2 = screen.getByText('Line 2').closest('.lyric-line')
+    const line3 = screen.getByText('Line 3').closest('.lyric-line')
+    const line4 = screen.getByText('Line 4').closest('.lyric-line')
+    const line5 = screen.getByText('Line 5').closest('.lyric-line')
+
+    // Line 2 is active (distance 0)
+    expect(line2).toHaveClass('active')
+    expect(line2).toHaveClass('distance-0')
+
+    // Lines 1 and 3 are immediate neighbors (distance 1)
+    expect(line1).toHaveClass('distance-1')
+    expect(line3).toHaveClass('distance-1')
+
+    // Lines 0 and 4 are secondary neighbors (distance 2)
+    expect(line0).toHaveClass('distance-2')
+    expect(line4).toHaveClass('distance-2')
+
+    // Line 5 is far (distance >= 3)
+    expect(line5).toHaveClass('distance-far')
   })
 })
 

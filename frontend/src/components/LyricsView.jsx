@@ -79,8 +79,30 @@ function parseLRC(lrcText) {
   return { lines, isSynced: false, offsetSec: 0 }
 }
 
+export function findActiveLineIndex(lines, targetTime) {
+  if (!Array.isArray(lines) || lines.length === 0) return -1
+  if (targetTime < lines[0].time) return -1
+
+  let low = 0
+  let high = lines.length - 1
+  let result = -1
+
+  while (low <= high) {
+    const mid = (low + high) >> 1
+    if (lines[mid].time <= targetTime) {
+      result = mid
+      low = mid + 1
+    } else {
+      high = mid - 1
+    }
+  }
+
+  return result
+}
+
 export default function LyricsView({
   track,
+  audioRef,
   currentTime = 0,
   duration = 0,
   lyricsData,
@@ -96,6 +118,7 @@ export default function LyricsView({
   const activeLineRef = useRef(null)
   const userScrollTimeoutRef = useRef(null)
   const hideControlsTimeoutRef = useRef(null)
+  const userIsScrollingRef = useRef(false)
   const [userIsScrolling, setUserIsScrolling] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [controlsVisible, setControlsVisible] = useState(true)
@@ -129,8 +152,8 @@ export default function LyricsView({
     const now = Date.now()
     const elapsed = now - lastClickTimeRef.current
 
-    // Double-click detected: 2 clicks within 1.5 seconds (1500ms)
-    if (elapsed < 1500 && lastClickTimeRef.current > 0) {
+    // Double-click detected: 2 clicks within 1.0 second (1000ms)
+    if (elapsed < 1000 && lastClickTimeRef.current > 0) {
       if (clickTimerRef.current) {
         clearTimeout(clickTimerRef.current)
         clickTimerRef.current = null
@@ -150,7 +173,7 @@ export default function LyricsView({
       return
     }
 
-    // Single click detected: start timer for ~1.5s delay to allow double-click window
+    // Single click detected: start timer for 1.0s delay to allow double-click window
     lastClickTimeRef.current = now
     setIsPendingClick(true)
 
@@ -191,7 +214,7 @@ export default function LyricsView({
         } catch {}
         return next
       })
-    }, 1500)
+    }, 1000)
   }, [COLORFUL_THEMES])
 
   useEffect(() => {
@@ -203,6 +226,13 @@ export default function LyricsView({
   }, [])
 
   const toggleFullscreen = useCallback(async () => {
+    // Reset manual scroll interrupted state so entering/exiting fullscreen tracks immediately
+    userIsScrollingRef.current = false
+    setUserIsScrolling(false)
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current)
+    }
+
     const isCurrentlyFs = !!(
       document.fullscreenElement ||
       document.webkitFullscreenElement ||
@@ -254,6 +284,11 @@ export default function LyricsView({
         document.msFullscreenElement
       )
       setIsFullscreen(isFs)
+      userIsScrollingRef.current = false
+      setUserIsScrolling(false)
+      if (userScrollTimeoutRef.current) {
+        clearTimeout(userScrollTimeoutRef.current)
+      }
     }
 
     document.addEventListener('fullscreenchange', handleFullscreenChange)
@@ -376,121 +411,276 @@ export default function LyricsView({
     return parseLRC(rawLyrics)
   }, [rawLyrics])
 
-  // Find active line index based on currentTime + 150ms lookahead + user calibration
-  const activeIndex = useMemo(() => {
-    if (!isSynced || !Array.isArray(lines) || lines.length === 0) return -1
-    const target = currentTime + 0.15 + safeOffset
+  // Keep a ref to the latest currentTime prop so rAF loops have access without closure lag
+  const currentTimeRef = useRef(currentTime)
+  useEffect(() => {
+    currentTimeRef.current = currentTime
+  }, [currentTime])
 
-    let found = -1
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].time <= target) {
-        found = i
-      } else {
-        break
+  // Synchronously compute initial active index
+  const [activeIndex, setActiveIndex] = useState(() => {
+    if (!isSynced || !Array.isArray(lines) || lines.length === 0) return -1
+    return findActiveLineIndex(lines, currentTime + 0.15 + safeOffset)
+  })
+  const activeIndexRef = useRef(activeIndex)
+
+  // Returns the precise playback timestamp:
+  // - If the local HTMLAudioElement is actively playing, reads audio.currentTime for sub-frame precision.
+  // - If remote playback (e.g. phone controlling PC), audio is paused, or audioElement isn't running,
+  //   reliably uses the reactive currentTime state prop from App.jsx.
+  const getEffectiveCurrentTime = useCallback(() => {
+    const audioElement = audioRef?.current || (typeof document !== 'undefined' ? document.querySelector('audio') : null)
+    if (
+      audioElement &&
+      !audioElement.paused &&
+      !audioElement.ended &&
+      typeof audioElement.currentTime === 'number' &&
+      !isNaN(audioElement.currentTime) &&
+      audioElement.currentTime > 0
+    ) {
+      return audioElement.currentTime
+    }
+    return currentTimeRef.current
+  }, [audioRef])
+
+  // Sync state when currentTime prop changes externally or while paused
+  useEffect(() => {
+    if (!isSynced || !Array.isArray(lines) || lines.length === 0) {
+      if (activeIndexRef.current !== -1) {
+        activeIndexRef.current = -1
+        setActiveIndex(-1)
+      }
+      return
+    }
+
+    const currentSec = getEffectiveCurrentTime()
+    const targetTime = currentSec + 0.15 + safeOffset
+    const newIdx = findActiveLineIndex(lines, targetTime)
+    if (newIdx !== activeIndexRef.current) {
+      activeIndexRef.current = newIdx
+      setActiveIndex(newIdx)
+      if (userIsScrollingRef.current) {
+        userIsScrollingRef.current = false
+        setUserIsScrolling(false)
       }
     }
-    return found
-  }, [lines, currentTime, isSynced, userOffsetSec])
+  }, [currentTime, safeOffset, lines, isSynced, getEffectiveCurrentTime])
 
-  // Handle user manual scroll interruption
+  // Real-time rAF loop while playing: reads effective playback time directly and triggers state update when index changes
+  useEffect(() => {
+    if (!isPlaying || !isSynced || !Array.isArray(lines) || lines.length === 0) return
+
+    let rafId = null
+
+    const tick = () => {
+      const currentSec = getEffectiveCurrentTime()
+      const targetTime = currentSec + 0.15 + safeOffset
+      const newIdx = findActiveLineIndex(lines, targetTime)
+
+      if (newIdx !== activeIndexRef.current) {
+        activeIndexRef.current = newIdx
+        setActiveIndex(newIdx)
+        // Auto-resume auto-scroll when next line activates
+        if (userIsScrollingRef.current) {
+          userIsScrollingRef.current = false
+          setUserIsScrolling(false)
+          if (userScrollTimeoutRef.current) {
+            clearTimeout(userScrollTimeoutRef.current)
+          }
+        }
+      }
+
+      rafId = requestAnimationFrame(tick)
+    }
+
+    rafId = requestAnimationFrame(tick)
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId)
+    }
+  }, [isPlaying, isSynced, lines, safeOffset, getEffectiveCurrentTime])
+
+  // Smooth lerp scrolling engine (Apple Music / Spotify fluid glide)
+  const targetScrollRef = useRef(0)
+  const scrollRafRef = useRef(null)
+
+  const scrollToActiveLine = useCallback((forcedIndex = null, forceOverride = false, instant = false) => {
+    if (forceOverride) {
+      userIsScrollingRef.current = false
+      setUserIsScrolling(false)
+      if (userScrollTimeoutRef.current) {
+        clearTimeout(userScrollTimeoutRef.current)
+      }
+    }
+    if (userIsScrollingRef.current) return
+    const container = containerRef.current
+    if (!container) return
+
+    const idx = forcedIndex !== null ? forcedIndex : activeIndexRef.current
+    if (idx < 0) {
+      targetScrollRef.current = 0
+    } else {
+      const activeLineEl = container.querySelector(`[data-line-index="${idx}"]`)
+      if (activeLineEl) {
+        const containerRect = container.getBoundingClientRect()
+        if (containerRect.height > 0) {
+          const lineRect = activeLineEl.getBoundingClientRect()
+          const currentScrollTop = container.scrollTop
+
+          // Target position at ~50% (middle) of container
+          const relativeTop = lineRect.top - containerRect.top + currentScrollTop
+          const targetOffset = containerRect.height * 0.50
+          targetScrollRef.current = Math.max(0, relativeTop - targetOffset + (lineRect.height * 0.5))
+        }
+      }
+    }
+
+    const prefersReducedMotion = typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    if (instant || prefersReducedMotion) {
+      if (scrollRafRef.current) {
+        cancelAnimationFrame(scrollRafRef.current)
+        scrollRafRef.current = null
+      }
+      container.scrollTop = targetScrollRef.current
+      return
+    }
+
+    if (!scrollRafRef.current) {
+      const step = () => {
+        if (userIsScrollingRef.current || !containerRef.current) {
+          scrollRafRef.current = null
+          return
+        }
+
+        const current = containerRef.current.scrollTop
+        const target = targetScrollRef.current
+        const diff = target - current
+
+        if (Math.abs(diff) < 0.75) {
+          containerRef.current.scrollTop = target
+          scrollRafRef.current = null
+          return
+        }
+
+        // Fluid 0.065 lerp step smoothly curves toward target with extra silky deceleration
+        containerRef.current.scrollTop = current + diff * 0.065
+        scrollRafRef.current = requestAnimationFrame(step)
+      }
+      scrollRafRef.current = requestAnimationFrame(step)
+    }
+  }, [])
+
+  useEffect(() => {
+    scrollToActiveLine()
+  }, [activeIndex, scrollToActiveLine])
+
+  // Automatically re-center active lyrics whenever fullscreen mode is entered or exited
+  useEffect(() => {
+    userIsScrollingRef.current = false
+    setUserIsScrolling(false)
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current)
+    }
+
+    // Double-pulse to catch both immediate CSS layout change and native browser fullscreen animation
+    const t0 = requestAnimationFrame(() => {
+      scrollToActiveLine(null, true, true)
+    })
+    const t1 = setTimeout(() => {
+      scrollToActiveLine(null, true, false)
+    }, 60)
+    const t2 = setTimeout(() => {
+      scrollToActiveLine(null, true, false)
+    }, 200)
+    const t3 = setTimeout(() => {
+      scrollToActiveLine(null, true, false)
+    }, 450)
+
+    return () => {
+      cancelAnimationFrame(t0)
+      clearTimeout(t1)
+      clearTimeout(t2)
+      clearTimeout(t3)
+    }
+  }, [isFullscreen, scrollToActiveLine])
+
+  // Automatically re-center active lyrics on container resize or device orientation change
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    let ro = null
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        if (!userIsScrollingRef.current) {
+          scrollToActiveLine(null, false, false)
+        }
+      })
+      ro.observe(container)
+    }
+
+    const handleWindowResize = () => {
+      if (!userIsScrollingRef.current) {
+        scrollToActiveLine(null, false, false)
+      }
+    }
+    window.addEventListener('resize', handleWindowResize)
+    window.addEventListener('orientationchange', handleWindowResize)
+
+    return () => {
+      if (ro) ro.disconnect()
+      window.removeEventListener('resize', handleWindowResize)
+      window.removeEventListener('orientationchange', handleWindowResize)
+    }
+  }, [scrollToActiveLine])
+
+  // Handle user manual scroll interruption (pause auto-scroll and resume after 3 seconds of inactivity)
   const handleUserScroll = useCallback(() => {
+    userIsScrollingRef.current = true
     setUserIsScrolling(true)
+    if (scrollRafRef.current) {
+      cancelAnimationFrame(scrollRafRef.current)
+      scrollRafRef.current = null
+    }
     if (userScrollTimeoutRef.current) {
       clearTimeout(userScrollTimeoutRef.current)
     }
     userScrollTimeoutRef.current = setTimeout(() => {
+      userIsScrollingRef.current = false
       setUserIsScrolling(false)
-    }, 4000)
-  }, [])
+      scrollToActiveLine()
+    }, 3000)
+  }, [scrollToActiveLine])
 
-  const hasMountedRef = useRef(false)
-
-  // Auto-scroll active line to center when not interrupted
-  useEffect(() => {
-    if (userIsScrolling) return
-
-    const container = containerRef.current
-
-    if (activeIndex < 0) {
-      if (container && container.scrollTop > 0) {
-        if (typeof container.scrollTo === 'function') {
-          container.scrollTo({ top: 0, behavior: hasMountedRef.current ? 'smooth' : 'auto' })
-        } else {
-          container.scrollTop = 0
-        }
-      }
-      hasMountedRef.current = true
-      return
+  const resumeAutoScroll = useCallback(() => {
+    userIsScrollingRef.current = false
+    setUserIsScrolling(false)
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current)
     }
+    scrollToActiveLine(null, true)
+  }, [scrollToActiveLine])
 
-    const activeLine = activeLineRef.current
-    if (container && activeLine) {
-      const containerRect = container.getBoundingClientRect()
-      const activeRect = activeLine.getBoundingClientRect()
-      const currentScrollTop = container.scrollTop
-
-      // Target scrollTop that aligns the center of the active line with the center of the container
-      const relativeTop = activeRect.top - containerRect.top + currentScrollTop
-      const targetScrollTop = Math.max(
-        0,
-        relativeTop - (containerRect.height / 2) + (activeRect.height / 2)
-      )
-
-      const behavior = hasMountedRef.current ? 'smooth' : 'auto'
-      if (typeof container.scrollTo === 'function') {
-        container.scrollTo({
-          top: targetScrollTop,
-          behavior
-        })
-      } else if (typeof activeLine.scrollIntoView === 'function') {
-        activeLine.scrollIntoView({
-          behavior,
-          block: 'center'
-        })
-      }
-      hasMountedRef.current = true
-    } else if (activeLine?.scrollIntoView) {
-      activeLine.scrollIntoView({
-        behavior: hasMountedRef.current ? 'smooth' : 'auto',
-        block: 'center'
-      })
-      hasMountedRef.current = true
+  const handleLineClick = useCallback((lineTime, lineIndex) => {
+    if (lineTime !== null && typeof lineTime === 'number' && onSeek) {
+      onSeek(lineTime)
     }
-  }, [activeIndex, userIsScrolling])
+    userIsScrollingRef.current = false
+    setUserIsScrolling(false)
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current)
+    }
+    scrollToActiveLine(lineIndex, true)
+  }, [onSeek, scrollToActiveLine])
 
   useEffect(() => {
     return () => {
       if (userScrollTimeoutRef.current) clearTimeout(userScrollTimeoutRef.current)
+      if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)
     }
   }, [])
-
-  const resumeAutoScroll = () => {
-    setUserIsScrolling(false)
-    const container = containerRef.current
-    const activeLine = activeLineRef.current
-    if (container && activeLine) {
-      const containerRect = container.getBoundingClientRect()
-      const activeRect = activeLine.getBoundingClientRect()
-      const relativeTop = activeRect.top - containerRect.top + container.scrollTop
-      const targetScrollTop = Math.max(
-        0,
-        relativeTop - (containerRect.height / 2) + (activeRect.height / 2)
-      )
-      if (typeof container.scrollTo === 'function') {
-        container.scrollTo({ top: targetScrollTop, behavior: 'smooth' })
-      } else if (typeof activeLine.scrollIntoView === 'function') {
-        activeLine.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-    } else if (activeLineRef.current && typeof activeLineRef.current.scrollIntoView === 'function') {
-      activeLineRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
-  }
-
-  const handleLineClick = (lineTime) => {
-    if (lineTime !== null && typeof lineTime === 'number' && onSeek) {
-      onSeek(lineTime)
-    }
-  }
 
   const isDynamic = ['combo1', 'combo2', 'combo3', 'combo4'].includes(theme)
   const themeClass = theme && theme !== 'default' ? `theme-${theme}` : ''
@@ -500,21 +690,27 @@ export default function LyricsView({
       ref={fullContainerRef}
       className={`lyrics-view-container ${isFullscreen ? 'fullscreen-mode' : ''} ${isDynamic ? 'dynamic-bg' : ''} ${themeClass} ${isFullscreen && !controlsVisible ? 'cursor-hidden' : ''}`}
       onMouseMove={handleMouseMove}
+      onTouchStart={handleMouseMove}
+      onClick={handleMouseMove}
       data-testid="lyrics-view"
     >
       {/* Top Floating Header */}
-      <div className={`lyrics-view-header ${isFullscreen && !controlsVisible ? 'controls-hidden' : ''}`}>
+      <div className="lyrics-view-header">
         <div className="lyrics-track-info">
-          <span className="lyrics-tag">SYNCED LYRICS</span>
           <h2 className="lyrics-track-title" title={track?.name}>
             {track?.name || 'Now Playing'}
           </h2>
-          <span className="lyrics-track-artist">
-            {track?.artist || track?.playlist || 'Sangita Audio'}
-          </span>
+          <div className="lyrics-track-meta">
+            <span className="lyrics-track-artist">
+              {track?.artist || track?.playlist || 'Sangita Audio'}
+            </span>
+            <span className="lyrics-track-timestamp" title="Current track time">
+              • {formatLyricsTime(currentTime)} / {formatLyricsTime(duration)}
+            </span>
+          </div>
         </div>
 
-        <div className="lyrics-header-actions">
+        <div className={`lyrics-header-actions ${isFullscreen && !controlsVisible ? 'controls-hidden' : ''}`}>
           {isSynced && (
             <div className="lyrics-sync-nudge-group" title="Fine-tune audio/lyrics synchronization if early or late">
               <button
@@ -628,15 +824,23 @@ export default function LyricsView({
           <div className={`lyrics-lines-wrapper ${isSynced ? 'is-synced' : 'is-plain'}`}>
             {lines.map((line, idx) => {
               const isActive = idx === activeIndex
-              const isPast = idx < activeIndex
-              const isFuture = idx > activeIndex
+              const isPast = activeIndex >= 0 && idx < activeIndex
+              const isFuture = activeIndex >= 0 && idx > activeIndex
+              const distance = activeIndex >= 0 ? Math.abs(idx - activeIndex) : -1
+
+              let distClass = ''
+              if (isActive) distClass = 'distance-0'
+              else if (distance === 1) distClass = 'distance-1'
+              else if (distance === 2) distClass = 'distance-2'
+              else if (distance >= 3) distClass = 'distance-far'
 
               return (
                 <div
                   key={idx}
                   ref={isActive ? activeLineRef : null}
-                  className={`lyric-line ${isActive ? 'active' : ''} ${isPast ? 'past' : ''} ${isFuture ? 'future' : ''} ${isSynced ? 'clickable' : ''}`}
-                  onClick={() => handleLineClick(line.time)}
+                  data-line-index={idx}
+                  className={`lyric-line ${isActive ? 'active' : ''} ${isPast ? 'past' : ''} ${isFuture ? 'future' : ''} ${distClass} ${isSynced ? 'clickable' : ''}`}
+                  onClick={() => handleLineClick(line.time, idx)}
                   data-testid={`lyric-line-${idx}`}
                   title={isSynced ? `Click to jump to ${line.text || 'this line'}` : undefined}
                 >
