@@ -490,7 +490,7 @@ export default function App() {
         }
       }
 
-      if (trackChanged || justClaimed) {
+      if (trackChanged || (justClaimed && loadedTrackIdRef.current !== targetPath)) {
         console.log('[SyncEffect] Loading track on active device', { trackChanged, justClaimed, targetPath })
         const drift     = syncState.isPlaying ? Math.max(0, Date.now() - (syncState.updatedAt || Date.now())) : 0
         const targetSec = Math.max(0, ((syncState.positionMs || 0) + drift) / 1000)
@@ -800,61 +800,6 @@ export default function App() {
   }, [durations])
 
 
-  useEffect(() => {
-    const audio = audioRef.current; if (!audio) return
-    const onEnded = () => {
-      const q = queueRef.current; const idx = indexRef.current
-      if (q.length === 0) return
-      if (isLoopRef.current) {
-        audio.currentTime = 0;
-        const p = audio.play();
-        if (p?.catch) p.catch(console.error);
-        broadcastState({
-          activeDeviceId: getMyDeviceId(),
-          trackId: loadedTrackIdRef.current,
-          positionMs: 0,
-          durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
-          isPlaying: true,
-          volume: volumeRef.current / 100,
-          isLoop: true,
-          isShuffle: isShuffleRef.current,
-          updatedAt: Date.now(),
-        });
-        return;
-      }
-      let nextIdx
-      if (isShuffleRef.current) {
-        if (q.length === 1) { nextIdx = 0 }
-        else { do { nextIdx = Math.floor(Math.random() * q.length) } while (nextIdx === idx) }
-      } else { nextIdx = idx + 1 >= q.length ? 0 : idx + 1 }
-      internalPlayTrack(q[nextIdx], nextIdx)
-    }
-    const onDurationChange = () => {
-      const dur = audio.duration
-      if (isFinite(dur) && dur > 0) {
-        if (lastSyncIdRef.current) {
-          broadcastState({
-            activeDeviceId: getMyDeviceId(),
-            trackId: loadedTrackIdRef.current,
-            positionMs: Math.floor(audio.currentTime * 1000),
-            durationMs: Math.floor(dur * 1000),
-            isPlaying: !audio.paused,
-            volume: volumeRef.current / 100,
-            isLoop: isLoopRef.current,
-            isShuffle: isShuffleRef.current,
-            updatedAt: Date.now(),
-          })
-        }
-      }
-    }
-    audio.addEventListener('ended', onEnded)
-    audio.addEventListener('durationchange', onDurationChange)
-    return () => {
-      audio.removeEventListener('ended', onEnded)
-      audio.removeEventListener('durationchange', onDurationChange)
-    }
-  }, []) // eslint-disable-line
-
   const internalPlayTrack = useCallback((track, index, forceLocal) => {
     if (!track) return
     const isAct = isActiveRef.current;
@@ -872,6 +817,8 @@ export default function App() {
     }
 
     if (!isAct) {
+      isActiveRef.current = true;
+      setIsActiveDevice(true);
       claimActiveDevice();
     }
 
@@ -881,7 +828,9 @@ export default function App() {
     loadedTrackIdRef.current = track.path
     audioRef.current.volume = volumeRef.current / 100
     const p = audioRef.current.play();
-    if (p?.catch) p.catch(console.error);
+    if (p?.catch) p.catch(err => {
+      console.warn('[internalPlayTrack] play() error:', err.message);
+    });
     setCurrentIndex(index)
     broadcastState({
       activeDeviceId: getMyDeviceId(), trackId: track.path,
@@ -912,7 +861,7 @@ export default function App() {
     setQueue(shuffled)
     setCurrentIndex(0)
     setIsShuffle(true)
-    internalPlayTrack(shuffled[0], 0)
+    internalPlayTrack(shuffled[0], 0, true)
   }, [playlists, internalPlayTrack])
 
   const playNext = useCallback((forceLocal) => {
@@ -934,6 +883,63 @@ export default function App() {
     internalPlayTrack(q[prevIdx], prevIdx, forceLocal)
   }, [internalPlayTrack, getActiveQueueAndIndex])
 
+  const isEndingRef = useRef(false)
+  const handleEnded = useCallback(() => {
+    if (isEndingRef.current) return
+    isEndingRef.current = true
+    setTimeout(() => { isEndingRef.current = false }, 500)
+
+    console.log('[Audio] Track ended, auto-advancing to next song...');
+    const audio = audioRef.current
+    if (isLoopRef.current) {
+      if (audio) {
+        audio.currentTime = 0
+        const p = audio.play()
+        if (p?.catch) p.catch(console.error)
+        broadcastState({
+          activeDeviceId: getMyDeviceId(),
+          trackId: loadedTrackIdRef.current,
+          positionMs: 0,
+          durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
+          isPlaying: true,
+          volume: volumeRef.current / 100,
+          isLoop: true,
+          isShuffle: isShuffleRef.current,
+          updatedAt: Date.now(),
+        })
+      }
+      return
+    }
+    // Auto-advance to the next track in queue with forceLocal = true
+    playNext(true)
+  }, [playNext, broadcastState, getMyDeviceId])
+
+  useEffect(() => {
+    const audio = audioRef.current; if (!audio) return
+    const onDurationChange = () => {
+      const dur = audio.duration
+      if (isFinite(dur) && dur > 0) {
+        if (lastSyncIdRef.current) {
+          broadcastState({
+            activeDeviceId: getMyDeviceId(),
+            trackId: loadedTrackIdRef.current,
+            positionMs: Math.floor(audio.currentTime * 1000),
+            durationMs: Math.floor(dur * 1000),
+            isPlaying: !audio.paused,
+            volume: volumeRef.current / 100,
+            isLoop: isLoopRef.current,
+            isShuffle: isShuffleRef.current,
+            updatedAt: Date.now(),
+          })
+        }
+      }
+    }
+    audio.addEventListener('durationchange', onDurationChange)
+    return () => {
+      audio.removeEventListener('durationchange', onDurationChange)
+    }
+  }, [broadcastState, getMyDeviceId])
+
   const togglePlay = useCallback((forcePlay, forceLocal) => {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
@@ -953,19 +959,28 @@ export default function App() {
     }
 
     if (!isAct) {
+      isActiveRef.current = true;
+      setIsActiveDevice(true);
       claimActiveDevice();
     }
 
     const audio = audioRef.current; if (!audio) return
     if (!audio.src || audio.src === window.location.href) {
-      const q = queueRef.current; if (q.length === 0) return
-      const idx = isShuffleRef.current ? Math.floor(Math.random() * q.length) : 0
-      internalPlayTrack(q[idx], idx); return
+      const { q, idx } = getActiveQueueAndIndex()
+      if (q.length === 0) return
+      const targetIdx = idx >= 0 ? idx : (isShuffleRef.current ? Math.floor(Math.random() * q.length) : 0)
+      internalPlayTrack(q[targetIdx], targetIdx, true)
+      return
     }
     const newPlaying = shouldForce !== undefined ? shouldForce : audio.paused
     if (newPlaying) {
+      if (audio.ended) {
+        audio.currentTime = 0;
+      }
       const p = audio.play();
-      if (p?.catch) p.catch(console.error);
+      if (p?.catch) p.catch(err => {
+        console.warn('[togglePlay] play error:', err.message);
+      });
     } else {
       audio.pause();
     }
@@ -979,7 +994,7 @@ export default function App() {
       isShuffle: isShuffleRef.current,
       updatedAt: Date.now(),
     })
-  }, [broadcastState, getMyDeviceId, internalPlayTrack, claimActiveDevice])
+  }, [broadcastState, getMyDeviceId, internalPlayTrack, claimActiveDevice, getActiveQueueAndIndex])
 
   const seekTo = useCallback((pct) => {
     const audio = audioRef.current; if (!audio) return
@@ -1329,7 +1344,13 @@ export default function App() {
 
   return (
     <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${currentTrack ? 'has-player' : ''}`}>
-      <audio ref={audioRef} preload="auto" />
+      <audio
+        ref={audioRef}
+        preload="auto"
+        onEnded={handleEnded}
+        onPlay={() => setIsLocalPlaying(true)}
+        onPause={() => setIsLocalPlaying(false)}
+      />
       {showDevices && (
         <DevicePanel
           devices={devices} myDeviceId={getMyDeviceId()}

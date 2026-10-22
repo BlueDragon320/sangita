@@ -1,0 +1,11 @@
+{
+  "name": "sangita-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sangita root workspace runner",
+  "scripts": {
+    "start": "npm --prefix frontend run dev",
+    "dev": "npm --prefix frontend run dev",
+    "test": "npm --prefix frontend test"
+  }
+}

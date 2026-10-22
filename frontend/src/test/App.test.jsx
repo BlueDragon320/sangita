@@ -142,4 +142,59 @@ describe('App Component Full Integration', () => {
       expect(screen.queryByTestId('lyrics-view')).not.toBeInTheDocument()
     })
   })
+
+  it('auto-advances to the next track when current track ends', async () => {
+    localStorage.setItem('sangita_token', 'mock-token')
+    localStorage.setItem('sangita_user', 'admin')
+    localStorage.setItem('sangita_role', 'admin')
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/me')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ username: 'admin', role: 'admin', rules: { allowed_playlists: ['*'] } })
+        })
+      }
+      if (url.includes('/api/playlists')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            'Chill Vibes': ['Chill Vibes/song1.mp3', 'Chill Vibes/song2.mp3'],
+            'Favorites': []
+          })
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    const { container } = render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Chill Vibes')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('sidebar-playlist-Chill Vibes'))
+
+    await waitFor(() => {
+      expect(screen.getByText('song1')).toBeInTheDocument()
+      expect(screen.getByText('song2')).toBeInTheDocument()
+    })
+
+    // Play first track
+    fireEvent.click(screen.getByText('song1'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('player-bar')).toBeInTheDocument()
+    })
+
+    const audio = container.querySelector('audio')
+    expect(audio).toBeInTheDocument()
+
+    // Trigger ended event on audio element
+    fireEvent.ended(audio)
+
+    await waitFor(() => {
+      expect(audio.src).toContain('Chill%20Vibes%2Fsong2.mp3')
+    })
+  })
 })

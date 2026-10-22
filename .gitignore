@@ -22,8 +22,28 @@ secrets.json
 data/
 backend/data/
 
-# Audio Library Storage
+# Audio Library Storage & Audio Files
 music/
+*.mp3
+*.flac
+*.wav
+*.ogg
+*.m4a
+*.aac
+*.opus
+*.wma
+*.lrc
+
+# Archives & Temporary Backups
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.bak
+*.tmp
+*.temp
 
 # Node.js Dependencies & Builds
 node_modules/

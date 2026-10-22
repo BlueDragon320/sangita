@@ -135,6 +135,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
     console.log('[transferPlayback] target:', targetDeviceId, 'myId:', deviceId.current);
     const isBecomingActive = targetDeviceId === deviceId.current;
     setIsActiveDevice(isBecomingActive);
+    isActiveRef.current = isBecomingActive;
 
     // Extract exact current playback position if this device was active
     let currentPosMs = undefined;
@@ -145,24 +146,6 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
       }
       if (isFinite(audioRef.current.duration) && audioRef.current.duration > 0) {
         currentDurMs = Math.floor(audioRef.current.duration * 1000);
-      }
-    }
-    
-    // Warm up/unlock the audio element with a user gesture if becoming active
-    if (isBecomingActive && audioRef.current) {
-      const origMuted = audioRef.current.muted;
-      audioRef.current.muted = true;
-      const p = audioRef.current.play();
-      if (p !== undefined) {
-        p.then(() => {
-          audioRef.current.pause();
-          audioRef.current.muted = origMuted;
-        }).catch((err) => {
-          console.log('[transferPlayback] Gesture unlock catch:', err.message);
-          audioRef.current.muted = origMuted;
-        });
-      } else {
-        audioRef.current.muted = origMuted;
       }
     }
 

@@ -179,11 +179,11 @@ function RightPanel({
           <div className="track-stats-pills">
             <div className="stat-pill">
               <span className="stat-pill-label">FORMAT</span>
-              <span className="stat-pill-value">{fileExt}</span>
+              <span className="stat-pill-value" title={fileExt}>{fileExt}</span>
             </div>
             <div className="stat-pill">
               <span className="stat-pill-label">LENGTH</span>
-              <span className="stat-pill-value">{formatTime(duration)}</span>
+              <span className="stat-pill-value" title={formatTime(duration)}>{formatTime(duration)}</span>
             </div>
           </div>
         </div>
@@ -206,11 +206,11 @@ function RightPanel({
           <div className="track-stats-pills">
             <div className="stat-pill">
               <span className="stat-pill-label">TODAY</span>
-              <span className="stat-pill-value">{dataUsage.formattedToday}</span>
+              <span className="stat-pill-value" title={dataUsage.formattedToday}>{dataUsage.formattedToday}</span>
             </div>
             <div className="stat-pill">
               <span className="stat-pill-label">ALL TIME</span>
-              <span className="stat-pill-value">{dataUsage.formattedTotal}</span>
+              <span className="stat-pill-value" title={dataUsage.formattedTotal}>{dataUsage.formattedTotal}</span>
             </div>
           </div>
         </div>
