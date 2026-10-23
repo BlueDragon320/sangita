@@ -30,7 +30,7 @@ function getSecretKey() {
 const SECRET_KEY  = getSecretKey();
 const REDIS_URL   = process.env.REDIS_URL   || 'redis://localhost:6379';
 const PORT        = Number(process.env.SYNC_PORT || 3001);
-const DEVICE_TTL  = 30;   // seconds — refreshed by HEARTBEAT every 25s
+const DEVICE_TTL  = 120;  // seconds — refreshed by HEARTBEAT every 25s
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 const app        = express();
@@ -218,16 +218,35 @@ async function getDevices(userId) {
   return devices;
 }
 
-async function getState(userId) {
-  const raw = await redis.get(K.state(userId));
-  return raw ? JSON.parse(raw) : null;
+// ============================================================================
+// PURE IN-MEMORY RAM PLAYBACK SESSION & DEVICE REGISTRY
+// High performance (<0.1ms), zero disk lag, automatic purge on user disconnect
+// ============================================================================
+const inMemorySessions = new Map(); // userId -> session object
+const inMemoryDevices  = new Map(); // userId -> Map<deviceId, deviceData>
+
+function getRamSession(userId) {
+  return inMemorySessions.get(userId) || null;
 }
 
-async function saveState(userId, state) {
-  await redis.set(K.state(userId), JSON.stringify(state));
+function setRamSession(userId, session) {
+  inMemorySessions.set(userId, session);
 }
 
-const lastBroadcast = new Map();
+function getDeviceList(userId) {
+  const userDevs = inMemoryDevices.get(userId);
+  if (!userDevs) return [];
+  return Array.from(userDevs.values());
+}
+
+function deleteRamSessionIfEmpty(userId) {
+  const userDevs = inMemoryDevices.get(userId);
+  if (!userDevs || userDevs.size === 0) {
+    inMemorySessions.delete(userId);
+    inMemoryDevices.delete(userId);
+    console.log(`[RAM GC] All devices offline for user=${userId}. Purged session from RAM.`);
+  }
+}
 
 io.use((socket, next) => {
   const token  = socket.handshake.auth?.token || socket.handshake.query?.token;
@@ -237,139 +256,237 @@ io.use((socket, next) => {
   next();
 });
 
-io.on('connection', async (socket) => {
+io.on('connection', (socket) => {
   const { userId } = socket;
   const userRoom   = `user:${userId}`;
   socket.join(userRoom);
   console.log(`[Connect] user=${userId} socket=${socket.id}`);
 
-  socket.on('REGISTER_DEVICE', async ({ deviceId, deviceName, deviceType }) => {
+  socket.on('REGISTER_DEVICE', ({ deviceId, deviceName, deviceType }) => {
     if (!deviceId) return;
     socket.deviceId = deviceId;
-    const deviceData = {
+
+    if (!inMemoryDevices.has(userId)) {
+      inMemoryDevices.set(userId, new Map());
+    }
+    inMemoryDevices.get(userId).set(deviceId, {
       deviceId,
       deviceName : deviceName || 'Unknown Device',
       deviceType : deviceType || 'desktop',
       socketId   : socket.id,
       connectedAt: Date.now(),
-    };
-    await saveDevice(userId, deviceData);
-    const devices = await getDevices(userId);
+      lastSeen   : Date.now(),
+    });
+
+    const devices = getDeviceList(userId);
     io.to(userRoom).emit('DEVICE_LIST_UPDATED', { devices });
-    let state = await getState(userId);
-    if (!state) {
-      state = {
+
+    let session = getRamSession(userId);
+    if (!session) {
+      session = {
         activeDeviceId: deviceId,
-        trackId: null,
+        trackId: '',
         positionMs: 0,
         durationMs: 0,
         isPlaying: false,
+        isBuffering: false,
         volume: 0.8,
         isLoop: false,
         isShuffle: false,
+        originDeviceId: deviceId,
         updatedAt: Date.now(),
       };
-      await saveState(userId, state);
-      io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state);
+      setRamSession(userId, session);
+      io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', session);
     } else {
-      const activeOnline = devices.some(d => d.deviceId === state.activeDeviceId);
-      if (!state.activeDeviceId || !activeOnline || devices.length === 1) {
-        state.activeDeviceId = deviceId;
-        state.updatedAt = Date.now();
-        await saveState(userId, state);
-        io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state);
+      const activeOnline = session.activeDeviceId && devices.some(d => d.deviceId === session.activeDeviceId);
+      if (!session.activeDeviceId || !activeOnline) {
+        session.activeDeviceId = deviceId;
+        session.updatedAt = Date.now();
+        setRamSession(userId, session);
+        io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', session);
       } else {
-        socket.emit('PLAYBACK_STATE_CHANGED', state);
+        // Send current running session snapshot immediately to the connecting device
+        socket.emit('PLAYBACK_STATE_CHANGED', session);
       }
     }
-    console.log(`[Register] user=${userId} device=${deviceId} name="${deviceName}" active=${state.activeDeviceId}`);
+    console.log(`[Register RAM] user=${userId} device=${deviceId} name="${deviceName}" active=${session.activeDeviceId}`);
   });
 
-  socket.on('HEARTBEAT', async ({ deviceId }) => {
+  socket.on('HEARTBEAT', ({ deviceId, deviceName, deviceType }) => {
     if (!deviceId) return;
-    const raw = await redis.get(K.device(userId, deviceId));
-    if (raw) {
-      const data = JSON.parse(raw);
-      data.socketId = socket.id;
-      await redis.setex(K.device(userId, deviceId), DEVICE_TTL, JSON.stringify(data));
+    const userDevs = inMemoryDevices.get(userId);
+    if (userDevs && userDevs.has(deviceId)) {
+      const dev = userDevs.get(deviceId);
+      dev.lastSeen = Date.now();
+      dev.socketId = socket.id;
+    } else if (userDevs) {
+      userDevs.set(deviceId, {
+        deviceId,
+        deviceName: deviceName || 'Connected Device',
+        deviceType: deviceType || 'desktop',
+        socketId: socket.id,
+        connectedAt: Date.now(),
+        lastSeen: Date.now(),
+      });
     }
   });
 
-  socket.on('TRANSFER_PLAYBACK', async ({ targetDeviceId, positionMs, durationMs }) => {
-    if (!targetDeviceId) return;
-    let state = await getState(userId) || {
-      activeDeviceId: null, trackId: null,
-      positionMs: 0, durationMs: 0, isPlaying: false, volume: 0.8, updatedAt: Date.now(),
+  socket.on('TRANSFER_PLAYBACK', ({ targetDeviceId, playImmediately = true, positionMs, durationMs }) => {
+    const { userId, deviceId } = socket;
+    if (!userId || !targetDeviceId) return;
+
+    const currentSession = getRamSession(userId) || {};
+
+    let extrapolatedPositionMs = Number(positionMs !== undefined ? positionMs : (currentSession.positionMs || 0));
+    if (positionMs === undefined && currentSession.isPlaying && currentSession.updatedAt) {
+      const elapsed = Date.now() - Number(currentSession.updatedAt);
+      extrapolatedPositionMs = Math.min(
+        Number(currentSession.durationMs || Infinity),
+        extrapolatedPositionMs + Math.max(0, elapsed)
+      );
+    }
+
+    const handoffState = {
+      ...currentSession,
+      positionMs: extrapolatedPositionMs,
+      durationMs: Number(durationMs !== undefined ? durationMs : (currentSession.durationMs || 0)),
+      activeDeviceId: targetDeviceId,
+      isPlaying: Boolean(playImmediately),
+      isBuffering: false,
+      originDeviceId: deviceId,
+      isTransferHandoff: true,
+      updatedAt: Date.now(),
     };
-    if (typeof positionMs === 'number' && !isNaN(positionMs) && positionMs >= 0) {
-      state.positionMs = positionMs;
-      if (typeof durationMs === 'number' && durationMs > 0) state.durationMs = durationMs;
-    } else if (state.isPlaying && state.updatedAt) {
-      state.positionMs = Math.max(0, state.positionMs + (Date.now() - state.updatedAt));
-    }
-    state.activeDeviceId = targetDeviceId;
-    state.updatedAt      = Date.now();
-    await saveState(userId, state);
-    io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state);
-    const devices = await getDevices(userId);
+
+    setRamSession(userId, handoffState);
+
+    // Broadcast handoff state to entire room (target begins playback, sender pauses)
+    io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', handoffState);
+    const devices = getDeviceList(userId);
     io.to(userRoom).emit('DEVICE_LIST_UPDATED', { devices });
-    console.log(`[Transfer] user=${userId} → device=${targetDeviceId} pos=${state.positionMs}ms`);
+    console.log(`[Transfer RAM] user=${userId} → device=${targetDeviceId} pos=${handoffState.positionMs}ms`);
   });
 
-  socket.on('PLAYBACK_STATE_CHANGED', async (data) => {
-    const now = Date.now();
-    const last = lastBroadcast.get(userId) || 0;
-    const state = { ...data, updatedAt: now };
-    await saveState(userId, state);
-    const isCritical = data.isPlaying !== undefined || data.trackId !== undefined || data.playlist !== undefined;
-    if (isCritical || (now - last > 100)) {
-      socket.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state); // relay to others
-      lastBroadcast.set(userId, now);
+  socket.on('PLAYBACK_STATE_CHANGED', (state) => {
+    const { userId, deviceId } = socket;
+    if (!userId || !deviceId) return;
+
+    let currentSession = getRamSession(userId);
+    if (!currentSession) {
+      currentSession = {
+        activeDeviceId: deviceId,
+        trackId: '',
+        positionMs: 0,
+        durationMs: 0,
+        isPlaying: false,
+        isBuffering: false,
+        volume: 0.8,
+        isLoop: false,
+        isShuffle: false,
+        originDeviceId: deviceId,
+        updatedAt: Date.now(),
+      };
     }
+
+    if (
+      currentSession.activeDeviceId &&
+      currentSession.activeDeviceId !== deviceId &&
+      !state.forceClaim
+    ) {
+      return; // Passive device cannot directly overwrite active state
+    }
+
+    const updatedSession = {
+      ...currentSession,
+      ...state,
+      trackId: state.trackId !== undefined ? state.trackId : currentSession.trackId,
+      positionMs: Number(state.positionMs ?? currentSession.positionMs ?? 0),
+      durationMs: Number(state.durationMs ?? currentSession.durationMs ?? 0),
+      isPlaying: Boolean(state.isPlaying && !state.isBuffering),
+      isBuffering: Boolean(state.isBuffering),
+      activeDeviceId: state.activeDeviceId || currentSession.activeDeviceId || deviceId,
+      originDeviceId: deviceId,
+      isTransferHandoff: false,
+      updatedAt: Date.now(),
+    };
+
+    setRamSession(userId, updatedSession);
+
+    // Instantly propagate state update to other devices in room
+    socket.to(userRoom).emit('PLAYBACK_STATE_CHANGED', updatedSession);
   });
 
-  socket.on('POSITION_REPORT', async ({ positionMs, durationMs }) => {
-    const state = await getState(userId);
-    if (!state || state.activeDeviceId !== socket.deviceId) return;
-    state.positionMs = positionMs;
-    if (durationMs !== undefined) state.durationMs = durationMs;
-    state.updatedAt  = Date.now();
-    await saveState(userId, state); // server-side correction, no broadcast
+  socket.on('POSITION_REPORT', ({ positionMs, durationMs }) => {
+    const session = getRamSession(userId);
+    if (!session || session.activeDeviceId !== socket.deviceId) return;
+
+    session.positionMs = Number(positionMs || 0);
+    if (durationMs !== undefined) session.durationMs = Number(durationMs || 0);
+    session.updatedAt  = Date.now();
+
+    // Replicate live timestamp to all passive devices so scrubbers stay in sync
+    socket.to(userRoom).emit('POSITION_SYNC', {
+      positionMs: session.positionMs,
+      durationMs: session.durationMs,
+      updatedAt: session.updatedAt,
+      originDeviceId: socket.deviceId,
+    });
   });
 
-  socket.on('REMOTE_CONTROL', async (command) => {
-    const state = await getState(userId);
-    if (!state?.activeDeviceId || state.activeDeviceId === socket.deviceId) return;
-    const raw = await redis.get(K.device(userId, state.activeDeviceId));
-    if (!raw) return;
-    const activeDevice = JSON.parse(raw);
-    io.to(activeDevice.socketId).emit('REMOTE_COMMAND', command);
+  socket.on('REMOTE_CONTROL', ({ action, payload, targetDeviceId }) => {
+    const { userId, deviceId } = socket;
+    if (!userId) return;
+
+    const session = getRamSession(userId);
+    const resolvedTargetId = targetDeviceId || session?.activeDeviceId;
+
+    if (!resolvedTargetId || resolvedTargetId === deviceId) return;
+
+    const commandObj = {
+      action,
+      payload: payload || {},
+      targetDeviceId: resolvedTargetId,
+      originDeviceId: deviceId,
+      timestamp: Date.now(),
+    };
+
+    const userDevs = inMemoryDevices.get(userId);
+    const targetDev = userDevs?.get(resolvedTargetId);
+    if (targetDev && targetDev.socketId) {
+      io.to(targetDev.socketId).emit('REMOTE_COMMAND', commandObj);
+    }
+    socket.to(userRoom).emit('REMOTE_COMMAND', commandObj);
   });
 
-  socket.on('disconnect', async (reason) => {
+  socket.on('disconnect', (reason) => {
     const { deviceId } = socket;
     console.log(`[Disconnect] user=${userId} device=${deviceId} reason=${reason}`);
     if (!deviceId) return;
-    await removeDevice(userId, deviceId);
-    const devices = await getDevices(userId);
+
+    const userDevs = inMemoryDevices.get(userId);
+    if (userDevs) {
+      userDevs.delete(deviceId);
+    }
+
+    const devices = getDeviceList(userId);
     io.to(userRoom).emit('DEVICE_LIST_UPDATED', { devices });
 
-    const state = await getState(userId);
-    if (state && state.activeDeviceId === deviceId) {
-      if (devices.length > 0) {
-        state.activeDeviceId = devices[0].deviceId;
-        state.isPlaying = false;
-        state.updatedAt = Date.now();
-        await saveState(userId, state);
-        io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', state);
-      } else {
-        state.activeDeviceId = null;
-        state.isPlaying = false;
-        state.updatedAt = Date.now();
-        await saveState(userId, state);
+    if (devices.length === 0) {
+      // Automatic memory cleanup: all user devices went offline
+      deleteRamSessionIfEmpty(userId);
+    } else {
+      const session = getRamSession(userId);
+      if (session && session.activeDeviceId === deviceId) {
+        // Fall back active control to the next available online device, paused
+        session.activeDeviceId = devices[0].deviceId;
+        session.isPlaying = false;
+        session.updatedAt = Date.now();
+        setRamSession(userId, session);
+        io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', session);
       }
     }
   });
 });
 
-httpServer.listen(PORT, () => console.log(`[Sangita Sync] listening on :${PORT}`));
+httpServer.listen(PORT, () => console.log(`[Sangita Sync] In-Memory RAM Sync Server listening on :${PORT}`));

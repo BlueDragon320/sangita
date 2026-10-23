@@ -74,7 +74,9 @@ function Player({
   onAddToPlaylist,
   hasLyrics = false,
   showLyrics = false,
-  onToggleLyrics
+  onToggleLyrics,
+  requiresUserGesture = false,
+  onUnlockWebAudio
 }) {
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
   const hue = strHue(track?.name || '')

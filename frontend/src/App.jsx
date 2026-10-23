@@ -275,29 +275,148 @@ export default function App() {
     loadedTrackIdRef.current = null
   }, [])
 
+  const [requiresUserGesture, setRequiresUserGesture] = useState(false);
+  const isApplyingRemoteStateRef = useRef(false);
+
+  const ensureTrackStagedInWebPlayer = useCallback((trackPath, positionMs = 0) => {
+    if (!trackPath || !audioRef.current) return null;
+
+    const parts = trackPath.split('/');
+    const filename = parts[parts.length - 1] || trackPath;
+    const cleanTitle = filename.replace(/\.[^/.]+$/, '');
+    const playlistName = parts.length > 1 ? parts[0] : 'Remote Stream';
+
+    setQueue((prevQueue) => {
+      const existingIdx = prevQueue.findIndex((t) => (t.path || t.id) === trackPath);
+      if (existingIdx !== -1) {
+        setCurrentIndex(existingIdx);
+        return prevQueue;
+      }
+      const synthesizedTrack = {
+        id: trackPath,
+        path: trackPath,
+        title: cleanTitle,
+        name: cleanTitle,
+        artist: playlistName,
+        playlist: playlistName,
+        isSynthesized: true,
+      };
+      const nextQueue = prevQueue.length > 0 ? [...prevQueue, synthesizedTrack] : [synthesizedTrack];
+      setCurrentIndex(nextQueue.length - 1);
+      return nextQueue;
+    });
+
+    const streamUrl = `/api/stream/${encodeURIComponent(trackPath)}?token=${encodeURIComponent(token)}`;
+    if (loadedTrackIdRef.current !== trackPath) {
+      loadedTrackIdRef.current = trackPath;
+      audioRef.current.src = streamUrl;
+      audioRef.current.load();
+    }
+
+    const targetSec = (positionMs || 0) / 1000;
+    if (Math.abs((audioRef.current.currentTime || 0) - targetSec) > 1.5) {
+      audioRef.current.currentTime = targetSec;
+    }
+  }, [token]);
+
+  const attemptWebPlayWithGestureGuard = useCallback(async () => {
+    if (!audioRef.current) return;
+    try {
+      await audioRef.current.play();
+      setRequiresUserGesture(false);
+    } catch (err) {
+      if (err.name === 'NotAllowedError') {
+        console.warn('[Autoplay] Blocked by browser policy, user gesture required');
+        setRequiresUserGesture(true);
+      } else {
+        console.warn('[Autoplay] Play error:', err.message);
+      }
+    }
+  }, []);
+
   const handleRemoteCommand = useCallback((command) => {
     console.log('[RemoteCommand] Received action:', command.action, 'payload:', command.payload);
     switch (command.action) {
-      case 'play':   togglePlayRef.current?.(true); break
-      case 'pause':  togglePlayRef.current?.(false); break
-      case 'next':   playNextRef.current?.();   break
-      case 'prev':   playPrevRef.current?.();   break
-      case 'seek':   seekToRef.current?.(command.payload?.pct);      break
-      case 'volume': changeVolRef.current?.(command.payload?.volume); break
-      case 'play_track':
-        console.log('[RemoteCommand] Routing play_track path:', command.payload?.path);
-        playTrackRef.current?.(command.payload?.path);
-        break
-      case 'loop':    setIsLoop(command.payload?.loop); break
-      case 'shuffle': setIsShuffle(command.payload?.shuffle); break
+      case 'play':
+        attemptWebPlayWithGestureGuard();
+        break;
+      case 'pause':
+        audioRef.current?.pause();
+        break;
+      case 'next':   playNextRef.current?.(true); break;
+      case 'prev':   playPrevRef.current?.(true); break;
+      case 'seek': {
+        const pct = command.payload?.pct;
+        const posMs = command.payload?.positionMs;
+        if (posMs !== undefined && audioRef.current) {
+          audioRef.current.currentTime = posMs / 1000;
+        } else if (pct !== undefined) {
+          seekToRef.current?.(pct);
+        }
+        break;
+      }
+      case 'volume': changeVolRef.current?.(command.payload?.volume); break;
+      case 'play_track': {
+        const path = command.payload?.path;
+        console.log('[RemoteCommand] Staging and playing track path:', path);
+        if (path) {
+          ensureTrackStagedInWebPlayer(path, 0);
+          attemptWebPlayWithGestureGuard();
+        }
+        break;
+      }
+      case 'loop':    setIsLoop(command.payload?.loop); break;
+      case 'shuffle': setIsShuffle(command.payload?.shuffle); break;
     }
-  }, [setIsLoop, setIsShuffle])
+  }, [attemptWebPlayWithGestureGuard, ensureTrackStagedInWebPlayer, setIsLoop, setIsShuffle]);
 
   const {
-    devices, isActiveDevice, syncState, setSyncState,
+    devices, isActiveDevice, setIsActiveDevice, syncState, setSyncState,
     broadcastState, transferPlayback, sendRemoteControl,
     claimActiveDevice, getMyDeviceId,
-  } = useDeviceSync({ token, audioRef, isPlaying: isLocalPlaying, onRemoteCommand: handleRemoteCommand })
+  } = useDeviceSync({ token, audioRef, isPlaying: isLocalPlaying, onRemoteCommand: handleRemoteCommand });
+
+  const handleUnlockWebAudio = useCallback(async () => {
+    if (!audioRef.current) return;
+    try {
+      await audioRef.current.play();
+      setRequiresUserGesture(false);
+      broadcastState({
+        trackId: loadedTrackIdRef.current,
+        positionMs: Math.round(audioRef.current.currentTime * 1000),
+        durationMs: Math.round((audioRef.current.duration || 0) * 1000),
+        isPlaying: true,
+        isBuffering: false,
+        activeDeviceId: getMyDeviceId(),
+        forceClaim: true,
+      });
+    } catch (e) {
+      console.error('Audio unlock failed:', e);
+    }
+  }, [broadcastState, getMyDeviceId]);
+
+  useEffect(() => {
+    if (!syncState) return;
+    const myId = getMyDeviceId();
+    const isMeActive = syncState.activeDeviceId === myId;
+
+    if (syncState.isTransferHandoff && isMeActive) {
+      console.log('[Sync] Transfer handoff targeting me, staging track:', syncState.trackId, 'pos:', syncState.positionMs);
+      isApplyingRemoteStateRef.current = true;
+      ensureTrackStagedInWebPlayer(syncState.trackId, syncState.positionMs);
+      if (syncState.isPlaying) {
+        attemptWebPlayWithGestureGuard();
+      }
+      setTimeout(() => { isApplyingRemoteStateRef.current = false; }, 400);
+    } else if (isMeActive && syncState.trackId && loadedTrackIdRef.current !== syncState.trackId) {
+      isApplyingRemoteStateRef.current = true;
+      ensureTrackStagedInWebPlayer(syncState.trackId, syncState.positionMs);
+      if (syncState.isPlaying) {
+        attemptWebPlayWithGestureGuard();
+      }
+      setTimeout(() => { isApplyingRemoteStateRef.current = false; }, 400);
+    }
+  }, [syncState, getMyDeviceId, ensureTrackStagedInWebPlayer, attemptWebPlayWithGestureGuard]);
 
   const isPlaying = isActiveDevice ? isLocalPlaying : !!syncState?.isPlaying;
 
@@ -835,7 +954,7 @@ export default function App() {
     broadcastState({
       activeDeviceId: getMyDeviceId(), trackId: track.path,
       positionMs: 0, durationMs: isFinite(audioRef.current.duration) ? Math.floor(audioRef.current.duration * 1000) : 0,
-      isPlaying: true, volume: volumeRef.current / 100,
+      isPlaying: false, isBuffering: true, volume: volumeRef.current / 100,
       isLoop: isLoopRef.current,
       isShuffle: isShuffleRef.current,
       updatedAt: Date.now(),
@@ -934,8 +1053,43 @@ export default function App() {
         }
       }
     }
+    const onPlaying = () => {
+      if (!isActiveRef.current || !loadedTrackIdRef.current) return;
+      setIsLocalPlaying(true);
+      broadcastState({
+        activeDeviceId: getMyDeviceId(),
+        trackId: loadedTrackIdRef.current,
+        positionMs: Math.floor(audio.currentTime * 1000),
+        durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
+        isPlaying: true,
+        isBuffering: false,
+        volume: volumeRef.current / 100,
+        isLoop: isLoopRef.current,
+        isShuffle: isShuffleRef.current,
+        updatedAt: Date.now(),
+      });
+    };
+    const onWaiting = () => {
+      if (!isActiveRef.current || !loadedTrackIdRef.current) return;
+      broadcastState({
+        activeDeviceId: getMyDeviceId(),
+        trackId: loadedTrackIdRef.current,
+        positionMs: Math.floor(audio.currentTime * 1000),
+        durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
+        isPlaying: false,
+        isBuffering: true,
+        volume: volumeRef.current / 100,
+        isLoop: isLoopRef.current,
+        isShuffle: isShuffleRef.current,
+        updatedAt: Date.now(),
+      });
+    };
+    audio.addEventListener('playing', onPlaying);
+    audio.addEventListener('waiting', onWaiting);
     audio.addEventListener('durationchange', onDurationChange)
     return () => {
+      audio.removeEventListener('playing', onPlaying)
+      audio.removeEventListener('waiting', onWaiting)
       audio.removeEventListener('durationchange', onDurationChange)
     }
   }, [broadcastState, getMyDeviceId])
@@ -997,6 +1151,18 @@ export default function App() {
   }, [broadcastState, getMyDeviceId, internalPlayTrack, claimActiveDevice, getActiveQueueAndIndex])
 
   const seekTo = useCallback((pct) => {
+    const isAct = isActiveRef.current;
+    const sState = syncStateRef.current;
+    const devs = devicesRef.current || [];
+    const isRemoteOnline = sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId() && devs.some(d => d.deviceId === sState.activeDeviceId);
+
+    if (!isAct && isRemoteOnline) {
+      const dur = sState?.durationMs || (audioRef.current && isFinite(audioRef.current.duration) ? audioRef.current.duration * 1000 : 0);
+      const positionMs = Math.round((pct / 100) * dur);
+      sendRemoteRef.current?.({ action: 'seek', payload: { pct, positionMs } });
+      return;
+    }
+
     const audio = audioRef.current; if (!audio) return
     const dur = isFinite(audio.duration) ? audio.duration : 0; if (dur <= 0) return
     audio.currentTime = (pct / 100) * dur
@@ -1081,7 +1247,7 @@ export default function App() {
       let idx = q.findIndex(t => t.path === path);
       if (idx >= 0) {
         console.log('[PlayTrackRef] Found in queue at index:', idx);
-        internalPlayTrack(q[idx], idx);
+        internalPlayTrack(q[idx], idx, true);
         return;
       }
       let found = null;
@@ -1095,8 +1261,24 @@ export default function App() {
          setQueue(q);
          idx = q.findIndex(t => t.path === path);
          console.log('[PlayTrackRef] Rebuilt queue, new index:', idx);
-         if (idx >= 0) internalPlayTrack(q[idx], idx);
+         if (idx >= 0) {
+           internalPlayTrack(q[idx], idx, true);
+           return;
+         }
       }
+      // Fallback: If not found in queue or playlists, synthesize track and play with forceLocal=true!
+      const filename = path.split('/').pop().replace(/\.[^/.]+$/, '');
+      const pl = path.includes('/') ? path.split('/')[0] : 'Library';
+      const fallbackTrack = {
+        id: `remote-${Date.now()}`,
+        path: path,
+        name: filename,
+        artist: 'Unknown Artist',
+        playlist: pl
+      };
+      console.log('[PlayTrackRef] Playing fallback synthesized track:', fallbackTrack);
+      setQueue([fallbackTrack]);
+      internalPlayTrack(fallbackTrack, 0, true);
     }
   }, [playlists, internalPlayTrack])
 
@@ -1548,6 +1730,8 @@ export default function App() {
           hasLyrics={!!lyricsData?.has_lyrics}
           showLyrics={showLyrics}
           onToggleLyrics={handleToggleLyrics}
+          requiresUserGesture={requiresUserGesture}
+          onUnlockWebAudio={handleUnlockWebAudio}
         />
       )}
 

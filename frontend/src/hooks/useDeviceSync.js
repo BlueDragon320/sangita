@@ -80,8 +80,8 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
       setDevices(curList);
       setSyncState(prev => {
         if (!prev) return prev;
-        const activeOnline = curList.some(d => d.deviceId === prev.activeDeviceId);
-        if ((!activeOnline || curList.length === 1) && curList.some(d => d.deviceId === deviceId.current)) {
+        const activeOnline = prev.activeDeviceId && curList.some(d => d.deviceId === prev.activeDeviceId);
+        if (!activeOnline && curList.length > 0 && curList[0].deviceId === deviceId.current) {
           setIsActiveDevice(true);
           return { ...prev, activeDeviceId: deviceId.current, updatedAt: Date.now() };
         }
@@ -89,6 +89,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
       });
     });
     socket.on('PLAYBACK_STATE_CHANGED', (state) => {
+      if (state?.originDeviceId && state.originDeviceId === deviceId.current) return;
       setSyncState(state);
       const amActive = !state?.activeDeviceId || state.activeDeviceId === deviceId.current;
       setIsActiveDevice(amActive);
@@ -96,7 +97,14 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
         audioRef.current.pause();
       }
     });
+    socket.on('POSITION_SYNC', ({ positionMs, durationMs, updatedAt, originDeviceId }) => {
+      if (originDeviceId === deviceId.current) return;
+      if (!isActiveRef.current) {
+        setSyncState(prev => prev ? { ...prev, positionMs, durationMs, updatedAt } : prev);
+      }
+    });
     const handleCmd = (command) => {
+      if (command?.targetDeviceId && command.targetDeviceId !== deviceId.current) return;
       if (isActiveRef.current && onRemoteCmdRef.current) onRemoteCmdRef.current(command);
     };
     socket.on('REMOTE_COMMAND', handleCmd);
@@ -128,8 +136,11 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
   }, [isActiveDevice, isPlaying]); 
 
   const broadcastState   = useCallback((state) => {
-    if (socketRef.current && isActiveRef.current)
-      socketRef.current.emit('PLAYBACK_STATE_CHANGED', state);
+    if (socketRef.current && (isActiveRef.current || state.forceClaim))
+      socketRef.current.emit('PLAYBACK_STATE_CHANGED', {
+        ...state,
+        originDeviceId: deviceId.current,
+      });
   }, []);
   const transferPlayback = useCallback((targetDeviceId) => {
     console.log('[transferPlayback] target:', targetDeviceId, 'myId:', deviceId.current);
@@ -172,7 +183,12 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
     }
   }, [audioRef]);
   const sendRemoteControl = useCallback((command) => {
-    if (socketRef.current) socketRef.current.emit('REMOTE_CONTROL', command);
+    if (socketRef.current) {
+      socketRef.current.emit('REMOTE_CONTROL', {
+        ...command,
+        originDeviceId: deviceId.current,
+      });
+    }
   }, [audioRef]);
   const claimActiveDevice = useCallback(() => {
     transferPlayback(deviceId.current);
@@ -180,7 +196,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
   const getMyDeviceId = useCallback(() => deviceId.current, []);
 
   return {
-    devices, isActiveDevice, syncState, setSyncState,
+    devices, isActiveDevice, setIsActiveDevice, syncState, setSyncState,
     broadcastState, transferPlayback, sendRemoteControl,
     claimActiveDevice, getMyDeviceId,
   };
