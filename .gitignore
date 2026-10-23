@@ -94,3 +94,8 @@ desktop.ini
 # Project Documentation & Internal Drafts
 markdown_files/
 CODEBASE.md
+
+# Agent Directives & Internal Issue Logs
+AGENTS.md
+agent.md
+issue.txt
