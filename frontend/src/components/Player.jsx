@@ -41,6 +41,65 @@ function PlayerDisc({ track, token, discBg }) {
   )
 }
 
+
+function PlayerTopProgress({ pct, duration, onSeek, formatTime }) {
+  const [hoverPct, setHoverPct] = useState(null)
+  const [hoverX, setHoverX] = useState(0)
+
+  const handleMouseMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const width = rect.width > 0 ? rect.width : (e.currentTarget.offsetWidth || 100)
+    const x = Math.max(0, Math.min(width, e.clientX - rect.left))
+    const p = (x / width) * 100
+    setHoverPct(p)
+    setHoverX(e.clientX)
+  }
+
+  const handleMouseLeave = () => {
+    setHoverPct(null)
+  }
+
+  const handleClick = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const width = rect.width > 0 ? rect.width : (e.currentTarget.offsetWidth || 100)
+    const x = Math.max(0, Math.min(width, e.clientX - rect.left))
+    const p = Math.max(0, Math.min(100, (x / width) * 100))
+    if (onSeek) onSeek(p)
+  }
+
+  const hoverTimeSec = hoverPct !== null && duration > 0 ? (hoverPct / 100) * duration : 0
+
+  return (
+    <div
+      className="player-top-progress"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      onClick={handleClick}
+      title="Click to seek"
+      data-testid="player-top-progress"
+    >
+      <div
+        className="player-top-progress-fill"
+        style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+      />
+      {hoverPct !== null && (
+        <>
+          <div
+            className="player-top-progress-hover"
+            style={{ width: `${hoverPct}%` }}
+          />
+          <div
+            className="player-top-progress-tooltip"
+            style={{ left: hoverX }}
+          >
+            {formatTime ? formatTime(hoverTimeSec) : `${Math.floor(hoverTimeSec / 60)}:${Math.floor(hoverTimeSec % 60).toString().padStart(2, '0')}`}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function Player({
   track,
   playlist,
@@ -103,6 +162,7 @@ function Player({
 
     return (
       <footer className="player player-remote" data-testid="player-bar">
+        <PlayerTopProgress pct={remotePct} duration={remoteDurationSec} onSeek={(newPct) => onSendRemote({ action: 'seek', payload: { pct: newPct } })} formatTime={formatTime} />
         <div className="player-left">
           <PlayerDisc track={track} token={token} discBg={discBg} />
           <div className="player-info">
@@ -221,6 +281,7 @@ function Player({
 
   return (
     <footer className="player" data-testid="player-bar">
+      <PlayerTopProgress pct={pct} duration={duration} onSeek={onSeek} formatTime={formatTime} />
       <div className={`player-left ${track ? '' : 'player-empty'}`}>
         <PlayerDisc track={track} token={token} discBg={discBg} />
         <div className="player-info">

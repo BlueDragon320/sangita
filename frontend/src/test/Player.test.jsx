@@ -250,4 +250,28 @@ describe('Player Component & Controls', () => {
     fireEvent.click(claimBtn)
     expect(handleClaimDevice).toHaveBeenCalledTimes(1)
   })
+
+  it('renders full-width top progress bar matching mobile miniplayer', () => {
+    const handleSeek = vi.fn()
+    render(
+      <Player
+        track={mockTrack}
+        playlist="Rock Classics"
+        isPlaying={true}
+        currentTime={50}
+        duration={100}
+        onSeek={handleSeek}
+        formatTime={(s) => `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`}
+        isActiveDevice={true}
+        syncState={null}
+      />
+    )
+
+    const topProgress = screen.getByTestId('player-top-progress')
+    expect(topProgress).toBeInTheDocument()
+
+    // Clicking top progress bar triggers onSeek
+    fireEvent.click(topProgress, { clientX: 50 })
+    expect(handleSeek).toHaveBeenCalled()
+  })
 })

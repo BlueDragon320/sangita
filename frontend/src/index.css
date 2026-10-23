@@ -1935,6 +1935,79 @@ body:has(.fullscreen-mode) .main-scroll-body,
 /* ════════════════════════════════════════════════════════════════════════════
    BOTTOM DOCK: PERSISTENT AUDIO PLAYER
    ════════════════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   FULL-WIDTH TOP PROGRESS / TIMESTAMP BAR (MATCHING NATIVE MOBILE DOCK)
+   ════════════════════════════════════════════════════════════════════════════ */
+.player-top-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--border);
+  cursor: pointer;
+  z-index: 50;
+  transition: height 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: visible;
+}
+
+.player-top-progress:hover {
+  height: 6px;
+}
+
+.player-top-progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: var(--emerald, #10B981);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.7);
+  pointer-events: none;
+  border-radius: 0 2px 2px 0;
+}
+
+.player-top-progress-hover {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.25);
+  pointer-events: none;
+  border-radius: 0 2px 2px 0;
+}
+
+.player-top-progress-tooltip {
+  position: fixed;
+  bottom: calc(var(--player-h) + 8px);
+  transform: translateX(-50%);
+  background: #18181B;
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 1600;
+  animation: tooltipFadeIn 0.15s ease-out;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
 .player {
   position: fixed;
   bottom: 0;
