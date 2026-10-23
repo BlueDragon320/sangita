@@ -42,7 +42,7 @@ function PlayerDisc({ track, token, discBg }) {
 }
 
 
-function PlayerTopProgress({ pct, duration, onSeek, formatTime }) {
+function PlayerTopProgress({ pct, currentTime = 0, duration = 0, onSeek, formatTime }) {
   const [hoverPct, setHoverPct] = useState(null)
   const [hoverX, setHoverX] = useState(0)
 
@@ -68,6 +68,7 @@ function PlayerTopProgress({ pct, duration, onSeek, formatTime }) {
   }
 
   const hoverTimeSec = hoverPct !== null && duration > 0 ? (hoverPct / 100) * duration : 0
+  const safePct = Math.min(100, Math.max(0, Number(pct) || 0))
 
   return (
     <div
@@ -78,23 +79,42 @@ function PlayerTopProgress({ pct, duration, onSeek, formatTime }) {
       title="Click to seek"
       data-testid="player-top-progress"
     >
-      <div
-        className="player-top-progress-fill"
-        style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-      />
-      {hoverPct !== null && (
-        <>
+      <span className="player-top-time player-top-time-start">
+        {formatTime ? formatTime(currentTime) : '0:00'}
+      </span>
+
+      <div className="player-top-progress-track">
+        <div
+          className="player-top-progress-fill"
+          style={{ width: `${safePct}%` }}
+        />
+        {/* Vertical playhead thumb indicator matching reference image */}
+        <div
+          className="player-top-progress-thumb"
+          style={{ left: `${safePct}%` }}
+        />
+        {/* Subtle end dot at 100% matching reference image */}
+        <div className="player-top-progress-end-dot" />
+
+        {hoverPct !== null && (
           <div
             className="player-top-progress-hover"
             style={{ width: `${hoverPct}%` }}
           />
-          <div
-            className="player-top-progress-tooltip"
-            style={{ left: hoverX }}
-          >
-            {formatTime ? formatTime(hoverTimeSec) : `${Math.floor(hoverTimeSec / 60)}:${Math.floor(hoverTimeSec % 60).toString().padStart(2, '0')}`}
-          </div>
-        </>
+        )}
+      </div>
+
+      <span className="player-top-time player-top-time-end">
+        {duration > 0 ? (formatTime ? formatTime(duration) : '0:00') : '—:——'}
+      </span>
+
+      {hoverPct !== null && (
+        <div
+          className="player-top-progress-tooltip"
+          style={{ left: hoverX }}
+        >
+          {formatTime ? formatTime(hoverTimeSec) : `${Math.floor(hoverTimeSec / 60)}:${Math.floor(hoverTimeSec % 60).toString().padStart(2, '0')}`}
+        </div>
       )}
     </div>
   )
@@ -162,7 +182,7 @@ function Player({
 
     return (
       <footer className="player player-remote" data-testid="player-bar">
-        <PlayerTopProgress pct={remotePct} duration={remoteDurationSec} onSeek={(newPct) => onSendRemote({ action: 'seek', payload: { pct: newPct } })} formatTime={formatTime} />
+        <PlayerTopProgress pct={remotePct} currentTime={remotePositionSec} duration={remoteDurationSec} onSeek={(newPct) => onSendRemote({ action: 'seek', payload: { pct: newPct } })} formatTime={formatTime} />
         <div className="player-left">
           <PlayerDisc track={track} token={token} discBg={discBg} />
           <div className="player-info">
@@ -171,7 +191,7 @@ function Player({
             </div>
             <div className="player-playlist">
               <span className="player-playlist-name">Playing on <span className="player-device-tag">{activeDeviceName || 'another device'}</span></span>
-              <span className="player-mobile-time"> • {formatTime(remotePositionSec)} / {remoteDurationSec > 0 ? formatTime(remoteDurationSec) : '—:——'}</span>
+              <span className="player-mobile-time"> â€¢ {formatTime(remotePositionSec)} / {remoteDurationSec > 0 ? formatTime(remoteDurationSec) : 'â€”:â€”â€”'}</span>
             </div>
           </div>
           {track && (
@@ -214,20 +234,6 @@ function Player({
             >
               <LoopIcon />
             </button>
-          </div>
-          <div className="playback-bar">
-            <span className="playback-time">{formatTime(remotePositionSec)}</span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="0.1"
-              value={remotePct}
-              onChange={(e) => onSendRemote({ action: 'seek', payload: { pct: parseFloat(e.target.value) } })}
-              className="range-slider"
-              style={sliderStyle(remotePct)}
-            />
-            <span className="playback-time">{remoteDurationSec > 0 ? formatTime(remoteDurationSec) : '—:——'}</span>
           </div>
         </div>
         <div className="player-right">
@@ -281,7 +287,7 @@ function Player({
 
   return (
     <footer className="player" data-testid="player-bar">
-      <PlayerTopProgress pct={pct} duration={duration} onSeek={onSeek} formatTime={formatTime} />
+      <PlayerTopProgress pct={pct} currentTime={currentTime} duration={duration} onSeek={onSeek} formatTime={formatTime} />
       <div className={`player-left ${track ? '' : 'player-empty'}`}>
         <PlayerDisc track={track} token={token} discBg={discBg} />
         <div className="player-info">
@@ -290,7 +296,7 @@ function Player({
           </div>
           <div className="player-playlist">
             <span className="player-playlist-name">{track ? (track.playlist || playlist) : 'Select a track'}</span>
-            <span className="player-mobile-time"> • {formatTime(currentTime)} / {formatTime(duration)}</span>
+            <span className="player-mobile-time"> â€¢ {formatTime(currentTime)} / {formatTime(duration)}</span>
           </div>
         </div>
         {track && (
@@ -360,21 +366,6 @@ function Player({
             <LoopIcon />
           </button>
         </div>
-
-        <div className="playback-bar">
-          <span className="playback-time">{formatTime(currentTime)}</span>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            step="0.1"
-            value={pct}
-            onChange={e => onSeek(parseFloat(e.target.value))}
-            className="range-slider"
-            style={sliderStyle(pct)}
-          />
-          <span className="playback-time">{formatTime(duration)}</span>
-        </div>
       </div>
 
       <div className="player-right">
@@ -428,9 +419,9 @@ function Player({
   )
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    MODERN SLEEK SVGS
-   ════════════════════════════════════════════════════════════════════════════ */
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 function NoteIcon() {
   return (
     <svg viewBox="0 0 24 24" width="22" height="22" fill="var(--emerald)">
