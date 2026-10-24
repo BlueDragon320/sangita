@@ -218,8 +218,8 @@ input, button, select, textarea {
 .brand-icon {
   width: 36px;
   height: 36px;
-  background: var(--card);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: none;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
@@ -231,8 +231,7 @@ input, button, select, textarea {
 
 .sidebar-header:hover .brand-icon {
   transform: scale(1.05);
-  border-color: var(--border-hi);
-  background: var(--card-hover);
+  background: transparent;
 }
 
 .sidebar-header:hover .brand-name {
@@ -2582,8 +2581,8 @@ body:has(.fullscreen-mode) .main-scroll-body,
 .login-logo-icon {
   width: 44px;
   height: 44px;
-  background: var(--card);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: none;
   border-radius: var(--radius-md);
   display: flex;
   align-items: center;

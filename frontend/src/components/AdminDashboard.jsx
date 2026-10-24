@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import SangitaLogo from './SangitaLogo.jsx'
 
 function strHue(str) {
   let h = 0
@@ -1212,12 +1213,12 @@ export default function AdminDashboard({
         .admin-brand-icon {
           width: 32px;
           height: 32px;
-          border-radius: var(--radius-sm);
-          background: linear-gradient(135deg, var(--emerald), var(--emerald-dim));
+          background: transparent;
+          border: none;
           display: flex;
           align-items: center;
           justify-content: center;
-          color: #000;
+          color: var(--emerald);
         }
 
         .admin-brand-title {
@@ -1903,7 +1904,7 @@ export default function AdminDashboard({
       <header className="admin-navbar">
         <div className="admin-brand">
           <div className="admin-brand-icon">
-            <MusicIcon />
+            <SangitaLogo size={28} />
           </div>
           <div>
             <div className="admin-brand-title">Sangita Admin Console</div>
