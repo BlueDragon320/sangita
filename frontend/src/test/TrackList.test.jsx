@@ -56,6 +56,13 @@ describe('TrackList Component & Duration Rendering', () => {
     expect(handlePlay).toHaveBeenCalledWith(mockTracks[1], 1)
   })
 
+  it('provides a named keyboard-accessible play button for each track', () => {
+    const play = vi.fn()
+    render(<TrackList tracks={mockTracks} onPlayTrack={play} durations={mockDurations} token="token" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Play Alone' }))
+    expect(play).toHaveBeenCalledWith(mockTracks[1], 1)
+  })
+
   it('calls onAddToPlaylist when + button is clicked', () => {
     const handleAddToPlaylist = vi.fn()
     render(

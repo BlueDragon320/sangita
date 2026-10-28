@@ -820,6 +820,41 @@ def get_playlists():
                     result[folder] = [f"{folder}/{t}" for t in tracks]
     return jsonify(result)
 
+# Cache parsed tags by file modification time; only return tracks the user can stream.
+_track_metadata_cache = {}
+
+@app.route("/api/track-metadata")
+@require_auth
+def get_track_metadata():
+    playlists = get_playlists().get_json()
+    allowed = g.user.get("rules", {}).get("allowed_playlists", ["*"])
+    root = os.path.realpath(MUSIC_DIR)
+    result = {}
+    for paths in playlists.values():
+        for track_path in paths:
+            safe = os.path.normpath(track_path)
+            parts = safe.split(os.sep)
+            folder = parts[0] if len(parts) > 1 else "Library"
+            if safe.startswith("..") or os.path.isabs(safe) or ("*" not in allowed and folder not in allowed):
+                continue
+            full_path = os.path.realpath(os.path.join(root, safe))
+            if not full_path.startswith(root + os.sep) or not os.path.isfile(full_path):
+                continue
+            try:
+                stamp = os.stat(full_path).st_mtime_ns
+                cached = _track_metadata_cache.get(full_path)
+                if not cached or cached[0] != stamp:
+                    tags = mutagen.File(full_path, easy=True) if mutagen else None
+                    metadata = {key: str(tags.get(key, [""])[0]) for key in ("title", "artist", "album") if tags and tags.get(key)}
+                    cached = (stamp, metadata)
+                    _track_metadata_cache[full_path] = cached
+                result[track_path] = cached[1]
+            except (OSError, ValueError, TypeError):
+                continue
+            except Exception:
+                continue
+    return jsonify(result)
+
 @app.route("/api/favorites", methods=["GET"])
 @require_auth
 def get_favorites():

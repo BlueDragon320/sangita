@@ -49,6 +49,17 @@ describe('Player Component & Controls', () => {
     expect(screen.getByText('5:54')).toBeInTheDocument()
   })
 
+  it('allows seeking with the keyboard', () => {
+    const seek = vi.fn()
+    render(<Player track={mockTrack} currentTime={50} duration={100} onSeek={seek}
+      formatTime={s => String(s)} isActiveDevice={true} volume={80} />)
+    const slider = screen.getByRole('slider', { name: 'Seek' })
+    fireEvent.keyDown(slider, { key: 'ArrowRight' })
+    expect(seek).toHaveBeenCalledWith(55)
+    fireEvent.keyDown(slider, { key: 'Home' })
+    expect(seek).toHaveBeenCalledWith(0)
+  })
+
   it('renders embedded cover image in player disc thumbnail', () => {
     render(
       <Player

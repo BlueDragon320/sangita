@@ -36,6 +36,7 @@ services:
     working_dir: /app
     volumes:
       - ./sync-server:/app
+      - ./data:/app/data:ro
     expose:
       - "3001"
     environment:

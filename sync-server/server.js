@@ -13,6 +13,7 @@ function getSecretKey() {
     return process.env.SECRET_KEY;
   }
   const candidatePaths = [
+    path.join(__dirname, 'data', '.secret_key'),
     path.join(__dirname, '..', 'data', '.secret_key'),
     path.join(__dirname, '..', 'backend', 'data', '.secret_key'),
   ];
@@ -24,10 +25,9 @@ function getSecretKey() {
       }
     } catch (_) {}
   }
-  return process.env.SECRET_KEY || 'change-this-secret';
+  return null;
 }
 
-const SECRET_KEY  = getSecretKey();
 const REDIS_URL   = process.env.REDIS_URL   || 'redis://localhost:6379';
 const PORT        = Number(process.env.SYNC_PORT || 3001);
 const DEVICE_TTL  = 120;  // seconds — refreshed by HEARTBEAT every 25s
@@ -173,7 +173,9 @@ function verifyToken(token) {
     if (lastDot < 0) return null;
     const b64      = token.substring(0, lastDot);
     const sig      = token.substring(lastDot + 1);
-    const expected = crypto.createHmac('sha256', SECRET_KEY).update(b64).digest('hex');
+    const secret = getSecretKey();
+    if (!secret) return null;
+    const expected = crypto.createHmac('sha256', secret).update(b64).digest('hex');
     if (sig.length !== expected.length) return null;
     if (!crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'))) return null;
     const decoded = Buffer.from(b64, 'base64url').toString('utf8');

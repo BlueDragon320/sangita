@@ -1293,7 +1293,11 @@ body:has(.fullscreen-mode) .main-scroll-body,
 }
 
 .row-play-btn {
-  display: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
   background: transparent;
   border: none;
   color: var(--text);
@@ -1301,10 +1305,7 @@ body:has(.fullscreen-mode) .main-scroll-body,
   padding: 0;
 }
 
-.spotify-track-row:hover .row-num-label,
-.track-row:hover .row-num-label {
-  display: none;
-}
+
 
 .spotify-track-row:hover .row-play-btn,
 .track-row:hover .row-play-btn {
@@ -6206,10 +6207,11 @@ body:has(.fullscreen-mode) .main-scroll-body,
     gap: 0;
   }
 
-  /* On phone: remove the persistent favorite icon and just show the timestamp */
+  /* Keep the favorite action discoverable on touch screens. */
   .track-row-actions {
-    display: none !important;
+    display: flex !important;
   }
+  .track-row-add-btn { display: none !important; }
 
   .track-duration-timestamp-wrapper {
     display: flex;
@@ -6734,3 +6736,6 @@ body:has(.fullscreen-mode) .main-scroll-body,
     filter: none !important;
   }
 }
+.spotify-track-row button:focus-visible, .player-top-progress:focus-visible { outline: 2px solid var(--emerald); outline-offset: 2px; }
+
+.spotify-track-row:focus-within .row-play-btn { opacity: 1; visibility: visible; }

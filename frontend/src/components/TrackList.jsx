@@ -144,18 +144,9 @@ function TrackRowItem({
     >
       {/* Number / Play Indicator Column */}
       <div className="col-num">
-        {isCurrentlyPlaying ? (
-          <PlayingBars />
-        ) : (
-          <>
-            <span className="row-num-label">{idx + 1}</span>
-            <button className="row-play-btn" title="Play">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                <path d="M8 5v14l11-7z"/>
-              </svg>
-            </button>
-          </>
-        )}
+        <button className="row-play-btn" title="Play" aria-label={`Play ${track.name}`}>
+          {isCurrentlyPlaying ? <PlayingBars /> : <span className="row-num-label">{idx + 1}</span>}
+        </button>
       </div>
 
       {/* Title + Thumbnail + Artist Column */}

@@ -73,6 +73,20 @@ function PlayerTopProgress({ pct, currentTime = 0, duration = 0, onSeek, formatT
   return (
     <div
       className="player-top-progress"
+      role="slider"
+      tabIndex={0}
+      aria-label="Seek"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(safePct)}
+      aria-valuetext={`${formatTime ? formatTime(currentTime) : '0:00'} of ${formatTime ? formatTime(duration) : '0:00'}`}
+      onKeyDown={(e) => {
+        const changes = { ArrowLeft: -5, ArrowDown: -5, ArrowRight: 5, ArrowUp: 5 }
+        if (e.key in changes || e.key === 'Home' || e.key === 'End') {
+          e.preventDefault(); e.stopPropagation()
+          onSeek?.(e.key === 'Home' ? 0 : e.key === 'End' ? 100 : Math.max(0, Math.min(100, safePct + changes[e.key])))
+        }
+      }}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onClick={handleClick}
@@ -191,7 +205,7 @@ function Player({
             </div>
             <div className="player-playlist">
               <span className="player-playlist-name">Playing on <span className="player-device-tag">{activeDeviceName || 'another device'}</span></span>
-              <span className="player-mobile-time"> â€¢ {formatTime(remotePositionSec)} / {remoteDurationSec > 0 ? formatTime(remoteDurationSec) : 'â€”:â€”â€”'}</span>
+              <span className="player-mobile-time"> • {formatTime(remotePositionSec)} / {remoteDurationSec > 0 ? formatTime(remoteDurationSec) : '—:——'}</span>
             </div>
           </div>
           {track && (
@@ -296,7 +310,7 @@ function Player({
           </div>
           <div className="player-playlist">
             <span className="player-playlist-name">{track ? (track.playlist || playlist) : 'Select a track'}</span>
-            <span className="player-mobile-time"> â€¢ {formatTime(currentTime)} / {formatTime(duration)}</span>
+            <span className="player-mobile-time"> • {formatTime(currentTime)} / {formatTime(duration)}</span>
           </div>
         </div>
         {track && (

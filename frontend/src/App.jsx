@@ -140,6 +140,8 @@ export default function App() {
   })
   const [searchQuery,     setSearchQuery]     = useState('')
   const [dataLoading,     setDataLoading]     = useState(false)
+  const [libraryError, setLibraryError] = useState(false)
+  const [libraryRetry, setLibraryRetry] = useState(0)
   const [mobileMenuOpen,  setMobileMenuOpen]  = useState(false)
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
   const [queue,           setQueue]           = useState([])
@@ -151,6 +153,7 @@ export default function App() {
   const [currentTime,     setCurrentTime]     = useState(0)
   const [duration,        setDuration]        = useState(0)
   const [durations,       setDurations]       = useState({})
+  const [trackMetadata, setTrackMetadata] = useState({})
   const [theme,           setTheme]           = useState(() => {
     const saved = localStorage.getItem('sangita_theme');
     return saved === 'light' ? 'light' : 'dark';
@@ -167,6 +170,7 @@ export default function App() {
   const [lyricsLoading,      setLyricsLoading]      = useState(false)
 
   const audioRef     = useRef(null)
+  const shuffleRef = useRef({ signature: '', remaining: [], history: [], forward: [] })
   const queueRef     = useRef([])
   const indexRef     = useRef(-1)
   const isShuffleRef = useRef(false)
@@ -190,27 +194,32 @@ export default function App() {
 
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
     const results = [];
     for (const [plName, paths] of Object.entries(playlists)) {
       paths.forEach((p, i) => {
         const trackName = p.split('/').pop().replace(/\.[^/.]+$/, '');
-        if (trackName.toLowerCase().includes(q) || plName.toLowerCase().includes(q)) {
+        const metadata = trackMetadata[p] || {}
+        if ([trackName, plName, metadata.title, metadata.artist, metadata.album].some(value => value?.toLowerCase().includes(q))) {
           results.push({
             id: `search-${plName}-${i}`,
             path: p,
-            name: trackName,
+            name: metadata.title || trackName,
+            artist: metadata.artist,
             playlist: plName
           });
         }
       });
     }
     return results;
-  }, [searchQuery, playlists]);
+  }, [searchQuery, playlists, trackMetadata]);
 
   useEffect(() => { queueRef.current     = queue        }, [queue])
   useEffect(() => { indexRef.current     = currentIndex }, [currentIndex])
-  useEffect(() => { isShuffleRef.current = isShuffle    }, [isShuffle])
+  useEffect(() => {
+    isShuffleRef.current = isShuffle
+    shuffleRef.current = { signature: '', remaining: [], history: [], forward: [] }
+  }, [isShuffle])
   useEffect(() => { isLoopRef.current    = isLoop       }, [isLoop])
   useEffect(() => { volumeRef.current    = volume       }, [volume])
 
@@ -743,14 +752,20 @@ export default function App() {
   useEffect(() => {
     if (!token) return
     setDataLoading(true)
+    setLibraryError(false)
     fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
+      .then(r => { if (!r.ok) { const error = new Error(r.status); error.status = r.status; throw error }; return r.json() })
       .then(user => {
         setUsername(user.username);
         setRole(user.role);
         localStorage.setItem('sangita_user', user.username);
         localStorage.setItem('sangita_role', user.role);
         
+        fetch('/api/track-metadata', { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.ok ? r.json() : {})
+          .then(setTrackMetadata)
+          .catch(() => {})
+
         // Fetch durations in parallel
         fetch('/api/durations', { headers: { Authorization: `Bearer ${token}` } })
           .then(r => r.ok ? r.json() : {})
@@ -773,7 +788,7 @@ export default function App() {
 
         return fetch('/api/playlists', { headers: { Authorization: `Bearer ${token}` } });
       })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
+      .then(r => { if (!r.ok) { const error = new Error(r.status); error.status = r.status; throw error }; return r.json() })
       .then(data => {
         setPlaylists(data);
         const keys = Object.keys(data);
@@ -783,9 +798,9 @@ export default function App() {
           setCurrentPlaylist(defaultPl);
         }
       })
-      .catch(() => handleLogout())
+      .catch(err => { if (err.status === 401 || err.status === 403) handleLogout(); else setLibraryError(true) })
       .finally(() => setDataLoading(false))
-  }, [token, handleLogout])
+  }, [token, handleLogout, libraryRetry])
 
   const fetchPlaylists = useCallback(() => {
     if (!token) return
@@ -961,7 +976,10 @@ export default function App() {
     })
   }, [broadcastState, getMyDeviceId, claimActiveDevice])
 
-  const playTrack  = useCallback((track, index) => internalPlayTrack(track, index), [internalPlayTrack])
+  const playTrack = useCallback((track, index) => {
+    shuffleRef.current = { signature: '', remaining: [], history: [], forward: [] }
+    internalPlayTrack(track, index)
+  }, [internalPlayTrack])
 
   const handleQuickShuffle = useCallback(() => {
     const allTracks = []
@@ -976,7 +994,10 @@ export default function App() {
       })
     })
     if (allTracks.length === 0) return
-    const shuffled = [...allTracks].sort(() => Math.random() - 0.5)
+    const shuffled = [...new Map(allTracks.map(track => [track.path, track])).values()]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1)); [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
     setQueue(shuffled)
     setCurrentIndex(0)
     setIsShuffle(true)
@@ -988,8 +1009,21 @@ export default function App() {
     if (q.length === 0) return
     let nextIdx
     if (isShuffleRef.current) {
-      if (q.length === 1) { nextIdx = 0 }
-      else { do { nextIdx = Math.floor(Math.random() * q.length) } while (nextIdx === idx) }
+      const signature = JSON.stringify(q.map(t => t.path))
+      let state = shuffleRef.current
+      if (state.signature !== signature) state = shuffleRef.current = { signature, remaining: [], history: [], forward: [] }
+      if (state.forward.length) {
+        nextIdx = state.forward.pop()
+      } else {
+        if (!state.remaining.length) {
+          state.remaining = q.map((_, i) => i).filter(i => i !== idx)
+          for (let i = state.remaining.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1)); [state.remaining[i], state.remaining[j]] = [state.remaining[j], state.remaining[i]]
+          }
+        }
+        nextIdx = state.remaining.pop() ?? idx
+      }
+      if (idx >= 0 && nextIdx !== idx) state.history.push(idx)
     } else { nextIdx = idx + 1 >= q.length ? 0 : idx + 1 }
     internalPlayTrack(q[nextIdx], nextIdx, forceLocal)
   }, [internalPlayTrack, getActiveQueueAndIndex])
@@ -998,7 +1032,13 @@ export default function App() {
     const { q, idx } = getActiveQueueAndIndex()
     if (q.length === 0) return
     if (audioRef.current && audioRef.current.currentTime > 3) { audioRef.current.currentTime = 0; return }
-    const prevIdx = idx <= 0 ? q.length - 1 : idx - 1
+    let prevIdx = idx <= 0 ? q.length - 1 : idx - 1
+    if (isShuffleRef.current) {
+      const state = shuffleRef.current
+      if (state.signature !== JSON.stringify(q.map(t => t.path)) || !state.history.length) return
+      prevIdx = state.history.pop()
+      if (idx >= 0) state.forward.push(idx)
+    }
     internalPlayTrack(q[prevIdx], prevIdx, forceLocal)
   }, [internalPlayTrack, getActiveQueueAndIndex])
 
@@ -1229,6 +1269,7 @@ export default function App() {
     const nextShuffle = !isShuffleRef.current
     const isAct = isActiveRef.current
     if (isAct) {
+      shuffleRef.current = { signature: '', remaining: [], history: [], forward: [] }
       setIsShuffle(nextShuffle)
     } else {
       sendRemoteRef.current?.({ action: 'shuffle', payload: { shuffle: nextShuffle } })
@@ -1285,7 +1326,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e) => {
       if (view !== 'music') return
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return
+      if (e.defaultPrevented || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName) || e.target.getAttribute('role') === 'slider') return
       if (e.code === 'Space')      { e.preventDefault(); togglePlay() }
       if (e.code === 'ArrowRight') playNext()
       if (e.code === 'ArrowLeft')  playPrev()
@@ -1586,6 +1627,8 @@ export default function App() {
               </ErrorBoundary>
             ) : dataLoading ? (
               <div className="loading-state"><div className="spinner" /><p>Loading your music library…</p></div>
+            ) : libraryError ? (
+              <div className="empty-state" role="alert"><p>Could not load your music library. Check your connection and try again.</p><button onClick={() => setLibraryRetry(n => n + 1)}>Try again</button></div>
             ) : view === 'home' ? (
               <HomeDashboard
                 username={username}

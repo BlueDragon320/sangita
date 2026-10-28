@@ -50,7 +50,8 @@ function Header({
           </svg>
           <input
             type="text"
-            placeholder="serach songs pal"
+            placeholder="Search songs or playlists"
+            aria-label="Search songs or playlists"
             value={searchQuery || ''}
             onChange={e => onSearchChange(e.target.value)}
             className="search-input"

@@ -24,7 +24,7 @@ describe('Header Component & Theme Toggle', () => {
       />
     )
 
-    expect(screen.getByPlaceholderText('serach songs pal')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Search songs or playlists')).toBeInTheDocument()
     expect(screen.getByText('admin')).toBeInTheDocument()
     expect(screen.getByText('3')).toBeInTheDocument()
   })
@@ -72,7 +72,7 @@ describe('Header Component & Theme Toggle', () => {
       />
     )
 
-    const searchInput = screen.getByPlaceholderText('serach songs pal')
+    const searchInput = screen.getByPlaceholderText('Search songs or playlists')
     fireEvent.change(searchInput, { target: { value: 'Mozart' } })
     expect(handleSearch).toHaveBeenCalledWith('Mozart')
 
