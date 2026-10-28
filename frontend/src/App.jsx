@@ -723,13 +723,13 @@ export default function App() {
   const toggleFavorite = useCallback(async (trackPath) => {
     if (!trackPath || !token) return
     try {
-      const res = await fetch('/api/favorites/toggle', {
+      const res = await fetch('/api/favorites/set', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ track_path: trackPath })
+        body: JSON.stringify({ track_path: trackPath, is_favorite: !favorites.includes(trackPath) })
       })
       if (res.ok) {
         const data = await res.json()
@@ -747,7 +747,7 @@ export default function App() {
     } catch (err) {
       console.error('[Favorites] Toggle error:', err)
     }
-  }, [token, currentPlaylist])
+  }, [token, currentPlaylist, favorites])
 
   useEffect(() => {
     if (!token) return

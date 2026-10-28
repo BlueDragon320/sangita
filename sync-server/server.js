@@ -457,8 +457,10 @@ io.on('connection', (socket) => {
     const targetDev = userDevs?.get(resolvedTargetId);
     if (targetDev && targetDev.socketId) {
       io.to(targetDev.socketId).emit('REMOTE_COMMAND', commandObj);
+    } else {
+      // Fallback for a device that has not registered its socket yet.
+      socket.to(userRoom).emit('REMOTE_COMMAND', commandObj);
     }
-    socket.to(userRoom).emit('REMOTE_COMMAND', commandObj);
   });
 
   socket.on('disconnect', (reason) => {

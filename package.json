@@ -6,6 +6,7 @@
   "scripts": {
     "start": "npm --prefix frontend run dev",
     "dev": "npm --prefix frontend run dev",
-    "test": "npm --prefix frontend test"
+    "test": "npm --prefix frontend test",
+    "test:sync": "node --test sync-server/test/cross-device.test.cjs"
   }
 }

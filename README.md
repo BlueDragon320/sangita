@@ -82,6 +82,8 @@ SANGITA_PASS=yourpassword
 SECRET_KEY=generate-a-secure-random-secret-here
 ```
 
+Compose requires `SANGITA_PASS` and `SECRET_KEY` to be set. Set a strong password and a random secret before starting a new installation; for example, generate a secret with `openssl rand -hex 32`. Existing user accounts are stored in `data/`, so changing the password environment variable does not change an existing account's password; use the admin controls for that. If an existing installation previously relied on the generated `data/.secret_key`, use its value for `SECRET_KEY` to preserve existing sessions; choosing a new secret signs users out. Keep `.env` private. Use HTTPS for access outside a trusted local network.
+
 ### Step 3: Add Your Audio Library
 Add music folders inside the `music/` directory. Each subfolder automatically becomes a playlist in Sangita:
 ```bash
@@ -269,14 +271,28 @@ sangita/
 
 ## Verification & Test Suites
 
-The codebase maintains full test coverage across all stack layers:
+Install the frontend and sync-server dependencies first. The cross-device test starts a temporary local Socket.IO server and uses the web client's Socket.IO dependency.
 
-| Layer | Framework | Tests | Status |
-| :--- | :--- | :--- | :--- |
-| **Backend Core & Admin** | `pytest` (`backend/test_admin_api.py`, `backend/test_security.py`) | 20 Tests | **Passed** |
-| **Lyrics Worker & Offline Fallback** | `pytest` (`backend/test_lyrics_worker.py`) | 8 Tests | **Passed** |
-| **Local PC GPU Lyrics API** | `unittest` (`Local_PC_Lyrics_API/test_server.py`) | 5 Tests | **Passed** |
-| **Frontend Web App** | Vitest & Testing Library (`npm test`, 14 Suites) | 61 Tests | **Passed** |
+```bash
+npm --prefix frontend install
+npm --prefix sync-server install
+npm --prefix frontend test
+node --test sync-server/test/cross-device.test.cjs
+```
+
+To run the favorite-state API tests with isolated data and music directories:
+
+```bash
+mkdir -p /tmp/sangita-test-data /tmp/sangita-test-music
+DATA_DIR=/tmp/sangita-test-data MUSIC_DIR=/tmp/sangita-test-music \
+  python -m unittest discover -s backend -p 'test_favorites_set.py' -v
+```
+
+Some of the older backend tests write test data or lyrics; always point both `DATA_DIR` and `MUSIC_DIR` at temporary directories when running them.
+
+### Android compatibility
+
+Deploy the updated backend and web application together before updating the Android client. The Android client uses `/api/favorites/set` for retry-safe favorite changes; older server versions do not support that endpoint. Existing clients can still use `/api/favorites/toggle`.
 
 ---
 

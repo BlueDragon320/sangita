@@ -23,8 +23,8 @@ services:
     environment:
       - MUSIC_DIR=/app/music
       - SANGITA_USER=${SANGITA_USER:-admin}
-      - SANGITA_PASS=${SANGITA_PASS:-sangita123}
-      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
+      - SANGITA_PASS=${SANGITA_PASS:?Set SANGITA_PASS in .env}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env}
       - SYNC_SERVER_URL=http://sync-server:3001
     depends_on:
       - redis
@@ -40,7 +40,7 @@ services:
     expose:
       - "3001"
     environment:
-      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env}
       - REDIS_URL=redis://redis:6379
       - SYNC_PORT=3001
       - CORS_ORIGIN=*

@@ -143,6 +143,32 @@ describe('App Component Full Integration', () => {
     })
   })
 
+  it('sends explicit favorite states when adding and removing a song', async () => {
+    localStorage.setItem('sangita_token', 'mock-token')
+    let favorites = []
+    global.fetch = vi.fn().mockImplementation((url, options = {}) => {
+      if (url === '/api/me') return Promise.resolve({ ok: true, json: async () => ({ username: 'admin', role: 'admin' }) })
+      if (url === '/api/playlists') return Promise.resolve({ ok: true, json: async () => ({ 'Chill Vibes': ['Chill Vibes/song1.mp3'], Favorites: [] }) })
+      if (url === '/api/favorites/set') {
+        const body = JSON.parse(options.body)
+        favorites = body.is_favorite ? [body.track_path] : []
+        return Promise.resolve({ ok: true, json: async () => ({ favorites }) })
+      }
+      if (url === '/api/favorites') return Promise.resolve({ ok: true, json: async () => favorites })
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    render(<App />)
+    await waitFor(() => expect(screen.getByTestId('sidebar-playlist-Chill Vibes')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('sidebar-playlist-Chill Vibes'))
+    const like = await screen.findByTestId('track-row-like-0')
+    fireEvent.click(like)
+    await waitFor(() => expect(like).toHaveAttribute('title', 'Remove from Favorites'))
+    fireEvent.click(like)
+    await waitFor(() => expect(like).toHaveAttribute('title', 'Add to Favorites'))
+    const requests = global.fetch.mock.calls.filter(([url]) => url === '/api/favorites/set')
+    expect(requests.map(([, options]) => JSON.parse(options.body).is_favorite)).toEqual([true, false])
+  })
+
   it('auto-advances to the next track when current track ends', async () => {
     localStorage.setItem('sangita_token', 'mock-token')
     localStorage.setItem('sangita_user', 'admin')

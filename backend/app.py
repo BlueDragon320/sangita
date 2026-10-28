@@ -914,6 +914,28 @@ def toggle_favorite():
     finally:
         conn.close()
 
+@app.route("/api/favorites/set", methods=["POST"])
+@require_auth
+def set_favorite():
+    """Set a favorite to a desired state; repeating a request is safe."""
+    data = request.get_json(silent=True) or {}
+    track_path = data.get("track_path")
+    desired = data.get("is_favorite")
+    if not isinstance(track_path, str) or not track_path.strip() or not isinstance(desired, bool):
+        return jsonify({"error": "track_path and boolean is_favorite are required"}), 400
+    username = g.user.get("username", "admin")
+    conn = get_db()
+    try:
+        if desired:
+            conn.execute("INSERT OR IGNORE INTO playlist_tracks (username, playlist_name, track_path) VALUES (?, 'Favorites', ?)", (username, track_path))
+        else:
+            conn.execute("DELETE FROM playlist_tracks WHERE username = ? AND playlist_name = 'Favorites' AND track_path = ?", (username, track_path))
+        conn.commit()
+        rows = conn.execute("SELECT track_path FROM playlist_tracks WHERE username = ? AND playlist_name = 'Favorites' ORDER BY added_at DESC, id DESC", (username,)).fetchall()
+        return jsonify({"track_path": track_path, "is_favorite": desired, "favorites": [row["track_path"] for row in rows]})
+    finally:
+        conn.close()
+
 @app.route("/api/user-playlists", methods=["GET"])
 @require_auth
 def get_user_playlists():
