@@ -42,7 +42,7 @@ function detectDeviceType() {
   return 'desktop';
 }
 
-export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
+export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, getTrackId }) {
   const [devices,        setDevices]        = useState([]);
   const [isActiveDevice, setIsActiveDevice] = useState(true);
   const [syncState,      setSyncState]      = useState(null);
@@ -53,6 +53,8 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
   const heartbeatRef   = useRef(null);
   const deviceId       = useRef(getOrCreateDeviceId());
   const onRemoteCmdRef = useRef(onRemoteCommand);
+  const getTrackIdRef = useRef(getTrackId);
+  getTrackIdRef.current = getTrackId;
 
   useEffect(() => { onRemoteCmdRef.current = onRemoteCommand; }, [onRemoteCommand]);
   useEffect(() => { isActiveRef.current    = isActiveDevice;  }, [isActiveDevice]);
@@ -97,10 +99,10 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
         audioRef.current.pause();
       }
     });
-    socket.on('POSITION_SYNC', ({ positionMs, durationMs, updatedAt, originDeviceId }) => {
-      if (originDeviceId === deviceId.current) return;
+    socket.on('POSITION_SYNC', (state) => {
+      if (state.originDeviceId === deviceId.current) return;
       if (!isActiveRef.current) {
-        setSyncState(prev => prev ? { ...prev, positionMs, durationMs, updatedAt } : prev);
+        setSyncState(prev => prev ? { ...prev, ...state, isTransferHandoff: false } : state);
       }
     });
     const handleCmd = (command) => {
@@ -128,6 +130,9 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
     posReportRef.current = setInterval(() => {
       if (!socketRef.current || !audioRef.current) return;
       socketRef.current.emit('POSITION_REPORT', {
+        trackId: getTrackIdRef.current?.(),
+        isPlaying: !audioRef.current.paused && !audioRef.current.ended && audioRef.current.readyState >= 3,
+        isBuffering: !audioRef.current.paused && audioRef.current.readyState < 3,
         positionMs: Math.floor(audioRef.current.currentTime * 1000),
         durationMs: isFinite(audioRef.current.duration) ? Math.floor(audioRef.current.duration * 1000) : 0,
       });
@@ -144,6 +149,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
   }, []);
   const transferPlayback = useCallback((targetDeviceId) => {
     console.log('[transferPlayback] target:', targetDeviceId, 'myId:', deviceId.current);
+    const wasActive = isActiveRef.current;
     const isBecomingActive = targetDeviceId === deviceId.current;
     setIsActiveDevice(isBecomingActive);
     isActiveRef.current = isBecomingActive;
@@ -151,7 +157,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand }) {
     // Extract exact current playback position if this device was active
     let currentPosMs = undefined;
     let currentDurMs = undefined;
-    if (audioRef.current && isActiveRef.current) {
+    if (audioRef.current && wasActive) {
       if (!isNaN(audioRef.current.currentTime) && audioRef.current.currentTime >= 0) {
         currentPosMs = Math.floor(audioRef.current.currentTime * 1000);
       }

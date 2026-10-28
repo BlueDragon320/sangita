@@ -419,21 +419,29 @@ io.on('connection', (socket) => {
     socket.to(userRoom).emit('PLAYBACK_STATE_CHANGED', updatedSession);
   });
 
-  socket.on('POSITION_REPORT', ({ positionMs, durationMs }) => {
+  socket.on('POSITION_REPORT', (report) => {
     const session = getRamSession(userId);
     if (!session || session.activeDeviceId !== socket.deviceId) return;
 
-    session.positionMs = Number(positionMs || 0);
-    if (durationMs !== undefined) session.durationMs = Number(durationMs || 0);
-    session.updatedAt  = Date.now();
-
-    // Replicate live timestamp to all passive devices so scrubbers stay in sync
-    socket.to(userRoom).emit('POSITION_SYNC', {
-      positionMs: session.positionMs,
-      durationMs: session.durationMs,
-      updatedAt: session.updatedAt,
+    // The active player's identity and transport state belong to the same
+    // in-memory snapshot as its position. This also repairs a missed track-change
+    // notification instead of advancing the timestamp of the previous song.
+    const updatedSession = {
+      ...session,
+      trackId: typeof report.trackId === 'string' && report.trackId ? report.trackId : session.trackId,
+      positionMs: Number(report.positionMs || 0),
+      durationMs: report.durationMs !== undefined ? Number(report.durationMs || 0) : session.durationMs,
+      isPlaying: typeof report.isPlaying === 'boolean' ? report.isPlaying : session.isPlaying,
+      isBuffering: typeof report.isBuffering === 'boolean' ? report.isBuffering : session.isBuffering,
       originDeviceId: socket.deviceId,
-    });
+      isTransferHandoff: false,
+      updatedAt: Date.now(),
+    };
+    setRamSession(userId, updatedSession);
+
+    // Send the complete session so metadata and progress always identify the
+    // same track. Older clients can continue reading position/duration alone.
+    socket.to(userRoom).emit('POSITION_SYNC', updatedSession);
   });
 
   socket.on('REMOTE_CONTROL', ({ action, payload, targetDeviceId }) => {

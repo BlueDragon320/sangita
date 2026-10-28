@@ -71,6 +71,45 @@ test('web and Android devices receive position and a remote command once, isolat
     await new Promise(resolve => setTimeout(resolve, 250));
     assert.equal(commands, 1);
     assert.equal(leaked, 0);
+
+    const firstTrack = onceEvent(mobile, 'PLAYBACK_STATE_CHANGED', state => state.trackId === 'First/old.mp3');
+    desktop.emit('PLAYBACK_STATE_CHANGED', {
+      trackId: 'First/old.mp3', positionMs: 0, durationMs: 300000,
+      isPlaying: true, isBuffering: false,
+    });
+    await firstTrack;
+
+    // A real player report must repair a missed track-change event in RAM and
+    // carry identity together with the new song's clock and transport state.
+    const nextTrack = onceEvent(mobile, 'POSITION_SYNC', state => state.trackId === 'Second/new.mp3');
+    desktop.emit('POSITION_REPORT', {
+      trackId: 'Second/new.mp3', positionMs: 5000, durationMs: 180000,
+      isPlaying: true, isBuffering: false,
+    });
+    const snapshot = await nextTrack;
+    assert.equal(snapshot.trackId, 'Second/new.mp3');
+    assert.equal(snapshot.activeDeviceId, 'desktop');
+    assert.equal(snapshot.positionMs, 5000);
+    assert.equal(snapshot.durationMs, 180000);
+    assert.equal(snapshot.isPlaying, true);
+    assert.equal(snapshot.isBuffering, false);
+
+    // A phone requesting playback must receive this same authoritative song,
+    // rather than the previous song cached in its own player.
+    const handoff = onceEvent(mobile, 'PLAYBACK_STATE_CHANGED', state => state.isTransferHandoff && state.activeDeviceId === 'phone');
+    mobile.emit('TRANSFER_PLAYBACK', { targetDeviceId: 'phone' });
+    const transferred = await handoff;
+    assert.equal(transferred.trackId, 'Second/new.mp3');
+    assert.equal(transferred.originDeviceId, 'phone');
+
+    // The old speaker cannot overwrite the new active phone's identity.
+    desktop.emit('POSITION_REPORT', { trackId: 'First/old.mp3', positionMs: 99999 });
+    const phonePosition = onceEvent(desktop, 'POSITION_SYNC');
+    mobile.emit('POSITION_REPORT', {
+      trackId: 'Second/new.mp3', positionMs: 9000, durationMs: 180000,
+      isPlaying: true, isBuffering: false,
+    });
+    assert.equal((await phonePosition).trackId, 'Second/new.mp3');
   } finally {
     sockets.forEach(socket => socket.disconnect());
     server.kill();

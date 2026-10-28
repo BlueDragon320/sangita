@@ -434,7 +434,8 @@ export default function App() {
     devices, isActiveDevice, setIsActiveDevice, syncState, setSyncState,
     broadcastState, transferPlayback, sendRemoteControl,
     claimActiveDevice, getMyDeviceId,
-  } = useDeviceSync({ token, audioRef, isPlaying: isLocalPlaying, onRemoteCommand: handleRemoteCommand });
+  } = useDeviceSync({ token, audioRef, isPlaying: isLocalPlaying, onRemoteCommand: handleRemoteCommand,
+    getTrackId: () => loadedTrackIdRef.current });
 
   const handleUnlockWebAudio = useCallback(async () => {
     if (!audioRef.current) return;
@@ -1124,65 +1125,26 @@ export default function App() {
     playNext(true)
   }, [playNext, broadcastState, getMyDeviceId])
 
-  useEffect(() => {
-    const audio = audioRef.current; if (!audio) return
-    const onDurationChange = () => {
-      const dur = audio.duration
-      if (isFinite(dur) && dur > 0) {
-        if (lastSyncIdRef.current) {
-          broadcastState({
-            activeDeviceId: getMyDeviceId(),
-            trackId: loadedTrackIdRef.current,
-            positionMs: Math.floor(audio.currentTime * 1000),
-            durationMs: Math.floor(dur * 1000),
-            isPlaying: !audio.paused,
-            volume: volumeRef.current / 100,
-            isLoop: isLoopRef.current,
-            isShuffle: isShuffleRef.current,
-            updatedAt: Date.now(),
-          })
-        }
-      }
-    }
-    const onPlaying = () => {
-      if (!isActiveRef.current || !loadedTrackIdRef.current) return;
-      setIsLocalPlaying(true);
-      broadcastState({
-        activeDeviceId: getMyDeviceId(),
-        trackId: loadedTrackIdRef.current,
-        positionMs: Math.floor(audio.currentTime * 1000),
-        durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
-        isPlaying: true,
-        isBuffering: false,
-        volume: volumeRef.current / 100,
-        isLoop: isLoopRef.current,
-        isShuffle: isShuffleRef.current,
-        updatedAt: Date.now(),
-      });
-    };
-    const onWaiting = () => {
-      if (!isActiveRef.current || !loadedTrackIdRef.current) return;
-      broadcastState({
-        activeDeviceId: getMyDeviceId(),
-        trackId: loadedTrackIdRef.current,
-        positionMs: Math.floor(audio.currentTime * 1000),
-        durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
-        isPlaying: false,
-        isBuffering: true,
-        volume: volumeRef.current / 100,
-        isLoop: isLoopRef.current,
-        isShuffle: isShuffleRef.current,
-        updatedAt: Date.now(),
-      });
-    };
-    audio.addEventListener('playing', onPlaying);
-    audio.addEventListener('waiting', onWaiting);
-    audio.addEventListener('durationchange', onDurationChange)
-    return () => {
-      audio.removeEventListener('playing', onPlaying)
-      audio.removeEventListener('waiting', onWaiting)
-      audio.removeEventListener('durationchange', onDurationChange)
-    }
+  // React attaches these handlers with the audio element, including after
+  // login and when returning from the admin screen. An effect with only stable
+  // callback dependencies can run before the audio element exists and never attach.
+  const publishAudioState = useCallback((event) => {
+    const audio = event.currentTarget
+    if (!isActiveRef.current || !loadedTrackIdRef.current) return
+    const isBuffering = event.type === 'waiting' ||
+      (!audio.paused && audio.readyState < 3 && event.type !== 'playing' && event.type !== 'error')
+    broadcastState({
+      activeDeviceId: getMyDeviceId(),
+      trackId: loadedTrackIdRef.current,
+      positionMs: Math.floor(audio.currentTime * 1000),
+      durationMs: isFinite(audio.duration) ? Math.floor(audio.duration * 1000) : 0,
+      isPlaying: !audio.paused && !audio.ended && !isBuffering && event.type !== 'error',
+      isBuffering,
+      volume: volumeRef.current / 100,
+      isLoop: isLoopRef.current,
+      isShuffle: isShuffleRef.current,
+      updatedAt: Date.now(),
+    })
   }, [broadcastState, getMyDeviceId])
 
   const togglePlay = useCallback((forcePlay, forceLocal) => {
@@ -1624,7 +1586,13 @@ export default function App() {
         preload="auto"
         onEnded={handleEnded}
         onPlay={() => setIsLocalPlaying(true)}
-        onPause={() => setIsLocalPlaying(false)}
+        onPause={(event) => { setIsLocalPlaying(false); publishAudioState(event) }}
+        onPlaying={(event) => { setIsLocalPlaying(true); publishAudioState(event) }}
+        onWaiting={publishAudioState}
+        onDurationChange={publishAudioState}
+        onLoadedMetadata={publishAudioState}
+        onSeeked={publishAudioState}
+        onError={publishAudioState}
       />
       {showDevices && (
         <DevicePanel
