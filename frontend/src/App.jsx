@@ -20,17 +20,64 @@ function formatTime(s) {
   if (!s || isNaN(s) || s === Infinity) return '0:00'
   return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`
 }
-function ThemeIcon({ theme }) {
+export const THEME_STORAGE_KEY = 'sangita_theme';
+export const THEME_MIGRATION_KEY = 'sangita_theme_migrated_v2';
+export const VALID_THEMES = ['amoled', 'dark', 'light'];
+
+export function resolveInitialTheme(storage = (typeof window !== 'undefined' ? window.localStorage : null)) {
+  if (!storage) return 'amoled';
+  try {
+    const isMigrated = storage.getItem(THEME_MIGRATION_KEY) === 'true';
+    const savedTheme = storage.getItem(THEME_STORAGE_KEY);
+
+    // Migration rule (Part 1 implementationplan.md):
+    // Prior to 3-theme alignment with Android, Sangita only had 'dark' (pure #000000 black) and 'light'.
+    // In the Android-aligned 3-theme palette:
+    //   - 'amoled' = Pure AMOLED Black (#000000)
+    //   - 'dark'   = Dark Obsidian (#080A0F)
+    //   - 'light'  = Light Zinc (#F8FAFC)
+    // An existing saved 'dark' setting that has not yet been migrated maps to 'amoled'
+    // so returning users retain their pure black appearance without unexpected disruption.
+    if (!isMigrated) {
+      storage.setItem(THEME_MIGRATION_KEY, 'true');
+      if (savedTheme === 'dark' || !savedTheme) {
+        storage.setItem(THEME_STORAGE_KEY, 'amoled');
+        return 'amoled';
+      }
+      if (savedTheme === 'light') {
+        storage.setItem(THEME_STORAGE_KEY, 'light');
+        return 'light';
+      }
+    }
+
+    if (savedTheme && VALID_THEMES.includes(savedTheme)) {
+      return savedTheme;
+    }
+  } catch (e) {
+    // fallback if localStorage fails
+  }
+  return 'amoled';
+}
+
+export function ThemeIcon({ theme }) {
   if (theme === 'light') {
     return (
       <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-        <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/>
+        <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
       </svg>
     )
   }
+  if (theme === 'dark') {
+    return (
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+        <path d="M12.3 2a10 10 0 0 0-.19 20 10.04 10.04 0 0 0 9.89-8.49c.12-.66-.45-1.21-1.1-1.05a7.51 7.51 0 0 1-9.15-9.15c.16-.65-.39-1.22-1.05-1.1A9.87 9.87 0 0 0 12.3 2z"/>
+      </svg>
+    )
+  }
+  // AMOLED: Pure Black circle / OLED high contrast icon
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-      <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/>
     </svg>
   )
 }
@@ -154,10 +201,7 @@ export default function App() {
   const [duration,        setDuration]        = useState(0)
   const [durations,       setDurations]       = useState({})
   const [trackMetadata, setTrackMetadata] = useState({})
-  const [theme,           setTheme]           = useState(() => {
-    const saved = localStorage.getItem('sangita_theme');
-    return saved === 'light' ? 'light' : 'dark';
-  })
+  const [theme,           setTheme]           = useState(() => resolveInitialTheme())
   const [showDevices,     setShowDevices]     = useState(false)
   const [showRightPanel,  setShowRightPanel]  = useState(true)
   const [isCompact,       setIsCompact]       = useState(() => localStorage.getItem('sangita_compact') === 'true')
@@ -225,7 +269,10 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
-    localStorage.setItem('sangita_theme', theme)
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme)
+      localStorage.setItem(THEME_MIGRATION_KEY, 'true')
+    } catch (e) {}
   }, [theme])
 
   useEffect(() => {
@@ -237,7 +284,11 @@ export default function App() {
   }, [sidebarCollapsed])
 
   const cycleTheme = useCallback(() => {
-    setTheme(t => t === 'dark' ? 'light' : 'dark')
+    setTheme(curr => {
+      if (curr === 'amoled') return 'dark';
+      if (curr === 'dark') return 'light';
+      return 'amoled';
+    });
   }, [])
 
   const handleViewChange = useCallback((newView) => {
@@ -1558,6 +1609,7 @@ export default function App() {
           onBackToPlayer={() => handleViewChange('music')}
           onLogout={handleLogout}
           theme={theme}
+          setTheme={setTheme}
           onCycleTheme={cycleTheme}
           ThemeIcon={ThemeIcon}
         />
@@ -1599,6 +1651,7 @@ export default function App() {
             searchQuery={searchQuery}
             onSearchChange={handleSearchChange}
             theme={theme}
+            setTheme={setTheme}
             onCycleTheme={cycleTheme}
             ThemeIcon={ThemeIcon}
             username={username}

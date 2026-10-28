@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import SangitaLogo from './SangitaLogo.jsx'
+import ThemeSelector from './ThemeSelector.jsx'
+import './AdminDashboard.css'
 
 function strHue(str) {
   let h = 0
@@ -144,6 +146,15 @@ const LyricsDocIcon = ({ width = 18, height = 18, className = '' }) => (
   </svg>
 )
 
+const TABS = [
+  { id: 'analytics', label: 'Overview', icon: <ActivityIcon />, testId: 'admin-tab-analytics' },
+  { id: 'music', label: 'Music', icon: <MusicIcon />, testId: 'admin-tab-music' },
+  { id: 'live', label: 'Activity', icon: <FlameIcon />, testId: 'admin-tab-live' },
+  { id: 'users', label: 'Users', icon: <UsersIcon />, testId: 'admin-tab-users' },
+  { id: 'lyrics', label: 'Lyrics', icon: <LyricsDocIcon />, testId: 'admin-tab-lyrics' },
+  { id: 'system', label: 'System', icon: <DeviceIcon />, testId: 'admin-tab-system' },
+]
+
 export default function AdminDashboard({
   token,
   playlists,
@@ -151,10 +162,43 @@ export default function AdminDashboard({
   theme,
   onCycleTheme,
   ThemeIcon,
-  onBackToPlayer
+  onBackToPlayer,
+  onSelectTheme,
+  setTheme
 }) {
   // Navigation Tabs: 'analytics', 'music', 'live', 'users', 'system'
   const [activeTab, setActiveTab] = useState('analytics')
+  const tabRefs = useRef({})
+
+  const handleTabKeyDown = useCallback((e) => {
+    const tabIds = TABS.map(t => t.id)
+    const currentIndex = tabIds.indexOf(activeTab)
+    if (currentIndex === -1) return
+
+    let nextIndex = -1
+    if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      nextIndex = (currentIndex + 1) % tabIds.length
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      nextIndex = (currentIndex - 1 + tabIds.length) % tabIds.length
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      nextIndex = 0
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      nextIndex = tabIds.length - 1
+    }
+
+    if (nextIndex !== -1) {
+      const nextTabId = tabIds[nextIndex]
+      setActiveTab(nextTabId)
+      setSelectedUser(null)
+      setError('')
+      setRetryAction(null)
+      tabRefs.current[nextTabId]?.focus()
+    }
+  }, [activeTab])
   
   // Timezone State (defaults to 'Asia/Kolkata' = IST)
   const [timezone, setTimezone] = useState(() => localStorage.getItem('sangita_timezone') || 'Asia/Kolkata')
@@ -700,14 +744,21 @@ export default function AdminDashboard({
   // Notifications
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [analyticsError, setAnalyticsError] = useState(null)
+  const [usersError, setUsersError] = useState(null)
+  const [logsError, setLogsError] = useState(null)
+  const [retryAction, setRetryAction] = useState(null)
 
   const playlistNames = Object.keys(playlists || {})
+  const analyticsRequestIdRef = useRef(0)
 
   // Fetch Analytics
   const fetchAnalytics = useCallback(async () => {
     if (!token) return
+    const requestId = ++analyticsRequestIdRef.current
     setAnalyticsLoading(true)
-    setError('')
+    setAnalytics(null)
+    setAnalyticsError(null)
     try {
       let url = `/api/admin/analytics?timeframe=${timeframe}&tz=${encodeURIComponent(effectiveTz)}`
       if (timeframe === 'custom' && customStartDate && customEndDate) {
@@ -716,11 +767,16 @@ export default function AdminDashboard({
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       if (!res.ok) throw new Error('Failed to load analytics')
       const data = await res.json()
+      if (requestId !== analyticsRequestIdRef.current) return
       setAnalytics(data)
     } catch (err) {
-      setError(err.message || 'Failed to fetch analytics data')
+      if (requestId !== analyticsRequestIdRef.current) return
+      const errMsg = err.message || 'Failed to fetch analytics data'
+      setAnalyticsError(errMsg)
     } finally {
-      setAnalyticsLoading(false)
+      if (requestId === analyticsRequestIdRef.current) {
+        setAnalyticsLoading(false)
+      }
     }
   }, [token, timeframe, customStartDate, customEndDate, effectiveTz])
 
@@ -728,13 +784,16 @@ export default function AdminDashboard({
   const fetchUsers = useCallback(async () => {
     if (!token) return
     setUsersLoading(true)
+    setUsersError(null)
     try {
       const res = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${token}` } })
       if (!res.ok) throw new Error('Failed to load users')
       const data = await res.json()
-      setUsers(data)
+      setUsers(Array.isArray(data) ? data : [])
+      setUsersError(null)
     } catch (err) {
-      setError(err.message || 'Failed to load user accounts')
+      const errMsg = err.message || 'Failed to load user accounts'
+      setUsersError(errMsg)
     } finally {
       setUsersLoading(false)
     }
@@ -744,6 +803,7 @@ export default function AdminDashboard({
   const fetchLogs = useCallback(async (page = 1) => {
     if (!token) return
     setLogsLoading(true)
+    setLogsError(null)
     try {
       let url = `/api/admin/logs?page=${page}&limit=25`
       if (logsSearch) url += `&search=${encodeURIComponent(logsSearch)}`
@@ -755,8 +815,10 @@ export default function AdminDashboard({
       setLogsPage(data.page || 1)
       setLogsTotalPages(data.total_pages || 1)
       setLogsTotalCount(data.total || 0)
+      setLogsError(null)
     } catch (err) {
-      setError(err.message || 'Failed to load audit logs')
+      const errMsg = err.message || 'Failed to load audit logs'
+      setLogsError(errMsg)
     } finally {
       setLogsLoading(false)
     }
@@ -777,6 +839,7 @@ export default function AdminDashboard({
       setUserDetailStats(data)
     } catch (err) {
       setError(err.message || 'Failed to load user details')
+      setRetryAction({ run: () => fetchUserDetailStats(username, tf, start, end) })
     } finally {
       setAnalyticsLoading(false)
     }
@@ -808,6 +871,7 @@ export default function AdminDashboard({
 
   // Filtered and Sorted Users
   const filteredUsers = useMemo(() => {
+    if (!Array.isArray(users)) return []
     return users
       .filter(u => {
         const matchSearch = u.username.toLowerCase().includes(userSearchQuery.toLowerCase())
@@ -837,6 +901,7 @@ export default function AdminDashboard({
     setFormAllowedAll(true)
     setFormAllowedPlaylists([])
     setError('')
+    setRetryAction(null)
     setSuccess('')
     setShowUserModal(true)
   }
@@ -855,6 +920,7 @@ export default function AdminDashboard({
       setFormAllowedPlaylists(allowed)
     }
     setError('')
+    setRetryAction(null)
     setSuccess('')
     setShowUserModal(true)
   }
@@ -868,14 +934,17 @@ export default function AdminDashboard({
   const handleSaveUser = async (e) => {
     e.preventDefault()
     setError('')
+    setRetryAction(null)
     setSuccess('')
 
     if (!formUsername.trim()) {
       setError('Username is required')
+      setRetryAction(null)
       return
     }
     if (!isEditingUser && !formPassword) {
       setError('Password is required')
+      setRetryAction(null)
       return
     }
 
@@ -907,12 +976,14 @@ export default function AdminDashboard({
       }
     } catch (err) {
       setError(err.message || 'An error occurred')
+      setRetryAction(null)
     }
   }
 
   const handleDeleteUser = async (username) => {
     if (!window.confirm(`Are you sure you want to permanently delete user "${username}"?`)) return
     setError('')
+    setRetryAction(null)
     setSuccess('')
     try {
       const res = await fetch(`/api/admin/users/${encodeURIComponent(username)}`, {
@@ -928,6 +999,7 @@ export default function AdminDashboard({
       }
     } catch (err) {
       setError(err.message || 'Failed to delete user')
+      setRetryAction(null)
     }
   }
 
@@ -1162,744 +1234,6 @@ export default function AdminDashboard({
 
   return (
     <div className="admin-layout" data-theme={theme}>
-      {/* Styles */}
-      <style>{`
-        .admin-layout {
-          height: 100vh;
-          min-height: 100vh;
-          overflow-y: auto;
-          overflow-x: hidden;
-          background-color: var(--bg);
-          color: var(--text);
-          font-family: 'Inter', sans-serif;
-          display: flex;
-          flex-direction: column;
-          scroll-behavior: smooth;
-        }
-
-        .admin-layout::-webkit-scrollbar {
-          width: 8px;
-        }
-        .admin-layout::-webkit-scrollbar-track {
-          background: var(--bg);
-        }
-        .admin-layout::-webkit-scrollbar-thumb {
-          background: var(--border);
-          border-radius: 4px;
-        }
-        .admin-layout::-webkit-scrollbar-thumb:hover {
-          background: var(--border-hi);
-        }
-
-        .admin-navbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 12px 28px;
-          background: var(--surface);
-          border-bottom: 1px solid var(--border);
-          position: sticky;
-          top: 0;
-          z-index: 100;
-          backdrop-filter: blur(16px);
-        }
-
-        .admin-brand {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-
-        .admin-brand-icon {
-          width: 32px;
-          height: 32px;
-          background: transparent;
-          border: none;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: var(--emerald);
-        }
-
-        .admin-brand-title {
-          font-size: 1.05rem;
-          font-weight: 800;
-          letter-spacing: -0.02em;
-        }
-
-        .admin-live-pill {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          background: rgba(52, 211, 153, 0.12);
-          border: 1px solid var(--emerald);
-          color: var(--emerald);
-          padding: 2px 8px;
-          border-radius: 20px;
-          font-size: 9px;
-          font-weight: 700;
-          letter-spacing: 0.15em;
-          text-transform: uppercase;
-        }
-
-        .live-dot-pulse {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: var(--emerald);
-          box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7);
-          animation: pulseGreen 1.5s infinite;
-        }
-
-        @keyframes pulseGreen {
-          0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7); }
-          70% { box-shadow: 0 0 0 6px rgba(52, 211, 153, 0); }
-          100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
-        }
-
-        .admin-navbar-actions {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .admin-nav-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 8px 14px;
-          border-radius: var(--radius-sm);
-          border: 1px solid var(--border);
-          background: var(--card);
-          color: var(--text);
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.05em;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .admin-nav-btn:hover {
-          background: var(--card-hover);
-          border-color: var(--border-hi);
-          transform: translateY(-1px);
-        }
-
-        .admin-nav-btn.primary {
-          background: var(--emerald);
-          color: #000;
-          border-color: var(--emerald);
-        }
-        .admin-nav-btn.primary:hover {
-          background: var(--emerald-hi);
-        }
-
-        /* Controls Subheader */
-        .admin-controls-bar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 16px 28px;
-          background: var(--surface);
-          border-bottom: 1px solid var(--border);
-          flex-wrap: wrap;
-          gap: 12px;
-        }
-
-        .admin-tabs-list {
-          display: flex;
-          gap: 6px;
-          flex-wrap: wrap;
-        }
-
-        .admin-tab-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 8px 16px;
-          border-radius: var(--radius-sm);
-          border: 1px solid transparent;
-          background: transparent;
-          color: var(--text-sub);
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .admin-tab-btn:hover {
-          color: var(--text);
-          background: var(--card);
-        }
-        .admin-tab-btn.active {
-          background: var(--emerald);
-          color: #000;
-          border-color: var(--emerald);
-          box-shadow: 0 2px 10px rgba(52, 211, 153, 0.25);
-        }
-
-        .admin-timeframe-toolbar {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
-
-        .timeframe-pill-group {
-          display: flex;
-          background: var(--card);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-sm);
-          overflow: hidden;
-        }
-
-        .timeframe-pill {
-          padding: 6px 12px;
-          border: none;
-          background: transparent;
-          color: var(--text-sub);
-          font-size: 10px;
-          font-weight: 700;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .timeframe-pill:hover {
-          color: var(--text);
-        }
-        .timeframe-pill.active {
-          background: var(--emerald);
-          color: #000;
-        }
-
-        .custom-range-inputs {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 11px;
-        }
-        .custom-range-inputs input {
-          background: var(--card);
-          border: 1px solid var(--border);
-          color: var(--text);
-          padding: 5px 8px;
-          border-radius: var(--radius-sm);
-          font-size: 11px;
-        }
-
-        /* Dashboard Body */
-        .admin-content {
-          padding: 28px;
-          max-width: 1400px;
-          width: 100%;
-          margin: 0 auto;
-          flex: 1;
-        }
-
-        /* KPI Cards Grid */
-        .kpi-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 16px;
-          margin-bottom: 24px;
-        }
-
-        .kpi-card {
-          background: var(--card);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-card);
-          padding: 20px;
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          transition: transform 0.2s ease, border-color 0.2s ease;
-        }
-        .kpi-card:hover {
-          border-color: var(--border-hi);
-          transform: translateY(-2px);
-        }
-
-        .kpi-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          color: var(--text-dim);
-        }
-        .kpi-label {
-          font-size: 10px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.15em;
-        }
-        .kpi-icon {
-          color: var(--emerald);
-        }
-
-        .kpi-value {
-          font-size: 1.8rem;
-          font-weight: 800;
-          letter-spacing: -0.03em;
-          color: var(--text);
-          line-height: 1.1;
-        }
-
-        .kpi-subtext {
-          font-size: 11px;
-          color: var(--text-sub);
-        }
-
-        /* Panels & Cards */
-        .admin-panel {
-          background: var(--card);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-card);
-          padding: 24px;
-          margin-bottom: 24px;
-        }
-
-        .admin-panel-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 18px;
-          flex-wrap: wrap;
-          gap: 12px;
-        }
-
-        .admin-panel-title {
-          font-size: 1.15rem;
-          font-weight: 800;
-          letter-spacing: -0.02em;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-
-        .admin-panel-subtitle {
-          font-size: 12px;
-          color: var(--text-sub);
-          margin-top: 2px;
-        }
-
-        /* Chart Styling */
-        .primary-chart-container {
-          position: relative;
-          width: 100%;
-          overflow-x: auto;
-        }
-        .primary-chart-svg {
-          width: 100%;
-          min-width: 600px;
-          height: auto;
-          display: block;
-        }
-
-        .chart-floating-tooltip {
-          position: absolute;
-          top: 10px;
-          right: 20px;
-          background: var(--surface);
-          border: 1px solid var(--border-hi);
-          border-radius: var(--radius-sm);
-          padding: 10px 14px;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-          pointer-events: none;
-          z-index: 10;
-        }
-        .tooltip-title {
-          font-size: 11px;
-          font-weight: 700;
-          color: var(--emerald);
-          margin-bottom: 4px;
-        }
-        .tooltip-row {
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-          font-size: 11px;
-        }
-        .tooltip-label { color: var(--text-dim); }
-        .tooltip-value { color: var(--text); font-weight: 600; }
-
-        .admin-empty-chart {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          height: 180px;
-          gap: 8px;
-          color: var(--text-dim);
-          font-size: 12px;
-        }
-
-        /* Diurnal & Weekday Breakdown */
-        .diurnal-heatmap-wrapper {
-          padding: 16px 0 8px;
-        }
-        .diurnal-bars-row {
-          display: flex;
-          align-items: flex-end;
-          gap: 4px;
-          height: 120px;
-        }
-        .diurnal-col {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          height: 100%;
-          cursor: pointer;
-        }
-        .diurnal-bar-track {
-          flex: 1;
-          width: 100%;
-          background: rgba(255, 255, 255, 0.03);
-          border-radius: 4px;
-          display: flex;
-          align-items: flex-end;
-          overflow: hidden;
-        }
-        .diurnal-bar-fill {
-          width: 100%;
-          border-radius: 4px;
-          transition: height 0.3s ease;
-        }
-        .diurnal-label {
-          font-size: 8px;
-          font-weight: 700;
-          color: var(--text-dim);
-          margin-top: 6px;
-        }
-
-        .weekday-chart-list {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-        .weekday-row {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          font-size: 11px;
-        }
-        .weekday-name {
-          width: 32px;
-          font-weight: 700;
-          color: var(--text-sub);
-        }
-        .weekday-bar-bg {
-          flex: 1;
-          height: 8px;
-          background: rgba(255, 255, 255, 0.05);
-          border-radius: 4px;
-          overflow: hidden;
-        }
-        .weekday-bar-fill {
-          height: 100%;
-          background: var(--emerald);
-          border-radius: 4px;
-          transition: width 0.3s ease;
-        }
-        .weekday-duration {
-          width: 70px;
-          text-align: right;
-          font-weight: 600;
-        }
-        .weekday-pct {
-          width: 40px;
-          text-align: right;
-          color: var(--text-dim);
-        }
-
-        /* 2 Column Layout */
-        .admin-grid-2col {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 24px;
-          margin-bottom: 24px;
-        }
-        @media (max-width: 900px) {
-          .admin-grid-2col {
-            grid-template-columns: 1fr;
-          }
-        }
-
-        /* Data Tables */
-        .admin-table-container {
-          overflow-x: auto;
-        }
-        .admin-table {
-          width: 100%;
-          border-collapse: collapse;
-          text-align: left;
-          font-size: 12px;
-        }
-        .admin-table th {
-          padding: 12px 14px;
-          border-bottom: 1px solid var(--border);
-          color: var(--text-dim);
-          font-size: 10px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-        }
-        .admin-table td {
-          padding: 12px 14px;
-          border-bottom: 1px solid var(--border);
-          color: var(--text-sub);
-        }
-        .admin-table tr:hover td {
-          background: var(--card-hover);
-          color: var(--text);
-        }
-
-        .track-rank-badge {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 24px;
-          height: 24px;
-          border-radius: 50%;
-          background: var(--surface);
-          color: var(--emerald);
-          font-weight: 700;
-          font-size: 11px;
-        }
-
-        .rank-bar-bg {
-          height: 4px;
-          background: rgba(255, 255, 255, 0.08);
-          border-radius: 2px;
-          margin-top: 4px;
-          overflow: hidden;
-          width: 100px;
-        }
-        .rank-bar-fill {
-          height: 100%;
-          background: var(--emerald);
-          border-radius: 2px;
-        }
-
-        /* Live Session Cards */
-        .live-sessions-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 16px;
-        }
-        .live-card {
-          background: var(--card);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-card);
-          padding: 16px;
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-        .live-card-top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-        .live-card-user {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .live-user-avatar {
-          width: 30px;
-          height: 30px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-weight: 700;
-          font-size: 12px;
-          color: #fff;
-        }
-        .live-card-song {
-          font-size: 13px;
-          font-weight: 700;
-          color: var(--text);
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        .live-card-artist {
-          font-size: 11px;
-          color: var(--text-sub);
-        }
-
-        /* Users Grid */
-        .users-grid-layout {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 16px;
-        }
-        .user-mgmt-card {
-          background: var(--card);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-card);
-          padding: 18px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .user-mgmt-card:hover {
-          border-color: var(--border-hi);
-          transform: translateY(-2px);
-        }
-        .user-card-top {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .user-big-avatar {
-          width: 44px;
-          height: 44px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 16px;
-          font-weight: 800;
-          color: #fff;
-        }
-        .role-tag {
-          padding: 2px 8px;
-          border-radius: 4px;
-          font-size: 9px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-        }
-        .role-tag.admin { background: rgba(52, 211, 153, 0.2); color: var(--emerald); }
-        .role-tag.user { background: rgba(255, 255, 255, 0.08); color: var(--text-sub); }
-
-        .user-card-actions {
-          display: flex;
-          gap: 8px;
-          margin-top: 4px;
-        }
-        .user-action-btn {
-          flex: 1;
-          padding: 7px 10px;
-          border-radius: var(--radius-sm);
-          border: 1px solid var(--border);
-          background: var(--surface);
-          color: var(--text);
-          font-size: 10px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .user-action-btn:hover {
-          background: var(--card-hover);
-          border-color: var(--border-hi);
-        }
-        .user-action-btn.delete {
-          color: var(--red);
-          border-color: rgba(239, 68, 68, 0.2);
-        }
-        .user-action-btn.delete:hover {
-          background: rgba(239, 68, 68, 0.1);
-        }
-
-        /* Filter Toolbar */
-        .admin-filter-toolbar {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          margin-bottom: 20px;
-          flex-wrap: wrap;
-        }
-        .admin-input-search {
-          background: var(--card);
-          border: 1px solid var(--border);
-          color: var(--text);
-          padding: 8px 14px;
-          border-radius: var(--radius-sm);
-          font-size: 12px;
-          min-width: 220px;
-        }
-        .admin-select-input {
-          background: var(--card);
-          border: 1px solid var(--border);
-          color: var(--text);
-          padding: 8px 12px;
-          border-radius: var(--radius-sm);
-          font-size: 12px;
-          cursor: pointer;
-        }
-
-        /* Modals */
-        .admin-modal-backdrop {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.75);
-          backdrop-filter: blur(8px);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 1000;
-          padding: 20px;
-        }
-        .admin-modal {
-          background: var(--surface);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-card);
-          width: 100%;
-          max-width: 520px;
-          max-height: 90vh;
-          overflow-y: auto;
-          padding: 28px;
-          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
-        }
-        .modal-title {
-          font-size: 1.25rem;
-          font-weight: 800;
-          margin-bottom: 20px;
-        }
-        .form-row {
-          margin-bottom: 16px;
-        }
-        .form-label {
-          display: block;
-          font-size: 11px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          color: var(--text-dim);
-          margin-bottom: 6px;
-        }
-        .form-input-text {
-          width: 100%;
-          background: var(--card);
-          border: 1px solid var(--border);
-          color: var(--text);
-          padding: 10px 14px;
-          border-radius: var(--radius-sm);
-          font-size: 13px;
-        }
-        .modal-btn-row {
-          display: flex;
-          justify-content: flex-end;
-          gap: 10px;
-          margin-top: 24px;
-        }
-
-        .alert-banner {
-          padding: 10px 16px;
-          border-radius: var(--radius-sm);
-          font-size: 12px;
-          margin-bottom: 16px;
-        }
-        .alert-banner.error { background: rgba(239, 68, 68, 0.15); border: 1px solid var(--red); color: #fca5a5; }
-        .alert-banner.success { background: rgba(52, 211, 153, 0.15); border: 1px solid var(--emerald); color: var(--emerald-hi); }
-      `}</style>
-
       {/* Top Navigation Bar */}
       <header className="admin-navbar">
         <div className="admin-brand">
@@ -1916,107 +1250,70 @@ export default function AdminDashboard({
         </div>
 
         <div className="admin-navbar-actions">
-          <div className="admin-tz-wrapper" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>TZ:</span>
-            <select
-              value={timezone}
-              onChange={e => setTimezone(e.target.value)}
-              className="admin-select-input admin-tz-select"
-              style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, height: 34 }}
-              title="Select Timezone (Default: IST / Asia/Kolkata)"
-              data-testid="admin-tz-select"
-            >
-              <option value="Asia/Kolkata">IST · Kolkata (+5:30)</option>
-              <option value="UTC">UTC · GMT (0:00)</option>
-              <option value="auto">Auto (Browser: {browserTz})</option>
-              <option value="America/New_York">EST · New York</option>
-              <option value="America/Los_Angeles">PST · Los Angeles</option>
-              <option value="America/Chicago">CST · Chicago</option>
-              <option value="Europe/London">GMT/BST · London</option>
-              <option value="Europe/Paris">CET · Paris</option>
-              <option value="Europe/Berlin">CET · Berlin</option>
-              <option value="Asia/Dubai">GST · Dubai (+4:00)</option>
-              <option value="Asia/Singapore">SGT · Singapore (+8:00)</option>
-              <option value="Asia/Tokyo">JST · Tokyo (+9:00)</option>
-              <option value="Australia/Sydney">AEST · Sydney (+10:00)</option>
-            </select>
-          </div>
           <button className="admin-nav-btn primary" onClick={onBackToPlayer} title="Return to Music Player" data-testid="admin-back-btn">
             <BackIcon />
             <span>Back to Player</span>
           </button>
-          <button className="admin-nav-btn" onClick={onCycleTheme} title="Toggle Dark/Light Mode">
-            <ThemeIcon theme={theme} />
-          </button>
+          <ThemeSelector
+            theme={theme}
+            onSelectTheme={onSelectTheme || setTheme}
+            onCycleTheme={onCycleTheme}
+            ThemeIcon={ThemeIcon}
+          />
           <button className="admin-nav-btn" onClick={onLogout} title="Sign Out">
             <span>Logout</span>
           </button>
         </div>
       </header>
 
-      {/* Subheader Toolbar */}
+      {/* Subheader Navigation & Toolbar */}
       <div className="admin-controls-bar">
-        <div className="admin-tabs-list">
-          <button
-            className={`admin-tab-btn ${activeTab === 'analytics' && !selectedUser ? 'active' : ''}`}
-            onClick={() => { setActiveTab('analytics'); setSelectedUser(null); }}
-            data-testid="admin-tab-analytics"
+        <nav className="admin-tabs-nav" aria-label="Admin Navigation">
+          <div
+            className="admin-tabs-list"
+            role="tablist"
+            aria-label="Admin Sections"
+            onKeyDown={handleTabKeyDown}
           >
-            <ActivityIcon />
-            <span>Overview & Analytics</span>
-          </button>
-          <button
-            className={`admin-tab-btn ${activeTab === 'music' && !selectedUser ? 'active' : ''}`}
-            onClick={() => { setActiveTab('music'); setSelectedUser(null); }}
-            data-testid="admin-tab-music"
-          >
-            <MusicIcon />
-            <span>Music & Catalog</span>
-          </button>
-          <button
-            className={`admin-tab-btn ${activeTab === 'live' && !selectedUser ? 'active' : ''}`}
-            onClick={() => { setActiveTab('live'); setSelectedUser(null); }}
-            data-testid="admin-tab-live"
-          >
-            <FlameIcon />
-            <span>Live & Stream Logs</span>
-          </button>
-          <button
-            className={`admin-tab-btn ${activeTab === 'users' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('users'); }}
-            data-testid="admin-tab-users"
-          >
-            <UsersIcon />
-            <span>User Accounts</span>
-          </button>
-          <button
-            className={`admin-tab-btn ${activeTab === 'lyrics' && !selectedUser ? 'active' : ''}`}
-            onClick={() => { setActiveTab('lyrics'); setSelectedUser(null); }}
-            data-testid="admin-tab-lyrics"
-          >
-            <LyricsDocIcon />
-            <span>Lyrics Engine</span>
-          </button>
-          <button
-            className={`admin-tab-btn ${activeTab === 'system' && !selectedUser ? 'active' : ''}`}
-            onClick={() => { setActiveTab('system'); setSelectedUser(null); }}
-            data-testid="admin-tab-system"
-          >
-            <DeviceIcon />
-            <span>System Health</span>
-          </button>
-        </div>
+            {TABS.map((tab) => {
+              const isSelected = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  ref={el => (tabRefs.current[tab.id] = el)}
+                  role="tab"
+                  id={`admin-tab-${tab.id}`}
+                  aria-controls={`admin-panel-${tab.id}`}
+                  aria-selected={isSelected}
+                  tabIndex={isSelected ? 0 : -1}
+                  className={`admin-tab-btn ${isSelected ? 'active' : ''}`}
+                  onClick={() => {
+                    setActiveTab(tab.id)
+                    setSelectedUser(null)
+                    setError('')
+                    setRetryAction(null)
+                  }}
+                  data-testid={tab.testId}
+                >
+                  {tab.icon}
+                  <span>{tab.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </nav>
 
-        {/* Global Timeframe Selector for Analytics & Music tabs */}
+        {/* Global Timeframe Selector & Timezone Toolbar for Analytics & Music tabs */}
         {(activeTab === 'analytics' || activeTab === 'music') && !selectedUser && (
-          <div className="admin-timeframe-toolbar">
-            <div className="timeframe-pill-group">
+          <div className="admin-timeframe-toolbar" role="toolbar" aria-label="Analytics Filters Toolbar">
+            <div className="timeframe-pill-group" role="group" aria-label="Timeframe selection">
               {['24h', '7d', '30d', '90d', 'all', 'custom'].map((tf) => (
                 <button
                   key={tf}
                   className={`timeframe-pill ${timeframe === tf ? 'active' : ''}`}
                   onClick={() => setTimeframe(tf)}
                   data-testid={`timeframe-btn-${tf}`}
+                  aria-pressed={timeframe === tf}
                 >
                   {tf === '24h' ? '24 Hours' : tf === '7d' ? '7 Days' : tf === '30d' ? '30 Days' : tf === '90d' ? '90 Days' : tf === 'all' ? 'All Time' : 'Custom'}
                 </button>
@@ -2030,6 +1327,7 @@ export default function AdminDashboard({
                   value={customStartDate}
                   onChange={e => setCustomStartDate(e.target.value)}
                   title="Start Date"
+                  aria-label="Start Date"
                 />
                 <span>to</span>
                 <input
@@ -2037,15 +1335,44 @@ export default function AdminDashboard({
                   value={customEndDate}
                   onChange={e => setCustomEndDate(e.target.value)}
                   title="End Date"
+                  aria-label="End Date"
                 />
                 <button className="admin-nav-btn" onClick={fetchAnalytics}>Apply</button>
               </div>
             )}
 
-            <button className="admin-nav-btn" onClick={fetchAnalytics} title="Refresh Telemetry">
+            {/* Relocated Timezone Selector */}
+            <div className="admin-tz-wrapper">
+              <label htmlFor="admin-tz-select" className="admin-tz-label">TZ:</label>
+              <select
+                id="admin-tz-select"
+                value={timezone}
+                onChange={e => setTimezone(e.target.value)}
+                className="admin-select-input admin-tz-select"
+                title="Select Timezone (Default: IST / Asia/Kolkata)"
+                aria-label="Select Timezone"
+                data-testid="admin-tz-select"
+              >
+                <option value="Asia/Kolkata">IST · Kolkata (+5:30)</option>
+                <option value="UTC">UTC · GMT (0:00)</option>
+                <option value="auto">Auto (Browser: {browserTz})</option>
+                <option value="America/New_York">EST · New York</option>
+                <option value="America/Los_Angeles">PST · Los Angeles</option>
+                <option value="America/Chicago">CST · Chicago</option>
+                <option value="Europe/London">GMT/BST · London</option>
+                <option value="Europe/Paris">CET · Paris</option>
+                <option value="Europe/Berlin">CET · Berlin</option>
+                <option value="Asia/Dubai">GST · Dubai (+4:00)</option>
+                <option value="Asia/Singapore">SGT · Singapore (+8:00)</option>
+                <option value="Asia/Tokyo">JST · Tokyo (+9:00)</option>
+                <option value="Australia/Sydney">AEST · Sydney (+10:00)</option>
+              </select>
+            </div>
+
+            <button className="admin-nav-btn" onClick={fetchAnalytics} title="Refresh Telemetry" aria-label="Refresh Telemetry">
               <RefreshIcon />
             </button>
-            <button className="admin-nav-btn" onClick={handleExportCSV} title="Export CSV Report" data-testid="admin-export-btn">
+            <button className="admin-nav-btn" onClick={handleExportCSV} title="Export CSV Report" aria-label="Export CSV Report" data-testid="admin-export-btn">
               <DownloadIcon />
               <span>Export CSV</span>
             </button>
@@ -2053,10 +1380,52 @@ export default function AdminDashboard({
         )}
       </div>
 
-      {/* Notifications */}
-      <div className="admin-content">
-        {error && <div className="alert-banner error">{error}</div>}
-        {success && <div className="alert-banner success">{success}</div>}
+      {/* Main Content Area */}
+      <main className="admin-content" role="tabpanel" id={`admin-panel-${activeTab}`} aria-labelledby={`admin-tab-${activeTab}`} tabIndex={0}>
+        {/* Page Heading & Short Description */}
+        {!selectedUser && (
+          <div className="admin-page-header">
+            <div className="admin-page-header-text">
+              <h1 className="admin-page-title">
+                {activeTab === 'analytics' && 'Overview'}
+                {activeTab === 'music' && 'Music & Catalog'}
+                {activeTab === 'live' && 'Activity'}
+                {activeTab === 'users' && 'Users'}
+                {activeTab === 'lyrics' && 'Lyrics Engine'}
+                {activeTab === 'system' && 'System Health'}
+              </h1>
+              <p className="admin-page-desc">
+                {activeTab === 'analytics' && 'Monitor key listening trends, session activity, and audience metrics.'}
+                {activeTab === 'music' && 'Inspect top tracks, artists, playlists, and library engagement.'}
+                {activeTab === 'live' && 'Inspect real-time listening sessions, active streams, and audit logs.'}
+                {activeTab === 'users' && 'Create, edit, and manage user accounts and access permissions.'}
+                {activeTab === 'lyrics' && 'Configure and run automated Whisper lyrics generation jobs.'}
+                {activeTab === 'system' && 'Inspect server health, storage, audio codecs, and technical diagnostics.'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Notifications */}
+        {error && (
+          <div className="alert-banner error" role="alert">
+            <span>{error}</span>
+            {retryAction?.run && (
+              <button
+                className="admin-retry-btn"
+                onClick={() => {
+                  const fn = retryAction.run
+                  setRetryAction(null)
+                  setError('')
+                  fn()
+                }}
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
+        {success && <div className="alert-banner success" role="status">{success}</div>}
 
         {/* =========================================================================
             USER DETAIL PROFILE SUBVIEW
@@ -2079,16 +1448,16 @@ export default function AdminDashboard({
                           width: '64px',
                           height: '64px',
                           fontSize: '24px',
-                          background: `linear-gradient(135deg, hsl(${strHue(userDetailStats.username)}, 70%, 40%), hsl(${(strHue(userDetailStats.username)+60)%360}, 70%, 25%))`
+                          background: `linear-gradient(135deg, hsl(${strHue(userDetailStats?.username || '')}, 70%, 40%), hsl(${(strHue(userDetailStats?.username || '')+60)%360}, 70%, 25%))`
                         }}
                       >
-                        {userDetailStats.username.slice(0, 2).toUpperCase()}
+                        {(userDetailStats?.username || selectedUser?.username || 'U').slice(0, 2).toUpperCase()}
                       </div>
                       <div>
-                        <h2 style={{ fontSize: '1.8rem', fontWeight: 800 }}>{userDetailStats.username}</h2>
+                        <h2 style={{ fontSize: '1.8rem', fontWeight: 800 }}>{userDetailStats?.username || selectedUser?.username || 'User'}</h2>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                          <span className={`role-tag ${userDetailStats.role}`}>{userDetailStats.role}</span>
-                          {getUserLiveStatus(userDetailStats.username) && (
+                          <span className={`role-tag ${userDetailStats?.role || selectedUser?.role || 'user'}`}>{userDetailStats?.role || selectedUser?.role || 'user'}</span>
+                          {getUserLiveStatus(userDetailStats?.username || selectedUser?.username) && (
                             <div className="admin-live-pill">
                               <span className="live-dot-pulse" />
                               <span>Listening Now</span>
@@ -2223,8 +1592,35 @@ export default function AdminDashboard({
               TAB 1: OVERVIEW & ANALYTICS
              ========================================================================= */
           <div className="analytics-tab-view" data-testid="analytics-tab-content">
-            {/* 6 Executive KPI Metric Cards */}
-            <div className="kpi-grid">
+            {analyticsLoading ? (
+              <div className="admin-loading-state" data-testid="analytics-loading">
+                <span className="admin-spinner" />
+                <span>Loading analytics metrics...</span>
+              </div>
+            ) : analyticsError ? (
+              <div className="admin-empty-state admin-error-state" data-testid="analytics-error" style={{ borderColor: 'var(--red)' }}>
+                <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                <h3 style={{ color: '#fca5a5' }}>Failed to Load Analytics</h3>
+                <p>{analyticsError}</p>
+                <button
+                  className="admin-nav-btn admin-retry-analytics-btn"
+                  onClick={fetchAnalytics}
+                  style={{ marginTop: 16 }}
+                >
+                  <RefreshIcon />
+                  <span>Retry Analytics</span>
+                </button>
+              </div>
+            ) : (!analytics?.timeline || analytics.timeline.length === 0) ? (
+              <div className="admin-empty-state" data-testid="analytics-empty">
+                <div style={{ fontSize: '32px', marginBottom: 8 }}>📊</div>
+                <h3>No listening activity recorded in this period.</h3>
+                <p>Try switching to a broader timeframe like "30 Days" or "All Time".</p>
+              </div>
+            ) : (
+              <>
+                {/* 6 Executive KPI Metric Cards */}
+                <div className="kpi-grid">
               <div className="kpi-card" data-testid="kpi-total-time">
                 <div className="kpi-header">
                   <span className="kpi-label">Total Listening</span>
@@ -2322,39 +1718,60 @@ export default function AdminDashboard({
             </div>
 
             {/* Peak Usage & Diurnal Heatmap Section */}
-            <div className="admin-grid-2col">
-              <div className="admin-panel">
-                <div className="admin-panel-header">
-                  <div>
-                    <div className="admin-panel-title">
-                      <FlameIcon />
-                      <span>24-Hour Diurnal Peak Usage</span>
+            <details className="admin-disclosure">
+              <summary className="admin-disclosure-summary" data-testid="disclosure-diurnal">
+                <div className="admin-disclosure-title">
+                  <FlameIcon />
+                  <span>24-Hour Diurnal Peak & Day-of-Week Usage Patterns</span>
+                </div>
+                <span className="admin-disclosure-badge">Hourly & Daily Breakdown ▾</span>
+              </summary>
+              <div className="admin-disclosure-content">
+                <div className="admin-grid-2col" style={{ marginBottom: 0 }}>
+                  <div className="admin-panel" style={{ marginBottom: 0 }}>
+                    <div className="admin-panel-header">
+                      <div>
+                        <div className="admin-panel-title">
+                          <FlameIcon />
+                          <span>24-Hour Diurnal Peak Usage</span>
+                        </div>
+                        <div className="admin-panel-subtitle">Aggregate listening volume by hour of day (00:00 – 23:00)</div>
+                      </div>
                     </div>
-                    <div className="admin-panel-subtitle">Aggregate listening volume by hour of day (00:00 – 23:00)</div>
+                    <DiurnalHeatmapChart data={analytics?.hourly_distribution} />
+                    <div style={{ marginTop: 14, fontSize: '11px', color: 'var(--text-sub)' }}>
+                      🔥 Peak listening traffic occurs around <strong>{analytics?.kpis?.peak_hour?.label}</strong>.
+                    </div>
                   </div>
-                </div>
-                <DiurnalHeatmapChart data={analytics?.hourly_distribution} />
-                <div style={{ marginTop: 14, fontSize: '11px', color: 'var(--text-sub)' }}>
-                  🔥 Peak listening traffic occurs around <strong>{analytics?.kpis?.peak_hour?.label}</strong>.
-                </div>
-              </div>
 
-              <div className="admin-panel">
-                <div className="admin-panel-header">
-                  <div>
-                    <div className="admin-panel-title">
-                      <ClockIcon />
-                      <span>Day-of-Week Listening</span>
+                  <div className="admin-panel" style={{ marginBottom: 0 }}>
+                    <div className="admin-panel-header">
+                      <div>
+                        <div className="admin-panel-title">
+                          <ClockIcon />
+                          <span>Day-of-Week Listening</span>
+                        </div>
+                        <div className="admin-panel-subtitle">Traffic distribution across Monday – Sunday</div>
+                      </div>
                     </div>
-                    <div className="admin-panel-subtitle">Traffic distribution across Monday – Sunday</div>
+                    <WeekdayChart data={analytics?.weekday_distribution} />
                   </div>
                 </div>
-                <WeekdayChart data={analytics?.weekday_distribution} />
               </div>
-            </div>
+            </details>
 
             {/* Platform & Client Telemetry */}
-            <div className="admin-panel">
+            <details className="admin-disclosure">
+              <summary className="admin-disclosure-summary" data-testid="disclosure-platforms">
+                <div className="admin-disclosure-title">
+                  <DeviceIcon />
+                  <span>Platform, Client & Device Breakdown</span>
+                </div>
+                <span className="admin-disclosure-badge">Devices, OS & Browsers ▾</span>
+              </summary>
+              <div className="admin-disclosure-content">
+                <div className="admin-panel" style={{ marginBottom: 0 }}>
+
               <div className="admin-panel-header">
                 <div>
                   <div className="admin-panel-title">
@@ -2414,13 +1831,38 @@ export default function AdminDashboard({
                   ))}
                 </div>
               </div>
-            </div>
+                </div>
+              </div>
+            </details>
+              </>
+            )}
           </div>
         ) : activeTab === 'music' ? (
           /* =========================================================================
               TAB 2: MUSIC & CATALOG ANALYTICS
              ========================================================================= */
           <div className="music-tab-view" data-testid="music-tab-content">
+            {analyticsLoading ? (
+              <div className="admin-loading-state" data-testid="music-analytics-loading">
+                <span className="admin-spinner" />
+                <span>Loading catalog metrics...</span>
+              </div>
+            ) : analyticsError ? (
+              <div className="admin-empty-state admin-error-state" data-testid="music-analytics-error" style={{ borderColor: 'var(--red)' }}>
+                <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                <h3 style={{ color: '#fca5a5' }}>Failed to Load Music Analytics</h3>
+                <p>{analyticsError}</p>
+                <button
+                  className="admin-nav-btn"
+                  onClick={fetchAnalytics}
+                  style={{ marginTop: 16 }}
+                >
+                  <RefreshIcon />
+                  <span>Retry Analytics</span>
+                </button>
+              </div>
+            ) : (
+              <>
             {/* Top 20 Most Played Songs */}
             <div className="admin-panel">
               <div className="admin-panel-header">
@@ -2550,6 +1992,8 @@ export default function AdminDashboard({
                 )}
               </div>
             </div>
+              </>
+            )}
           </div>
         ) : activeTab === 'live' ? (
           /* =========================================================================
@@ -2572,7 +2016,22 @@ export default function AdminDashboard({
                 </button>
               </div>
 
-              {(!analytics?.live_sessions || analytics.live_sessions.length === 0) ? (
+              {analyticsLoading && !analytics?.live_sessions ? (
+                <div className="admin-loading-state" data-testid="live-sessions-loading">
+                  <span className="admin-spinner" />
+                  <span>Checking active streams...</span>
+                </div>
+              ) : analyticsError && !analytics?.live_sessions ? (
+                <div className="admin-empty-state admin-error-state" data-testid="live-sessions-error" style={{ borderColor: 'var(--red)', margin: '20px 0' }}>
+                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <h3 style={{ color: '#fca5a5' }}>Failed to Load Live Sessions</h3>
+                  <p>{analyticsError}</p>
+                  <button className="admin-nav-btn" onClick={fetchAnalytics} style={{ marginTop: 16 }}>
+                    <RefreshIcon />
+                    <span>Retry Loading Status</span>
+                  </button>
+                </div>
+              ) : (!analytics?.live_sessions || analytics.live_sessions.length === 0) ? (
                 <div className="admin-empty-chart">
                   <UsersIcon />
                   <span>No users currently streaming audio.</span>
@@ -2649,7 +2108,22 @@ export default function AdminDashboard({
                 <button className="admin-nav-btn" onClick={() => fetchLogs(1)}>Search</button>
               </div>
 
-              {logs.length === 0 ? (
+              {logsLoading ? (
+                <div className="admin-loading-state" data-testid="logs-loading">
+                  <span className="admin-spinner" />
+                  <span>Loading stream audit logs...</span>
+                </div>
+              ) : logsError ? (
+                <div className="admin-empty-state admin-error-state" data-testid="logs-error" style={{ borderColor: 'var(--red)', margin: '20px 0' }}>
+                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <h3 style={{ color: '#fca5a5' }}>Failed to Load Audit Logs</h3>
+                  <p>{logsError}</p>
+                  <button className="admin-nav-btn" onClick={() => fetchLogs(logsPage)} style={{ marginTop: 16 }}>
+                    <RefreshIcon />
+                    <span>Retry Loading Logs</span>
+                  </button>
+                </div>
+              ) : logs.length === 0 ? (
                 <p className="no-data-msg">No log events match query.</p>
               ) : (
                 <>
@@ -2772,7 +2246,22 @@ export default function AdminDashboard({
                 </select>
               </div>
 
-              {filteredUsers.length === 0 ? (
+              {usersLoading ? (
+                <div className="admin-loading-state" data-testid="users-loading">
+                  <span className="admin-spinner" />
+                  <span>Loading user accounts...</span>
+                </div>
+              ) : usersError ? (
+                <div className="admin-empty-state admin-error-state" data-testid="users-error" style={{ borderColor: 'var(--red)', margin: '20px 0' }}>
+                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <h3 style={{ color: '#fca5a5' }}>Failed to Load Users</h3>
+                  <p>{usersError}</p>
+                  <button className="admin-nav-btn" onClick={fetchUsers} style={{ marginTop: 16 }}>
+                    <RefreshIcon />
+                    <span>Retry Loading Users</span>
+                  </button>
+                </div>
+              ) : filteredUsers.length === 0 ? (
                 <p className="no-data-msg">No users match filters.</p>
               ) : (
                 <div className="users-grid-layout">
@@ -3071,8 +2560,184 @@ export default function AdminDashboard({
               )
             )}
 
-            {/* 3. Real-Time Telemetry KPI Cards */}
-            <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', marginTop: 14 }}>
+            {/* Primary Lyrics Engine Controls: Generation Scope & Library Targets */}
+            <div className="lyrics-scope-primary-panel" style={{ marginBottom: 18 }}>
+              {/* CARD 1: 🎯 Generation Scope & Library Targets */}
+              <div className="lyrics-card">
+                <div className="lyrics-card-header">
+                  <div>
+                    <div className="lyrics-card-title">
+                      <span>🎯</span>
+                      <span>1. Generation Scope & Targets</span>
+                    </div>
+                    <div className="lyrics-card-desc">
+                      Select which tracks to transcribe and whether to query online LRCLIB first.
+                    </div>
+                  </div>
+                </div>
+
+                {/* Target Scope Segmented Tabs */}
+                <div>
+                  <label className="form-label" style={{ marginBottom: 6 }}>Target Selection</label>
+                  <div className="lyrics-segmented-tabs">
+                    <button
+                      type="button"
+                      className={`lyrics-segmented-tab ${lyricsConfig.scope === 'all' ? 'active' : ''}`}
+                      onClick={() => setLyricsConfig(c => ({ ...c, scope: 'all' }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      Entire Library
+                    </button>
+                    <button
+                      type="button"
+                      className={`lyrics-segmented-tab ${lyricsConfig.scope === 'playlist' ? 'active' : ''}`}
+                      onClick={() => setLyricsConfig(c => ({ ...c, scope: 'playlist' }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      Select Playlist
+                    </button>
+                    <button
+                      type="button"
+                      className={`lyrics-segmented-tab ${lyricsConfig.scope === 'song' ? 'active' : ''}`}
+                      onClick={() => setLyricsConfig(c => ({ ...c, scope: 'song' }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      Single Song
+                    </button>
+                  </div>
+                </div>
+
+                {/* Conditional Pickers */}
+                {lyricsConfig.scope === 'playlist' && (
+                  <div className="form-group" style={{ animation: 'fadeIn 0.2s ease' }}>
+                    <label className="form-label">Choose Playlist</label>
+                    <select
+                      className="form-input-text"
+                      value={lyricsConfig.playlist}
+                      onChange={e => setLyricsConfig(c => ({ ...c, playlist: e.target.value }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      <option value="">-- Choose a Playlist --</option>
+                      {availablePlaylists.map(pl => (
+                        <option key={pl.name} value={pl.name}>
+                          {pl.name} ({pl.count} {pl.count === 1 ? 'song' : 'songs'})
+                        </option>
+                      ))}
+                    </select>
+                    <span className="field-hint">Generates lyrics only for tracks in this playlist</span>
+                  </div>
+                )}
+
+                {lyricsConfig.scope === 'song' && (
+                  <div className="form-group" style={{ animation: 'fadeIn 0.2s ease' }}>
+                    <label className="form-label">Choose Particular Song</label>
+                    <select
+                      className="form-input-text"
+                      value={lyricsConfig.song}
+                      onChange={e => setLyricsConfig(c => ({ ...c, song: e.target.value }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    >
+                      <option value="">-- Choose a Song ({availableSongList.length} total) --</option>
+                      {availableSongList.map(s => (
+                        <option key={s.path} value={s.path}>
+                          {s.title} {s.playlist ? `(${s.playlist})` : ''} — {s.path}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="field-hint">Generates lyrics for this single chosen track</span>
+                  </div>
+                )}
+
+                {/* Online API Engine Toggle Button */}
+                <div className="form-group lyrics-api-group">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>LRCLIB API Matching</span>
+                    <span className={`lyrics-api-pill ${lyricsConfig.api ? 'on' : 'off'}`}>
+                      {lyricsConfig.api ? 'API ON' : 'API OFF'}
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    className={`lyrics-api-button ${lyricsConfig.api ? 'active-api' : 'active-local'}`}
+                    onClick={() => setLyricsConfig(c => ({ ...c, api: !c.api }))}
+                    disabled={lyricsStatus?.job?.state === 'running'}
+                    title={lyricsConfig.api ? 'Online API enabled (LRCLIB first + Whisper fallback)' : 'Online API disabled (Whisper model only)'}
+                    data-testid="lyrics-api-toggle-button"
+                  >
+                    <div className="lyrics-api-btn-content">
+                      <div className="lyrics-api-btn-left">
+                        <span className="lyrics-api-btn-icon">{lyricsConfig.api ? '🌐' : '⚡'}</span>
+                        <div className="lyrics-api-btn-titles">
+                          <span className="lyrics-api-btn-main">LRCLIB API: {lyricsConfig.api ? 'ON' : 'OFF'}</span>
+                          <span className="lyrics-api-btn-sub">
+                            {lyricsConfig.api ? 'Online Sync + Local Model Fallback' : 'Direct AI Transcription (Whisper Model Only)'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className={`lyrics-api-switch ${lyricsConfig.api ? 'checked' : ''}`}>
+                        <div className="lyrics-api-switch-thumb" />
+                      </div>
+                    </div>
+                  </button>
+                  <span className="field-hint">
+                    {lyricsConfig.api
+                      ? 'Queries online LRCLIB database first; falls back to Whisper AI if missing.'
+                      : 'Bypasses internet database completely. Transcribes directly using Whisper AI.'}
+                  </span>
+                </div>
+
+                {/* Batch Limit */}
+                <div className="form-group">
+                  <label className="form-label">Batch Limit</label>
+                  <select
+                    className="form-input-text"
+                    value={lyricsConfig.limit}
+                    onChange={e => setLyricsConfig(c => ({ ...c, limit: parseInt(e.target.value, 10) }))}
+                    disabled={lyricsStatus?.job?.state === 'running' || lyricsConfig.scope === 'song'}
+                  >
+                    <option value="0">All Songs in Scope</option>
+                    <option value="5">Benchmark 5 Songs</option>
+                    <option value="10">Test 10 Songs</option>
+                    <option value="25">Test 25 Songs</option>
+                  </select>
+                  <span className="field-hint">Max songs processed per run</span>
+                </div>
+
+                {/* Checkboxes */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '12px' }}>
+                    <input
+                      type="checkbox"
+                      checked={lyricsConfig.force}
+                      onChange={e => setLyricsConfig(c => ({ ...c, force: e.target.checked }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    />
+                    <span><strong>Force regenerate existing .lrc files</strong></span>
+                  </label>
+                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '12px' }}>
+                    <input
+                      type="checkbox"
+                      checked={lyricsConfig.demucs}
+                      onChange={e => setLyricsConfig(c => ({ ...c, demucs: e.target.checked }))}
+                      disabled={lyricsStatus?.job?.state === 'running'}
+                    />
+                    <span>HTDemucs Vocal Separation (Isolate vocals before Whisper)</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Real-Time Telemetry KPI Cards & Connected PC */}
+            <details className="admin-disclosure lyrics-telemetry-disclosure">
+              <summary className="admin-disclosure-summary" data-testid="disclosure-lyrics-telemetry">
+                <div className="admin-disclosure-title">
+                  <ActivityIcon />
+                  <span>Hardware Telemetry & Connected PC Monitor</span>
+                </div>
+                <span className="admin-disclosure-badge">Host & Connected PC Metrics ▾</span>
+              </summary>
+              <div className="admin-disclosure-content">
+                <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', marginTop: 14 }}>
               {/* Host CPU & Per-Core */}
               <div className="kpi-card">
                 <div className="kpi-header">
@@ -3305,173 +2970,20 @@ export default function AdminDashboard({
                 </div>
               </div>
             </div>
-
-            {/* 4. The 3-Card Intuitive Workstation Layout */}
-            <div className="lyrics-workstation-layout" style={{ marginTop: 18 }}>
-              {/* CARD 1: 🎯 Generation Scope & Library Targets */}
-              <div className="lyrics-card">
-                <div className="lyrics-card-header">
-                  <div>
-                    <div className="lyrics-card-title">
-                      <span>🎯</span>
-                      <span>1. Generation Scope & Targets</span>
-                    </div>
-                    <div className="lyrics-card-desc">
-                      Select which tracks to transcribe and whether to query online LRCLIB first.
-                    </div>
-                  </div>
-                </div>
-
-                {/* Target Scope Segmented Tabs */}
-                <div>
-                  <label className="form-label" style={{ marginBottom: 6 }}>Target Selection</label>
-                  <div className="lyrics-segmented-tabs">
-                    <button
-                      type="button"
-                      className={`lyrics-segmented-tab ${lyricsConfig.scope === 'all' ? 'active' : ''}`}
-                      onClick={() => setLyricsConfig(c => ({ ...c, scope: 'all' }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    >
-                      Entire Library
-                    </button>
-                    <button
-                      type="button"
-                      className={`lyrics-segmented-tab ${lyricsConfig.scope === 'playlist' ? 'active' : ''}`}
-                      onClick={() => setLyricsConfig(c => ({ ...c, scope: 'playlist' }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    >
-                      Select Playlist
-                    </button>
-                    <button
-                      type="button"
-                      className={`lyrics-segmented-tab ${lyricsConfig.scope === 'song' ? 'active' : ''}`}
-                      onClick={() => setLyricsConfig(c => ({ ...c, scope: 'song' }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    >
-                      Single Song
-                    </button>
-                  </div>
-                </div>
-
-                {/* Conditional Pickers */}
-                {lyricsConfig.scope === 'playlist' && (
-                  <div className="form-group" style={{ animation: 'fadeIn 0.2s ease' }}>
-                    <label className="form-label">Choose Playlist</label>
-                    <select
-                      className="form-input-text"
-                      value={lyricsConfig.playlist}
-                      onChange={e => setLyricsConfig(c => ({ ...c, playlist: e.target.value }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    >
-                      <option value="">-- Choose a Playlist --</option>
-                      {availablePlaylists.map(pl => (
-                        <option key={pl.name} value={pl.name}>
-                          {pl.name} ({pl.count} {pl.count === 1 ? 'song' : 'songs'})
-                        </option>
-                      ))}
-                    </select>
-                    <span className="field-hint">Generates lyrics only for tracks in this playlist</span>
-                  </div>
-                )}
-
-                {lyricsConfig.scope === 'song' && (
-                  <div className="form-group" style={{ animation: 'fadeIn 0.2s ease' }}>
-                    <label className="form-label">Choose Particular Song</label>
-                    <select
-                      className="form-input-text"
-                      value={lyricsConfig.song}
-                      onChange={e => setLyricsConfig(c => ({ ...c, song: e.target.value }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    >
-                      <option value="">-- Choose a Song ({availableSongList.length} total) --</option>
-                      {availableSongList.map(s => (
-                        <option key={s.path} value={s.path}>
-                          {s.title} {s.playlist ? `(${s.playlist})` : ''} — {s.path}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="field-hint">Generates lyrics for this single chosen track</span>
-                  </div>
-                )}
-
-                {/* Online API Engine Toggle Button */}
-                <div className="form-group lyrics-api-group">
-                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span>LRCLIB API Matching</span>
-                    <span className={`lyrics-api-pill ${lyricsConfig.api ? 'on' : 'off'}`}>
-                      {lyricsConfig.api ? 'API ON' : 'API OFF'}
-                    </span>
-                  </label>
-                  <button
-                    type="button"
-                    className={`lyrics-api-button ${lyricsConfig.api ? 'active-api' : 'active-local'}`}
-                    onClick={() => setLyricsConfig(c => ({ ...c, api: !c.api }))}
-                    disabled={lyricsStatus?.job?.state === 'running'}
-                    title={lyricsConfig.api ? 'Online API enabled (LRCLIB first + Whisper fallback)' : 'Online API disabled (Whisper model only)'}
-                    data-testid="lyrics-api-toggle-button"
-                  >
-                    <div className="lyrics-api-btn-content">
-                      <div className="lyrics-api-btn-left">
-                        <span className="lyrics-api-btn-icon">{lyricsConfig.api ? '🌐' : '⚡'}</span>
-                        <div className="lyrics-api-btn-titles">
-                          <span className="lyrics-api-btn-main">LRCLIB API: {lyricsConfig.api ? 'ON' : 'OFF'}</span>
-                          <span className="lyrics-api-btn-sub">
-                            {lyricsConfig.api ? 'Online Sync + Local Model Fallback' : 'Direct AI Transcription (Whisper Model Only)'}
-                          </span>
-                        </div>
-                      </div>
-                      <div className={`lyrics-api-switch ${lyricsConfig.api ? 'checked' : ''}`}>
-                        <div className="lyrics-api-switch-thumb" />
-                      </div>
-                    </div>
-                  </button>
-                  <span className="field-hint">
-                    {lyricsConfig.api
-                      ? 'Queries online LRCLIB database first; falls back to Whisper AI if missing.'
-                      : 'Bypasses internet database completely. Transcribes directly using Whisper AI.'}
-                  </span>
-                </div>
-
-                {/* Batch Limit */}
-                <div className="form-group">
-                  <label className="form-label">Batch Limit</label>
-                  <select
-                    className="form-input-text"
-                    value={lyricsConfig.limit}
-                    onChange={e => setLyricsConfig(c => ({ ...c, limit: parseInt(e.target.value, 10) }))}
-                    disabled={lyricsStatus?.job?.state === 'running' || lyricsConfig.scope === 'song'}
-                  >
-                    <option value="0">All Songs in Scope</option>
-                    <option value="5">Benchmark 5 Songs</option>
-                    <option value="10">Test 10 Songs</option>
-                    <option value="25">Test 25 Songs</option>
-                  </select>
-                  <span className="field-hint">Max songs processed per run</span>
-                </div>
-
-                {/* Checkboxes */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '12px' }}>
-                    <input
-                      type="checkbox"
-                      checked={lyricsConfig.force}
-                      onChange={e => setLyricsConfig(c => ({ ...c, force: e.target.checked }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    />
-                    <span><strong>Force regenerate existing .lrc files</strong></span>
-                  </label>
-                  <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '12px' }}>
-                    <input
-                      type="checkbox"
-                      checked={lyricsConfig.demucs}
-                      onChange={e => setLyricsConfig(c => ({ ...c, demucs: e.target.checked }))}
-                      disabled={lyricsStatus?.job?.state === 'running'}
-                    />
-                    <span>HTDemucs Vocal Separation (Isolate vocals before Whisper)</span>
-                  </label>
-                </div>
               </div>
+            </details>
 
+            {/* 4. Advanced Workstation Settings & Hardware Safeguards */}
+            <details className="admin-disclosure lyrics-config-disclosure">
+              <summary className="admin-disclosure-summary" data-testid="disclosure-lyrics-config">
+                <div className="admin-disclosure-title">
+                  <LyricsDocIcon />
+                  <span>Advanced Workstation Settings & Hardware Safeguards</span>
+                </div>
+                <span className="admin-disclosure-badge">Remote GPU, Models & Limits ▾</span>
+              </summary>
+              <div className="admin-disclosure-content">
+                <div className="lyrics-workstation-layout" style={{ marginTop: 18 }}>
               {/* CARD 2: ⚡ Remote GPU Acceleration & Zero-Trace Node (All Local PC Options Here!) */}
               <div className="lyrics-card">
                 <div className="lyrics-card-header">
@@ -3980,9 +3492,20 @@ export default function AdminDashboard({
                 </div>
               </div>
             </div>
+              </div>
+            </details>
 
-            {/* 4. Audit Log Table */}
-            <div className="admin-panel lyrics-audit-panel">
+            {/* 5. Lyrics Audit Log Table */}
+            <details className="admin-disclosure lyrics-logs-disclosure">
+              <summary className="admin-disclosure-summary" data-testid="disclosure-lyrics-logs">
+                <div className="admin-disclosure-title">
+                  <span>📋</span>
+                  <span>Lyrics Audit & History Logs</span>
+                </div>
+                <span className="admin-disclosure-badge">Waterfall Results & History ▾</span>
+              </summary>
+              <div className="admin-disclosure-content">
+                <div className="admin-panel lyrics-audit-panel">
               <div className="admin-panel-header lyrics-audit-header">
                 <div>
                   <div className="admin-panel-title">Lyrics Audit & History Logs</div>
@@ -4192,6 +3715,8 @@ export default function AdminDashboard({
                 </div>
               )}
             </div>
+              </div>
+            </details>
           </div>
         ) : (
           /* =========================================================================
@@ -4253,7 +3778,7 @@ export default function AdminDashboard({
             </div>
           </div>
         )}
-      </div>
+      </main>
 
       {/* Add/Edit User Modal */}
       {showUserModal && (

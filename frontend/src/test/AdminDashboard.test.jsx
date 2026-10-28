@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import React from 'react'
 import AdminDashboard from '../components/AdminDashboard.jsx'
 
@@ -161,6 +161,20 @@ describe('AdminDashboard Component', () => {
       }
       if (url.includes('/api/admin/users') && !url.includes('/stats')) {
         return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      if (url.includes('/api/admin/users') && url.includes('/stats')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            username: 'admin',
+            role: 'admin',
+            total_seconds: 3600,
+            play_count: 12,
+            favorite_track: 'Song 1',
+            rules: { allowed_playlists: ['*'] },
+            timeline: []
+          })
+        })
       }
       if (url.includes('/api/admin/logs')) {
         return Promise.resolve({ ok: true, json: async () => mockLogsData })
@@ -480,6 +494,861 @@ describe('AdminDashboard Component', () => {
     fireEvent.click(turboBtn)
     expect(threadsSlider).toHaveValue('14') // 85% of 16
     expect(ramSlider).toHaveValue('24576') // 75% of 32768
+  })
+
+  it('supports full keyboard arrow navigation across tabs with wrapping, Home and End keys', async () => {
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-tab-analytics')).toBeInTheDocument()
+    })
+
+    const analyticsTab = screen.getByTestId('admin-tab-analytics')
+    analyticsTab.focus()
+
+    // 1. ArrowRight moves from analytics -> music
+    fireEvent.keyDown(analyticsTab, { key: 'ArrowRight', code: 'ArrowRight' })
+    await waitFor(() => {
+      expect(screen.getByTestId('music-tab-content')).toBeInTheDocument()
+      expect(screen.getByTestId('admin-tab-music')).toHaveAttribute('aria-selected', 'true')
+    })
+
+    // 2. ArrowRight moves from music -> live (Activity)
+    const musicTab = screen.getByTestId('admin-tab-music')
+    fireEvent.keyDown(musicTab, { key: 'ArrowRight', code: 'ArrowRight' })
+    await waitFor(() => {
+      expect(screen.getByTestId('live-tab-content')).toBeInTheDocument()
+      expect(screen.getByTestId('admin-tab-live')).toHaveAttribute('aria-selected', 'true')
+    })
+
+    // 3. ArrowLeft moves from live back to music
+    const liveTab = screen.getByTestId('admin-tab-live')
+    fireEvent.keyDown(liveTab, { key: 'ArrowLeft', code: 'ArrowLeft' })
+    await waitFor(() => {
+      expect(screen.getByTestId('music-tab-content')).toBeInTheDocument()
+      expect(screen.getByTestId('admin-tab-music')).toHaveAttribute('aria-selected', 'true')
+    })
+
+    // 4. End key jumps to system tab
+    fireEvent.keyDown(musicTab, { key: 'End', code: 'End' })
+    await waitFor(() => {
+      expect(screen.getByTestId('system-tab-content')).toBeInTheDocument()
+      expect(screen.getByTestId('admin-tab-system')).toHaveAttribute('aria-selected', 'true')
+    })
+
+    // 5. Home key jumps to analytics tab
+    const systemTab = screen.getByTestId('admin-tab-system')
+    fireEvent.keyDown(systemTab, { key: 'Home', code: 'Home' })
+    await waitFor(() => {
+      expect(screen.getByTestId('analytics-tab-content')).toBeInTheDocument()
+      expect(screen.getByTestId('admin-tab-analytics')).toHaveAttribute('aria-selected', 'true')
+    })
+  })
+
+  it('renders proper ARIA semantics for tablist and individual tabs', async () => {
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    const tablist = screen.getByRole('tablist', { name: /admin sections/i })
+    expect(tablist).toBeInTheDocument()
+
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.length).toBe(6)
+
+    // Analytics tab is selected by default
+    const analyticsTab = screen.getByTestId('admin-tab-analytics')
+    expect(analyticsTab).toHaveAttribute('aria-selected', 'true')
+    expect(analyticsTab).toHaveAttribute('tabIndex', '0')
+
+    // Music tab is unselected
+    const musicTab = screen.getByTestId('admin-tab-music')
+    expect(musicTab).toHaveAttribute('aria-selected', 'false')
+    expect(musicTab).toHaveAttribute('tabIndex', '-1')
+
+    // Switch to Users tab
+    fireEvent.click(screen.getByTestId('admin-tab-users'))
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-tab-users')).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByTestId('admin-tab-analytics')).toHaveAttribute('aria-selected', 'false')
+    })
+  })
+
+  it('renders and allows toggling expandable disclosure sections in Overview and Lyrics tabs', async () => {
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('disclosure-diurnal')).toBeInTheDocument()
+      expect(screen.getByTestId('disclosure-platforms')).toBeInTheDocument()
+    })
+
+    // Click diurnal disclosure summary to toggle
+    const diurnalSummary = screen.getByTestId('disclosure-diurnal')
+    fireEvent.click(diurnalSummary)
+    expect(diurnalSummary).toBeInTheDocument()
+
+    // Switch to Lyrics tab and verify lyrics disclosures
+    fireEvent.click(screen.getByTestId('admin-tab-lyrics'))
+    await waitFor(() => {
+      expect(screen.getByTestId('disclosure-lyrics-telemetry')).toBeInTheDocument()
+      expect(screen.getByTestId('disclosure-lyrics-config')).toBeInTheDocument()
+      expect(screen.getByTestId('disclosure-lyrics-logs')).toBeInTheDocument()
+    })
+
+    // Click config disclosure summary
+    const configSummary = screen.getByTestId('disclosure-lyrics-config')
+    fireEvent.click(configSummary)
+    expect(configSummary).toBeInTheDocument()
+  })
+
+  it('renders timezone selector inside filters toolbar with proper aria and persistence', async () => {
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    // Verify timezone selector exists within the toolbar
+    const toolbar = screen.getByRole('toolbar', { name: /analytics filters toolbar/i })
+    expect(toolbar).toBeInTheDocument()
+
+    const tzSelect = screen.getByTestId('admin-tz-select')
+    expect(toolbar).toContainElement(tzSelect)
+
+    // Test selection and persistence
+    fireEvent.change(tzSelect, { target: { value: 'America/New_York' } })
+    expect(tzSelect.value).toBe('America/New_York')
+    expect(localStorage.getItem('sangita_timezone')).toBe('America/New_York')
+  })
+
+  it('renders distinct loading state and avoids showing zero KPI cards while analytics are loading', async () => {
+    // Analytics request remains pending
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        return new Promise(() => {}) // pending
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    // Verify loading indicator is present
+    expect(screen.getByTestId('analytics-loading')).toBeInTheDocument()
+    expect(screen.getByText(/loading analytics metrics/i)).toBeInTheDocument()
+
+    // Ensure zero-value KPI cards are NOT displayed while loading
+    expect(screen.queryByTestId('kpi-total-time')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('kpi-total-plays')).not.toBeInTheDocument()
+  })
+
+  it('renders distinct failure state with specific retry when analytics request fails', async () => {
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.reject(new Error('Backend connection failed'))
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('analytics-error')).toBeInTheDocument()
+      expect(screen.getByText('Failed to Load Analytics')).toBeInTheDocument()
+      expect(screen.getAllByText('Backend connection failed').length).toBeGreaterThanOrEqual(1)
+    })
+
+    // Verify retry button specifically calls fetchAnalytics again
+    const retryBtn = screen.getByRole('button', { name: /retry analytics/i })
+    expect(retryBtn).toBeInTheDocument()
+
+    // Mock successful retry
+    global.fetch.mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.resolve({ ok: true, json: async () => mockAnalyticsData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    fireEvent.click(retryBtn)
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-time')).toBeInTheDocument()
+      expect(screen.queryByTestId('analytics-error')).not.toBeInTheDocument()
+    })
+  })
+
+  it('keeps lyrics generation scope controls visible while disclosures start collapsed', async () => {
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('admin-tab-lyrics'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('lyrics-engine-content')).toBeInTheDocument()
+    })
+
+    // Scope controls are prominently visible outside any disclosure
+    expect(screen.getByTestId('lyrics-api-toggle-button')).toBeInTheDocument()
+    expect(screen.getByText('Entire Library')).toBeInTheDocument()
+    expect(screen.getByText('Select Playlist')).toBeInTheDocument()
+    expect(screen.getByText('Single Song')).toBeInTheDocument()
+
+    // Disclosures start collapsed (not open)
+    const telemetryDisclosure = screen.getByTestId('disclosure-lyrics-telemetry').closest('details')
+    const configDisclosure = screen.getByTestId('disclosure-lyrics-config').closest('details')
+    const logsDisclosure = screen.getByTestId('disclosure-lyrics-logs').closest('details')
+
+    expect(telemetryDisclosure).not.toHaveAttribute('open')
+    expect(configDisclosure).not.toHaveAttribute('open')
+    expect(logsDisclosure).not.toHaveAttribute('open')
+  })
+
+  it('keeps users tab selected and reachable in keyboard tab order when viewing user details', async () => {
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    // Switch to Users tab
+    fireEvent.click(screen.getByTestId('admin-tab-users'))
+    await waitFor(() => {
+      expect(screen.getByTestId('user-card-admin')).toBeInTheDocument()
+    })
+
+    // Click admin user card to open user details subview
+    fireEvent.click(screen.getByTestId('user-card-admin'))
+    await waitFor(() => {
+      expect(screen.getByTestId('user-detail-back-btn')).toBeInTheDocument()
+    })
+
+    // Users tab MUST retain aria-selected="true" and tabIndex="0"
+    const usersTab = screen.getByTestId('admin-tab-users')
+    expect(usersTab).toHaveAttribute('aria-selected', 'true')
+    expect(usersTab).toHaveAttribute('tabIndex', '0')
+    expect(usersTab).toHaveClass('active')
+
+    // Click back to user list
+    fireEvent.click(screen.getByTestId('user-detail-back-btn'))
+    await waitFor(() => {
+      expect(screen.getByTestId('user-card-admin')).toBeInTheDocument()
+    })
+    expect(usersTab).toHaveAttribute('aria-selected', 'true')
+    expect(usersTab).toHaveAttribute('tabIndex', '0')
+  })
+
+  it('changing timeframe filter clears old numbers and immediately shows loading state, preventing stale numbers from displaying under a new timeframe', async () => {
+    let resolveAnalyticsPromise
+    const originalAnalyticsData = { ...mockAnalyticsData, kpis: { ...mockAnalyticsData.kpis, total_seconds: 36000, total_plays: 120 } }
+    const updatedAnalyticsData = { ...mockAnalyticsData, timeframe: '30d', kpis: { ...mockAnalyticsData.kpis, total_seconds: 72000, total_plays: 450 } }
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        if (url.includes('timeframe=30d')) {
+          return new Promise((resolve) => {
+            resolveAnalyticsPromise = () => resolve({ ok: true, json: async () => updatedAnalyticsData })
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => originalAnalyticsData })
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    // Wait for initial analytics to load
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-time')).toHaveTextContent('10h 0m')
+      expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('120')
+    })
+
+    // Click on 30d timeframe
+    fireEvent.click(screen.getByTestId('timeframe-btn-30d'))
+
+    // Immediately shows loading state and clears old stale KPI numbers
+    expect(screen.getByTestId('analytics-loading')).toBeInTheDocument()
+    expect(screen.getByText(/loading analytics metrics/i)).toBeInTheDocument()
+    expect(screen.queryByTestId('kpi-total-time')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('kpi-total-plays')).not.toBeInTheDocument()
+
+    // Resolve the promise for 30d
+    resolveAnalyticsPromise()
+
+    // Now updated data renders
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-time')).toHaveTextContent('20h 0m')
+      expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('450')
+      expect(screen.queryByTestId('analytics-loading')).not.toBeInTheDocument()
+    })
+  })
+
+  it('renders distinct loading state in Users tab while usersLoading is true', async () => {
+    let resolveUsersPromise
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.resolve({ ok: true, json: async () => mockAnalyticsData })
+      }
+      if (url.includes('/api/admin/users') && !url.includes('/stats')) {
+        return new Promise((resolve) => {
+          resolveUsersPromise = () => resolve({ ok: true, json: async () => mockUsersData })
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    // Switch to Users tab while user fetch is still pending
+    fireEvent.click(screen.getByTestId('admin-tab-users'))
+
+    // Verify distinct users loading state
+    expect(screen.getByTestId('users-loading')).toBeInTheDocument()
+    expect(screen.getByText(/loading user accounts\.\.\./i)).toBeInTheDocument()
+    expect(screen.queryByTestId('user-card-admin')).not.toBeInTheDocument()
+
+    // Resolve users fetch
+    resolveUsersPromise()
+
+    // Users should now appear
+    await waitFor(() => {
+      expect(screen.getByTestId('user-card-admin')).toBeInTheDocument()
+      expect(screen.queryByTestId('users-loading')).not.toBeInTheDocument()
+    })
+  })
+
+  it('renders distinct loading state for activity logs while logsLoading is true and live sessions while analytics is pending', async () => {
+    let resolveLogsPromise
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        return new Promise(() => {}) // pending analytics
+      }
+      if (url.includes('/api/admin/logs')) {
+        return new Promise((resolve) => {
+          resolveLogsPromise = () => resolve({ ok: true, json: async () => mockLogsData })
+        })
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    // Switch to Activity (Live) tab
+    fireEvent.click(screen.getByTestId('admin-tab-live'))
+
+    // Verify live sessions loading state (analytics pending)
+    expect(screen.getByTestId('live-sessions-loading')).toBeInTheDocument()
+    expect(screen.getByText(/checking active streams\.\.\./i)).toBeInTheDocument()
+
+    // Verify logs loading state
+    expect(screen.getByTestId('logs-loading')).toBeInTheDocument()
+    expect(screen.getByText(/loading stream audit logs\.\.\./i)).toBeInTheDocument()
+
+    // Resolve logs fetch
+    resolveLogsPromise()
+
+    // Logs table should now appear
+    await waitFor(() => {
+      expect(screen.queryByTestId('logs-loading')).not.toBeInTheDocument()
+      expect(screen.getByText(/playback stream audit log/i)).toBeInTheDocument()
+    })
+  })
+
+  it('renders distinct loading state in Music tab while analyticsLoading is true', async () => {
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        return new Promise(() => {}) // pending
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('admin-tab-music'))
+
+    expect(screen.getByTestId('music-analytics-loading')).toBeInTheDocument()
+    expect(screen.getByText(/loading catalog metrics\.\.\./i)).toBeInTheDocument()
+  })
+
+  it('renders distinct failure state in Music tab when analytics request fails', async () => {
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.reject(new Error('Music catalog fetch failed'))
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('admin-tab-music'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('music-analytics-error')).toBeInTheDocument()
+      expect(screen.getByText('Failed to Load Music Analytics')).toBeInTheDocument()
+      expect(screen.getAllByText('Music catalog fetch failed').length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  it('discards out-of-order responses so older delayed requests cannot overwrite newer filter results', async () => {
+    let resolve30dPromise
+    let resolve7dPromise
+
+    const data7d = {
+      ...mockAnalyticsData,
+      timeframe: '7d',
+      kpis: { ...mockAnalyticsData.kpis, total_plays: 120, total_hours: 10.0 }
+    }
+    const data30d = {
+      ...mockAnalyticsData,
+      timeframe: '30d',
+      kpis: { ...mockAnalyticsData.kpis, total_plays: 450, total_hours: 20.0 }
+    }
+
+    let initial7dResolved = false
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        if (url.includes('timeframe=30d')) {
+          // Request 1 (for 30d, delayed)
+          return new Promise((resolve) => {
+            resolve30dPromise = () => resolve({ ok: true, json: async () => data30d })
+          })
+        }
+        if (url.includes('timeframe=7d')) {
+          if (!initial7dResolved) {
+            initial7dResolved = true
+            return Promise.resolve({ ok: true, json: async () => data7d })
+          }
+          // Request 2 (for 7d, resolves first)
+          return new Promise((resolve) => {
+            resolve7dPromise = () => resolve({ ok: true, json: async () => data7d })
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => data7d })
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    // Wait for initial 7d analytics to load
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('120')
+      expect(screen.getByTestId('kpi-total-time')).toHaveTextContent('10h 0m')
+    })
+
+    // User switches to 30d: Request 1 starts (delayed)
+    fireEvent.click(screen.getByTestId('timeframe-btn-30d'))
+    expect(screen.getByTestId('analytics-loading')).toBeInTheDocument()
+
+    // User rapidly switches back to 7d: Request 2 starts
+    fireEvent.click(screen.getByTestId('timeframe-btn-7d'))
+    expect(screen.getByTestId('analytics-loading')).toBeInTheDocument()
+
+    // Request 2 (7d) resolves FIRST with 7d data
+    await act(async () => {
+      resolve7dPromise()
+    })
+
+    // Assert that Request 2 (7d) data is displayed
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('120')
+      expect(screen.getByTestId('kpi-total-time')).toHaveTextContent('10h 0m')
+      expect(screen.queryByTestId('analytics-loading')).not.toBeInTheDocument()
+    })
+
+    // Request 1 (30d) resolves LATER with 30d data
+    await act(async () => {
+      resolve30dPromise()
+    })
+
+    // Wait to allow any potential state updates to settle
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Assert that 7d data is STILL displayed and 30d data did NOT overwrite it
+    expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('120')
+    expect(screen.getByTestId('kpi-total-time')).toHaveTextContent('10h 0m')
+    expect(screen.queryByText('450')).not.toBeInTheDocument()
+    expect(screen.queryByText('20h 0m')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('analytics-loading')).not.toBeInTheDocument()
+  })
+
+  it('discards slower failure from an older request after a newer request succeeds', async () => {
+    let reject30dPromise
+    let resolve7dPromise
+
+    const data7d = {
+      ...mockAnalyticsData,
+      timeframe: '7d',
+      kpis: { ...mockAnalyticsData.kpis, total_plays: 120, total_hours: 10.0 }
+    }
+
+    let initial7dResolved = false
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        if (url.includes('timeframe=30d')) {
+          // Request 1 (slow, fails)
+          return new Promise((_, reject) => {
+            reject30dPromise = (err) => reject(err || new Error('Network timeout on 30d'))
+          })
+        }
+        if (url.includes('timeframe=7d')) {
+          if (!initial7dResolved) {
+            initial7dResolved = true
+            return Promise.resolve({ ok: true, json: async () => data7d })
+          }
+          // Request 2 (fast, succeeds)
+          return new Promise((resolve) => {
+            resolve7dPromise = () => resolve({ ok: true, json: async () => data7d })
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => data7d })
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    // Wait for initial 7d analytics to load
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('120')
+    })
+
+    // User switches to 30d: Request 1 starts (slow)
+    fireEvent.click(screen.getByTestId('timeframe-btn-30d'))
+    expect(screen.getByTestId('analytics-loading')).toBeInTheDocument()
+
+    // User switches back to 7d: Request 2 starts (fast)
+    fireEvent.click(screen.getByTestId('timeframe-btn-7d'))
+    expect(screen.getByTestId('analytics-loading')).toBeInTheDocument()
+
+    // Request 2 (fast) succeeds first
+    await act(async () => {
+      resolve7dPromise()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('120')
+      expect(screen.queryByTestId('analytics-loading')).not.toBeInTheDocument()
+    })
+
+    // Request 1 (slow) fails later
+    await act(async () => {
+      reject30dPromise(new Error('Network timeout on 30d'))
+    })
+
+    // Wait to allow any potential state updates to settle
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Assert that successful 7d data is STILL displayed and error did NOT overwrite it
+    expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('120')
+    expect(screen.queryByTestId('analytics-error')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Network timeout on 30d/i)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('analytics-loading')).not.toBeInTheDocument()
+  })
+
+  it('keeps analytics available when users fail and clears the user error after retry', async () => {
+    let usersFail = true
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/users')) {
+        return usersFail
+          ? Promise.reject(new Error('Database error loading users'))
+          : Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.resolve({ ok: true, json: async () => mockAnalyticsData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(<AdminDashboard token="test-token" playlists={{}} onLogout={vi.fn()} theme="dark"
+      onCycleTheme={vi.fn()} ThemeIcon={MockThemeIcon} onBackToPlayer={vi.fn()} />)
+
+    await waitFor(() => expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('120'))
+    expect(screen.queryByTestId('analytics-error')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('admin-tab-users'))
+    await screen.findByTestId('users-error')
+    usersFail = false
+    fireEvent.click(screen.getByRole('button', { name: /retry loading users/i }))
+    await waitFor(() => expect(screen.queryByTestId('users-error')).not.toBeInTheDocument())
+    expect(screen.queryByText('Database error loading users')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('admin-tab-analytics'))
+    expect(screen.getByTestId('kpi-total-plays')).toHaveTextContent('120')
+  })
+
+  it('renders distinct error state when users fetch fails and hides empty results message', async () => {
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/users')) {
+        return Promise.reject(new Error('Database error loading users'))
+      }
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.resolve({ ok: true, json: async () => mockAnalyticsData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('admin-tab-users'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('users-error')).toBeInTheDocument()
+      expect(screen.getByText('Failed to Load Users')).toBeInTheDocument()
+      expect(screen.getAllByText('Database error loading users').length).toBeGreaterThanOrEqual(1)
+      expect(screen.getByText(/retry loading users/i)).toBeInTheDocument()
+    })
+
+    // Crucial requirement: empty-results message is NOT displayed
+    expect(screen.queryByText('No users match filters.')).not.toBeInTheDocument()
+  })
+
+  it('renders distinct error state when audit logs fetch fails and hides empty results message', async () => {
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/logs')) {
+        return Promise.reject(new Error('Database timeout loading audit logs'))
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.resolve({ ok: true, json: async () => mockAnalyticsData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('admin-tab-live'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('logs-error')).toBeInTheDocument()
+      expect(screen.getByText('Failed to Load Audit Logs')).toBeInTheDocument()
+      expect(screen.getAllByText('Database timeout loading audit logs').length).toBeGreaterThanOrEqual(1)
+      expect(screen.getByText(/retry loading logs/i)).toBeInTheDocument()
+    })
+
+    // Crucial requirement: empty-results message is NOT displayed
+    expect(screen.queryByText('No log events match query.')).not.toBeInTheDocument()
+  })
+
+  it('renders distinct error state when live sessions fetch fails and hides empty sessions message', async () => {
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.reject(new Error('Failed to load active streams'))
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      if (url.includes('/api/admin/logs')) {
+        return Promise.resolve({ ok: true, json: async () => mockLogsData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('admin-tab-live'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('live-sessions-error')).toBeInTheDocument()
+      expect(screen.getByText('Failed to Load Live Sessions')).toBeInTheDocument()
+      expect(screen.getAllByText('Failed to load active streams').length).toBeGreaterThanOrEqual(1)
+    })
+
+    // Crucial requirement: empty sessions message is NOT displayed
+    expect(screen.queryByText('No users currently streaming audio.')).not.toBeInTheDocument()
   })
 })
 

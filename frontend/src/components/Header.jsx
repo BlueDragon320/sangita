@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import ThemeSelector from './ThemeSelector.jsx'
 
 function Header({
   view,
@@ -7,6 +8,8 @@ function Header({
   searchQuery,
   onSearchChange,
   theme,
+  setTheme,
+  onSelectTheme,
   onCycleTheme,
   ThemeIcon,
   username,
@@ -85,15 +88,24 @@ function Header({
           )}
         </button>
 
-        {/* Theme Toggle */}
-        <button
-          className="header-icon-btn"
-          onClick={onCycleTheme}
-          title="Toggle Theme"
-          data-testid="header-theme-btn"
-        >
-          <ThemeIcon theme={theme} />
-        </button>
+        {/* Theme Selection: accessible 3-theme direct selector with fallback */}
+        {(setTheme || onSelectTheme) ? (
+          <ThemeSelector
+            theme={theme}
+            onSelectTheme={setTheme || onSelectTheme}
+            onCycleTheme={onCycleTheme}
+            ThemeIcon={ThemeIcon}
+          />
+        ) : (
+          <button
+            className="header-icon-btn"
+            onClick={onCycleTheme}
+            title="Toggle Theme"
+            data-testid="header-theme-btn"
+          >
+            {ThemeIcon ? <ThemeIcon theme={theme} /> : null}
+          </button>
+        )}
 
         {/* User Profile Dropdown Container */}
         <div className="user-profile-container" style={{ position: 'relative' }}>

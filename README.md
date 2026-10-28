@@ -49,10 +49,18 @@ Sangita is a modern, self-hosted, full-stack music streaming platform designed t
 - **Multi-Device Real-Time Synchronization**:
   - Spotify Connect-style real-time control via WebSockets and Redis.
   - Use your smartphone or secondary browser tab as a remote control for your desktop or stereo playback.
-- **Modern Responsive Design**:
-  - Curated Dark Mode and Clean Light Mode themes with adaptive contrast.
+- **Modern Responsive Design & Android-Aligned Themes**:
+  - Three distinct themes matching Android terminology and palette:
+    - **Pure AMOLED Black (`amoled`)**: True `#000000` deep black surfaces, subtle high-contrast borders, and white typography.
+    - **Dark Obsidian (`dark`)**: Android-inspired dark palette (`#080A0F` base, `#10131B` surfaces, `#F1F2F7` typography).
+    - **Light Zinc (`light`)**: Clean light mode (`#F8FAFC` base, crisp white surfaces, `#0F172A` typography).
+  - Soft steel blue primary accents (`#66A3BF`) and contrasting deep navy controls (`#032F72`) with preserved semantic status indicators.
+  - Accessible theme selector in player and admin consoles with automatic migration for legacy dark mode preferences.
   - Mobile, tablet, and desktop optimized responsive layouts.
   - Personalized Home Dashboard with listening history, Top 10 tracks, and diurnal SVG activity charts.
+- **Streamlined Admin Dashboard**:
+  - Six focused management areas: **Overview**, **Music**, **Activity**, **Users**, **Lyrics**, and **System** with ARIA tab semantics, keyboard navigation, and mobile-friendly scrolling.
+  - Clear section headers, grouped filter toolbars with timezone selection, and progressive disclosure for deep analytics and lyrics workstation safeguards.
 - **Docker-Ready**:
   - One-command startup via `docker compose`.
   - Optional Cloudflare Tunnel integration for zero-trust public access without opening router ports.
@@ -257,12 +265,14 @@ sangita/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── AdminDashboard.jsx # Administration, analytics, user management, and lyrics console
+│   │   │   ├── AdminDashboard.css # Dedicated admin styling and responsive layout rules
+│   │   │   ├── ThemeSelector.jsx  # Accessible 3-theme selector with keyboard support
 │   │   │   ├── LyricsView.jsx     # Center-stage synced lyrics overlay with click-to-seek
 │   │   │   ├── Player.jsx         # Persistent bottom audio player and controls
 │   │   │   └── ...
 │   │   ├── hooks/
 │   │   │   └── useDeviceSync.js   # Multi-device WebSocket synchronization hook
-│   │   └── index.css              # Custom design system and themes
+│   │   └── index.css              # Custom design system, shared tokens, and themes
 │   └── package.json
 ├── nginx.conf                 # Gateway reverse proxy configuration
 ├── Dockerfile                 # Multi-stage production container build

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import React from 'react'
 import Header from '../components/Header.jsx'
 
@@ -133,5 +133,72 @@ describe('Header Component & Theme Toggle', () => {
     const homeBtn = screen.getByTestId('header-home-btn')
     fireEvent.click(homeBtn)
     expect(handleSelectView).toHaveBeenCalledWith('home')
+  })
+
+  it('renders ThemeSelector when setTheme is provided and allows direct selection of 3 themes', () => {
+    const handleSetTheme = vi.fn()
+    render(
+      <Header
+        view="music"
+        onSelectView={vi.fn()}
+        isAdmin={false}
+        searchQuery=""
+        onSearchChange={vi.fn()}
+        theme="amoled"
+        setTheme={handleSetTheme}
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        username="blue"
+        onLogout={vi.fn()}
+        onOpenDevices={vi.fn()}
+        deviceCount={1}
+      />
+    )
+
+    // Verify ThemeSelector is rendered
+    const selectorTrigger = screen.getByTestId('theme-selector-btn')
+    expect(selectorTrigger).toBeInTheDocument()
+    expect(selectorTrigger).toHaveAttribute('aria-haspopup', 'listbox')
+
+    // Open ThemeSelector
+    fireEvent.click(selectorTrigger)
+
+    // Verify all 3 options are displayed in menu
+    const menu = screen.getByTestId('theme-selector-menu')
+    expect(within(menu).getByText('Pure AMOLED Black')).toBeInTheDocument()
+    expect(within(menu).getByText('Dark Obsidian')).toBeInTheDocument()
+    expect(within(menu).getByText('Light Zinc')).toBeInTheDocument()
+
+    // Select Dark Obsidian
+    fireEvent.click(screen.getByTestId('theme-option-dark'))
+    expect(handleSetTheme).toHaveBeenCalledWith('dark')
+  })
+
+  it('closes ThemeSelector menu when Escape key is pressed', () => {
+    render(
+      <Header
+        view="music"
+        onSelectView={vi.fn()}
+        isAdmin={false}
+        searchQuery=""
+        onSearchChange={vi.fn()}
+        theme="amoled"
+        setTheme={vi.fn()}
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        username="blue"
+        onLogout={vi.fn()}
+        onOpenDevices={vi.fn()}
+        deviceCount={1}
+      />
+    )
+
+    const trigger = screen.getByTestId('theme-selector-btn')
+    fireEvent.click(trigger)
+    expect(screen.getByTestId('theme-selector-menu')).toBeInTheDocument()
+
+    const menu = screen.getByTestId('theme-selector-menu')
+    fireEvent.keyDown(menu, { key: 'Escape' })
+    expect(screen.queryByTestId('theme-selector-menu')).not.toBeInTheDocument()
   })
 })
