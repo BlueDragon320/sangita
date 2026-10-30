@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
 function PlusIcon({ width = 16, height = 16 }) {
   return (
@@ -40,10 +40,59 @@ export default function AddToPlaylistModal({
   const [newPlaylistName, setNewPlaylistName] = useState('')
   const [loadingAction, setLoadingAction] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+  const modalRef = useRef(null)
+  const previousFocusRef = useRef(null)
+
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement
+    const timer = setTimeout(() => {
+      if (!modalRef.current) return
+      const focusableElements = modalRef.current.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusableElements.length > 0) {
+        focusableElements[0].focus()
+      }
+    }, 0)
+
+    return () => {
+      clearTimeout(timer)
+      if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
+        previousFocusRef.current.focus()
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        onClose()
+        return
+      }
+
+      if (e.key === 'Tab') {
+        if (!modalRef.current) return
+        const focusable = Array.from(modalRef.current.querySelectorAll(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ))
+        if (focusable.length === 0) return
+
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault()
+            last.focus()
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault()
+            first.focus()
+          }
+        }
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -156,28 +205,51 @@ export default function AddToPlaylistModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose} data-testid="add-playlist-backdrop">
-      <div className="add-playlist-modal" onClick={e => e.stopPropagation()} data-testid="add-playlist-modal">
+      <div
+        ref={modalRef}
+        className="add-playlist-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-playlist-title"
+        onClick={e => e.stopPropagation()}
+        data-testid="add-playlist-modal"
+      >
         <div className="modal-header">
           <div className="modal-title-group">
-            <h3>Add to playlist</h3>
+            <h3 id="add-playlist-title">Add to playlist</h3>
             <p className="modal-subtitle" title={track.name}>
               {track.name}
             </p>
           </div>
-          <button className="btn-icon modal-close-btn" onClick={onClose} title="Close" data-testid="add-playlist-close">
+          <button
+            className="btn-icon modal-close-btn"
+            onClick={onClose}
+            title="Close"
+            aria-label="Close dialog"
+            data-testid="add-playlist-close"
+          >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
               <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
             </svg>
           </button>
         </div>
 
-        {errorMsg && <div className="modal-error-banner">{errorMsg}</div>}
+        {errorMsg && <div className="modal-error-banner" role="alert">{errorMsg}</div>}
 
         <div className="modal-body-list">
           {/* Favorites Option */}
           <div
             className={`playlist-check-row ${isFav ? 'selected' : ''}`}
+            role="checkbox"
+            tabIndex={0}
+            aria-checked={isFav}
             onClick={() => handleToggleTrackInPlaylist('Favorites')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleToggleTrackInPlaylist('Favorites')
+              }
+            }}
             data-testid="add-to-favorites-row"
           >
             <div className="playlist-check-left">
@@ -200,7 +272,17 @@ export default function AddToPlaylistModal({
               <div
                 key={pName}
                 className={`playlist-check-row ${isIn ? 'selected' : ''} ${isLoading ? 'loading' : ''}`}
+                role="checkbox"
+                tabIndex={0}
+                aria-checked={isIn}
+                aria-disabled={isLoading}
                 onClick={() => handleToggleTrackInPlaylist(pName)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    handleToggleTrackInPlaylist(pName)
+                  }
+                }}
                 data-testid={`playlist-check-${pName}`}
               >
                 <div className="playlist-check-left">

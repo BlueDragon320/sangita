@@ -6,21 +6,24 @@ export const THEME_OPTIONS = [
     name: 'Pure AMOLED Black',
     shortName: 'AMOLED',
     desc: 'Pure #000000 surfaces',
-    previewBg: '#000000'
+    previewBg: '#000000',
+    accentColor: '#66A3BF'
   },
   {
     id: 'dark',
     name: 'Dark Obsidian',
     shortName: 'Dark',
     desc: 'Deep #080A0F surfaces',
-    previewBg: '#080A0F'
+    previewBg: '#080A0F',
+    accentColor: '#66A3BF'
   },
   {
     id: 'light',
     name: 'Light Zinc',
     shortName: 'Light',
     desc: 'Crisp #F8FAFC surfaces',
-    previewBg: '#F8FAFC'
+    previewBg: '#F8FAFC',
+    accentColor: '#032F72'
   }
 ]
 
@@ -152,7 +155,8 @@ export default function ThemeSelector({
         tabIndex={0}
         className={`admin-nav-btn theme-selector-btn ${compact ? 'compact' : ''} ${className}`}
         onClick={onCycleTheme}
-        title="Toggle Dark/Light Mode"
+        aria-label="Cycle color theme"
+        title="Cycle color theme"
         data-testid="admin-theme-btn"
       >
         {CustomThemeIcon ? (
@@ -226,7 +230,11 @@ export default function ThemeSelector({
               >
                 <div className="theme-option-left">
                   <span className={`theme-swatch ${opt.id}`}>
-                    <span className="theme-swatch-dot" />
+                    <span
+                      className="theme-swatch-dot"
+                      style={opt.accentColor ? { backgroundColor: opt.accentColor } : undefined}
+                      data-testid={`theme-swatch-dot-${opt.id}`}
+                    />
                   </span>
                   <div className="theme-option-text">
                     <span className="theme-option-title">{opt.name}</span>

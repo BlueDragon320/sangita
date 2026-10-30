@@ -285,4 +285,162 @@ describe('Player Component & Controls', () => {
     fireEvent.click(topProgress, { clientX: 50 })
     expect(handleSeek).toHaveBeenCalled()
   })
+
+  it('supports PageUp, PageDown and touch scrubbing on top progress seek bar', () => {
+    const handleSeek = vi.fn()
+    render(
+      <Player
+        track={mockTrack}
+        playlist="Rock Classics"
+        isPlaying={true}
+        currentTime={50}
+        duration={100}
+        onSeek={handleSeek}
+        formatTime={(s) => `${s}s`}
+        isActiveDevice={true}
+      />
+    )
+
+    const slider = screen.getByRole('slider', { name: 'Seek' })
+    expect(slider).toHaveAttribute('aria-orientation', 'horizontal')
+
+    // PageUp (+10%)
+    fireEvent.keyDown(slider, { key: 'PageUp' })
+    expect(handleSeek).toHaveBeenCalledWith(60)
+
+    // PageDown (-10%)
+    fireEvent.keyDown(slider, { key: 'PageDown' })
+    expect(handleSeek).toHaveBeenCalledWith(40)
+
+    // Touch scrubbing
+    fireEvent.touchStart(slider, {
+      touches: [{ clientX: 25 }],
+    })
+    expect(handleSeek).toHaveBeenCalled()
+
+    fireEvent.touchMove(slider, {
+      touches: [{ clientX: 75 }],
+    })
+    expect(handleSeek).toHaveBeenCalled()
+
+    fireEvent.touchEnd(slider, {
+      changedTouches: [{ clientX: 80 }],
+    })
+    expect(handleSeek).toHaveBeenCalled()
+  })
+
+  it('provides accessible volume slider with step=5, PageUp/PageDown, and mute memory', () => {
+    const handleVolumeChange = vi.fn()
+    const { rerender } = render(
+      <Player
+        track={mockTrack}
+        volume={70}
+        onVolumeChange={handleVolumeChange}
+        isActiveDevice={true}
+      />
+    )
+
+    const volumeSlider = screen.getByTestId('player-volume-slider')
+    expect(volumeSlider).toHaveAttribute('aria-label', 'Volume')
+    expect(volumeSlider).toHaveAttribute('aria-valuetext', '70%')
+    expect(volumeSlider).toHaveAttribute('step', '5')
+
+    // PageUp (+10)
+    fireEvent.keyDown(volumeSlider, { key: 'PageUp' })
+    expect(handleVolumeChange).toHaveBeenCalledWith(80)
+
+    // PageDown (-10)
+    fireEvent.keyDown(volumeSlider, { key: 'PageDown' })
+    expect(handleVolumeChange).toHaveBeenCalledWith(60)
+
+    // Mute toggle remembers previous volume level
+    const muteToggle = screen.getByTestId('player-volume-toggle')
+    expect(muteToggle).toHaveAttribute('aria-label', 'Mute')
+    fireEvent.click(muteToggle)
+    expect(handleVolumeChange).toHaveBeenCalledWith(0)
+
+    // When volume is 0, unmute restores previous volume (70)
+    rerender(
+      <Player
+        track={mockTrack}
+        volume={0}
+        onVolumeChange={handleVolumeChange}
+        isActiveDevice={true}
+      />
+    )
+    const unmuteToggle = screen.getByTestId('player-volume-toggle')
+    expect(unmuteToggle).toHaveAttribute('aria-label', 'Unmute')
+    fireEvent.click(unmuteToggle)
+    expect(handleVolumeChange).toHaveBeenCalledWith(70)
+  })
+
+  it('renders all accessible labels and states on transport controls', () => {
+    render(
+      <Player
+        track={mockTrack}
+        isPlaying={true}
+        isShuffle={true}
+        isLoop={true}
+        isFavorite={true}
+        showLyrics={true}
+        showRightPanel={true}
+        onToggleLyrics={vi.fn()}
+        onToggleRightPanel={vi.fn()}
+        onOpenDevices={vi.fn()}
+        isActiveDevice={true}
+      />
+    )
+
+    const playBtn = screen.getByTestId('player-play-btn')
+    expect(playBtn).toHaveAttribute('aria-label', 'Pause')
+
+    const shuffleBtn = screen.getByTestId('player-shuffle-btn')
+    expect(shuffleBtn).toHaveAttribute('aria-label', 'Shuffle')
+    expect(shuffleBtn).toHaveAttribute('aria-pressed', 'true')
+
+    const loopBtn = screen.getByTestId('player-loop-btn')
+    expect(loopBtn).toHaveAttribute('aria-label', 'Repeat')
+    expect(loopBtn).toHaveAttribute('aria-pressed', 'true')
+
+    const favoriteBtn = screen.getByTestId('player-like-btn')
+    expect(favoriteBtn).toHaveAttribute('aria-label', 'Remove from Favorites')
+    expect(favoriteBtn).toHaveAttribute('aria-pressed', 'true')
+
+    const lyricsBtn = screen.getByTestId('lyrics-toggle-btn')
+    expect(lyricsBtn).toHaveAttribute('aria-label', 'Toggle synced lyrics')
+    expect(lyricsBtn).toHaveAttribute('aria-pressed', 'true')
+
+    const rightPanelBtn = screen.getByTestId('player-right-panel-toggle')
+    expect(rightPanelBtn).toHaveAttribute('aria-label', 'Toggle now playing panel')
+    expect(rightPanelBtn).toHaveAttribute('aria-expanded', 'true')
+
+    const devicesBtn = screen.getByTestId('player-devices-btn')
+    expect(devicesBtn).toHaveAttribute('aria-label', 'Connected devices')
+  })
+
+  it('includes onAddToPlaylist button in remote playback mode for parity', () => {
+    const handleAddToPlaylist = vi.fn()
+    render(
+      <Player
+        track={mockTrack}
+        isActiveDevice={false}
+        activeDeviceName="Living Room Speaker"
+        syncState={{
+          activeDeviceId: 'dev-remote',
+          trackId: mockTrack.path,
+          positionMs: 10000,
+          durationMs: 120000,
+          isPlaying: true,
+        }}
+        myDeviceId="dev-local"
+        onAddToPlaylist={handleAddToPlaylist}
+        onSendRemote={vi.fn()}
+      />
+    )
+
+    const addBtn = screen.getByTestId('player-add-btn')
+    expect(addBtn).toBeInTheDocument()
+    fireEvent.click(addBtn)
+    expect(handleAddToPlaylist).toHaveBeenCalledWith(mockTrack)
+  })
 })

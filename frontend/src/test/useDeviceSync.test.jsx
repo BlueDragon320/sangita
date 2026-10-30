@@ -59,4 +59,56 @@ describe('device sync session snapshots', () => {
       targetDeviceId: 'phone', positionMs: 10000, durationMs: 180000,
     })
   })
+
+  it('tracks connection lifecycle: isConnecting, isConnected, and connectError', () => {
+    const { result } = renderHook(() => useDeviceSync({ token: 'test', audioRef: audioRef(), isPlaying: false }))
+    expect(result.current.isConnecting).toBe(true)
+    expect(result.current.isConnected).toBe(false)
+    expect(result.current.connectError).toBeNull()
+
+    // On connect
+    act(() => wire.handlers.connect())
+    expect(result.current.isConnecting).toBe(false)
+    expect(result.current.isConnected).toBe(true)
+    expect(result.current.connectError).toBeNull()
+
+    // On connect error
+    act(() => wire.handlers.connect_error(new Error('Connection refused')))
+    expect(result.current.isConnecting).toBe(false)
+    expect(result.current.isConnected).toBe(false)
+    expect(result.current.connectError).toBe('Connection refused')
+  })
+
+  it('manages transferStatus, 6-second rollback timeout, confirmation and retryTransfer', () => {
+    const { result } = renderHook(() => useDeviceSync({ token: 'test', audioRef: audioRef(), isPlaying: false }))
+    expect(result.current.transferStatus).toBe('idle')
+    expect(result.current.isActiveDevice).toBe(true)
+
+    // Initiate transfer to phone
+    act(() => result.current.transferPlayback('phone'))
+    expect(result.current.transferStatus).toBe('transferring')
+    expect(result.current.isActiveDevice).toBe(false)
+
+    // Advance 5 seconds - still transferring
+    act(() => vi.advanceTimersByTime(5000))
+    expect(result.current.transferStatus).toBe('transferring')
+    expect(result.current.isActiveDevice).toBe(false)
+
+    // Advance 1 more second (6s total) - times out and rolls back
+    act(() => vi.advanceTimersByTime(1000))
+    expect(result.current.transferStatus).toBe('failed')
+    expect(result.current.isActiveDevice).toBe(true)
+
+    // retryTransfer retries transfer to 'phone'
+    wire.emit.mockClear()
+    act(() => result.current.retryTransfer())
+    expect(result.current.transferStatus).toBe('transferring')
+    expect(wire.emit).toHaveBeenCalledWith('TRANSFER_PLAYBACK', expect.objectContaining({
+      targetDeviceId: 'phone',
+    }))
+
+    // Confirmation received before timeout
+    act(() => wire.handlers.PLAYBACK_STATE_CHANGED({ activeDeviceId: 'phone' }))
+    expect(result.current.transferStatus).toBe('idle')
+  })
 })

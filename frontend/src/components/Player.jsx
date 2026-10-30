@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
 function strHue(str) {
   let h = 0;
@@ -67,6 +67,30 @@ function PlayerTopProgress({ pct, currentTime = 0, duration = 0, onSeek, formatT
     if (onSeek) onSeek(p)
   }
 
+  const getTouchPct = (e) => {
+    const touch = e.touches?.[0] || e.changedTouches?.[0]
+    if (!touch) return null
+    const rect = e.currentTarget.getBoundingClientRect()
+    const width = rect.width > 0 ? rect.width : (e.currentTarget.offsetWidth || 100)
+    const x = Math.max(0, Math.min(width, touch.clientX - rect.left))
+    return Math.max(0, Math.min(100, (x / width) * 100))
+  }
+
+  const handleTouchStart = (e) => {
+    const p = getTouchPct(e)
+    if (p !== null && onSeek) onSeek(p)
+  }
+
+  const handleTouchMove = (e) => {
+    const p = getTouchPct(e)
+    if (p !== null && onSeek) onSeek(p)
+  }
+
+  const handleTouchEnd = (e) => {
+    const p = getTouchPct(e)
+    if (p !== null && onSeek) onSeek(p)
+  }
+
   const hoverTimeSec = hoverPct !== null && duration > 0 ? (hoverPct / 100) * duration : 0
   const safePct = Math.min(100, Math.max(0, Number(pct) || 0))
 
@@ -76,20 +100,32 @@ function PlayerTopProgress({ pct, currentTime = 0, duration = 0, onSeek, formatT
       role="slider"
       tabIndex={0}
       aria-label="Seek"
+      aria-orientation="horizontal"
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(safePct)}
       aria-valuetext={`${formatTime ? formatTime(currentTime) : '0:00'} of ${formatTime ? formatTime(duration) : '0:00'}`}
       onKeyDown={(e) => {
-        const changes = { ArrowLeft: -5, ArrowDown: -5, ArrowRight: 5, ArrowUp: 5 }
+        const changes = {
+          ArrowLeft: -5,
+          ArrowDown: -5,
+          ArrowRight: 5,
+          ArrowUp: 5,
+          PageUp: 10,
+          PageDown: -10,
+        }
         if (e.key in changes || e.key === 'Home' || e.key === 'End') {
-          e.preventDefault(); e.stopPropagation()
+          e.preventDefault()
+          e.stopPropagation()
           onSeek?.(e.key === 'Home' ? 0 : e.key === 'End' ? 100 : Math.max(0, Math.min(100, safePct + changes[e.key])))
         }
       }}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onClick={handleClick}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       title="Click to seek"
       data-testid="player-top-progress"
     >
@@ -179,6 +215,35 @@ function Player({
 
   const isRemote = !isActiveDevice && syncState && syncState.activeDeviceId && syncState.activeDeviceId !== myDeviceId
 
+  // Remember previous volume when unmuting instead of hardcoding 80
+  const prevVolumeRef = useRef(volume > 0 ? volume : 80)
+  useEffect(() => {
+    if (volume > 0) {
+      prevVolumeRef.current = volume
+    }
+  }, [volume])
+
+  const handleMuteToggle = () => {
+    if (volume === 0) {
+      onVolumeChange?.(prevVolumeRef.current || 80)
+    } else {
+      prevVolumeRef.current = volume
+      onVolumeChange?.(0)
+    }
+  }
+
+  const handleVolumeKeyDown = (e) => {
+    if (e.key === 'PageUp') {
+      e.preventDefault()
+      e.stopPropagation()
+      onVolumeChange?.(Math.min(100, volume + 10))
+    } else if (e.key === 'PageDown') {
+      e.preventDefault()
+      e.stopPropagation()
+      onVolumeChange?.(Math.max(0, volume - 10))
+    }
+  }
+
   const sliderStyle = (val, max = 100) => ({
     background: `linear-gradient(to right, var(--emerald) ${val}%, var(--border-hi) ${val}%)`,
     height: 4,
@@ -193,31 +258,59 @@ function Player({
     const remotePositionSec = currentTime
     const remoteDurationSec = duration > 0 ? duration : ((syncState.durationMs || 0) / 1000)
     const remotePct = remoteDurationSec > 0 ? Math.min(100, (remotePositionSec / remoteDurationSec) * 100) : 0
+    const remoteVolPct = syncState?.volume !== undefined
+      ? Math.round(syncState.volume > 1 ? syncState.volume : syncState.volume * 100)
+      : 80
+
+    const activeTrack = track || (syncState?.trackId ? {
+      id: syncState.trackId,
+      path: syncState.trackId,
+      name: syncState.trackId.split('/').pop().replace(/\.[^/.]+$/, ''),
+      playlist: 'Remote Track',
+    } : null)
 
     return (
       <footer className="player player-remote" data-testid="player-bar">
         <PlayerTopProgress pct={remotePct} currentTime={remotePositionSec} duration={remoteDurationSec} onSeek={(newPct) => onSendRemote({ action: 'seek', payload: { pct: newPct } })} formatTime={formatTime} />
         <div className="player-left">
-          <PlayerDisc track={track} token={token} discBg={discBg} />
+          <PlayerDisc track={activeTrack} token={token} discBg={discBg} />
           <div className="player-info">
-            <div className="player-title" title={track ? track.name : (syncState.trackId?.split('/').pop().replace(/\.[^/.]+$/, '') || 'Playing remotely')}>
-              {track ? track.name : (syncState.trackId?.split('/').pop().replace(/\.[^/.]+$/, '') || 'Playing remotely')}
+            <div className="player-title" title={activeTrack ? activeTrack.name : 'Playing remotely'}>
+              {activeTrack ? activeTrack.name : 'Playing remotely'}
             </div>
             <div className="player-playlist">
               <span className="player-playlist-name">Playing on <span className="player-device-tag">{activeDeviceName || 'another device'}</span></span>
-              <span className="player-mobile-time"> • {formatTime(remotePositionSec)} / {remoteDurationSec > 0 ? formatTime(remoteDurationSec) : '—:——'}</span>
+              <span className="player-mobile-time"> • {formatTime ? formatTime(remotePositionSec) : '0:00'} / {remoteDurationSec > 0 ? (formatTime ? formatTime(remoteDurationSec) : '0:00') : '—:——'}</span>
             </div>
           </div>
-          {track && (
-            <button
-              className={`btn-icon player-like-btn ${isFavorite ? 'active' : ''}`}
-              onClick={() => onToggleFavorite && onToggleFavorite(track.path)}
-              title={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
-            >
-              <HeartIcon filled={isFavorite} />
-            </button>
+          {activeTrack && (
+            <div className="player-action-btns" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              {onAddToPlaylist && (
+                <button
+                  className="btn-icon player-add-btn"
+                  onClick={() => onAddToPlaylist(activeTrack)}
+                  title="Add to Playlist"
+                  aria-label="Add to Playlist"
+                  data-testid="player-add-btn"
+                >
+                  <PlusIcon width={16} height={16} />
+                </button>
+              )}
+              <button
+                className={`btn-icon player-like-btn ${isFavorite ? 'active' : ''}`}
+                onClick={() => onToggleFavorite && onToggleFavorite(activeTrack.path)}
+                title={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                aria-label={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                aria-pressed={isFavorite}
+                data-testid="player-like-btn"
+              >
+                <HeartIcon filled={isFavorite} />
+              </button>
+            </div>
           )}
-          <button className="player-claim-btn" onClick={onClaimDevice}>Play here</button>
+          <button className="player-claim-btn" onClick={onClaimDevice} aria-label="Play here on this device">
+            Play here
+          </button>
         </div>
         <div className="player-center">
           <div className="player-controls">
@@ -225,26 +318,41 @@ function Player({
               className={`btn-icon btn-shuffle ${isShuffle ? 'active glow' : ''}`}
               onClick={() => onSendRemote({ action: 'shuffle', payload: { shuffle: !isShuffle }})}
               title={isShuffle ? "Shuffle ON" : "Shuffle OFF"}
+              aria-label="Shuffle"
+              aria-pressed={isShuffle}
             >
               <ShuffleIcon />
             </button>
-            <button className="btn-icon btn-prev" onClick={() => onSendRemote({ action: 'prev' })} title="Previous">
+            <button
+              className="btn-icon btn-prev"
+              onClick={() => onSendRemote({ action: 'prev' })}
+              title="Previous"
+              aria-label="Previous"
+            >
               <PrevIcon />
             </button>
             <button
               className="btn-play-main"
               onClick={() => onSendRemote({ action: remoteIsPlaying ? 'pause' : 'play' })}
               title={remoteIsPlaying ? "Pause" : "Play"}
+              aria-label={remoteIsPlaying ? "Pause" : "Play"}
             >
               {remoteIsPlaying ? <PauseIcon/> : <PlayIcon/>}
             </button>
-            <button className="btn-icon btn-next" onClick={() => onSendRemote({ action: 'next' })} title="Next">
+            <button
+              className="btn-icon btn-next"
+              onClick={() => onSendRemote({ action: 'next' })}
+              title="Next"
+              aria-label="Next"
+            >
               <NextIcon />
             </button>
             <button
               className={`btn-icon btn-repeat ${isLoop ? 'active glow' : ''}`}
               onClick={() => onSendRemote({ action: 'loop', payload: { loop: !isLoop }})}
               title={isLoop ? "Repeat ON" : "Repeat OFF"}
+              aria-label="Repeat"
+              aria-pressed={isLoop}
             >
               <LoopIcon />
             </button>
@@ -256,6 +364,8 @@ function Player({
               className={`btn-icon player-lyrics-btn ${showLyrics ? 'active' : ''}`}
               onClick={onToggleLyrics}
               title={showLyrics ? "Hide Lyrics" : "Show Synced Lyrics"}
+              aria-label="Toggle synced lyrics"
+              aria-pressed={showLyrics}
               data-testid="lyrics-toggle-btn"
             >
               <LyricsIcon />
@@ -266,31 +376,52 @@ function Player({
               className={`btn-icon ${showRightPanel ? 'active' : ''}`}
               onClick={onToggleRightPanel}
               title="Now Playing View"
+              aria-label="Toggle now playing panel"
+              aria-expanded={showRightPanel}
               data-testid="player-right-panel-toggle"
             >
               <PanelIcon />
             </button>
           )}
-          <button className="btn-icon player-devices-btn" onClick={onOpenDevices} title="Connected Devices">
+          <button
+            className="btn-icon player-devices-btn"
+            onClick={onOpenDevices}
+            title="Connected Devices"
+            aria-label="Connected devices"
+            data-testid="player-devices-btn"
+          >
             <DevicesIcon />
           </button>
           {syncState?.volume !== undefined && (
             <>
               <button
                 className="btn-icon"
-                onClick={() => onSendRemote({ action: 'volume', payload: { volume: syncState.volume === 0 ? 60 : 0 }})}
-                title="Mute/Unmute"
+                onClick={() => onSendRemote({ action: 'volume', payload: { volume: remoteVolPct === 0 ? (prevVolumeRef.current || 60) : 0 }})}
+                title={remoteVolPct === 0 ? "Unmute" : "Mute"}
+                aria-label={remoteVolPct === 0 ? "Unmute" : "Mute"}
               >
-                {syncState.volume === 0 ? <MuteIcon /> : <VolumeIcon />}
+                {remoteVolPct === 0 ? <MuteIcon /> : <VolumeIcon />}
               </button>
               <input
                 type="range"
                 min="0"
                 max="100"
-                value={syncState.volume * 100}
+                step="5"
+                value={remoteVolPct}
+                aria-label="Volume"
+                aria-valuetext={`${remoteVolPct}%`}
                 onChange={e => onSendRemote({ action: 'volume', payload: { volume: Number(e.target.value) }})}
+                onKeyDown={(e) => {
+                  if (e.key === 'PageUp') {
+                    e.preventDefault(); e.stopPropagation()
+                    onSendRemote({ action: 'volume', payload: { volume: Math.min(100, remoteVolPct + 10) }})
+                  } else if (e.key === 'PageDown') {
+                    e.preventDefault(); e.stopPropagation()
+                    onSendRemote({ action: 'volume', payload: { volume: Math.max(0, remoteVolPct - 10) }})
+                  }
+                }}
                 className="range-slider"
-                style={sliderStyle(syncState.volume * 100, 90)}
+                style={sliderStyle(remoteVolPct, 90)}
               />
             </>
           )}
@@ -310,7 +441,7 @@ function Player({
           </div>
           <div className="player-playlist">
             <span className="player-playlist-name">{track ? (track.playlist || playlist) : 'Select a track'}</span>
-            <span className="player-mobile-time"> • {formatTime(currentTime)} / {formatTime(duration)}</span>
+            <span className="player-mobile-time"> • {formatTime ? formatTime(currentTime) : '0:00'} / {formatTime ? formatTime(duration) : '0:00'}</span>
           </div>
         </div>
         {track && (
@@ -320,6 +451,7 @@ function Player({
                 className="btn-icon player-add-btn"
                 onClick={() => onAddToPlaylist(track)}
                 title="Add to Playlist"
+                aria-label="Add to Playlist"
                 data-testid="player-add-btn"
               >
                 <PlusIcon width={16} height={16} />
@@ -329,6 +461,8 @@ function Player({
               className={`btn-icon player-like-btn ${isFavorite ? 'active' : ''}`}
               onClick={() => onToggleFavorite && onToggleFavorite(track.path)}
               title={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+              aria-label={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+              aria-pressed={isFavorite}
               data-testid="player-like-btn"
             >
               <HeartIcon filled={isFavorite} />
@@ -344,6 +478,8 @@ function Player({
             onClick={onToggleShuffle}
             data-testid="player-shuffle-btn"
             title={isShuffle ? "Shuffle ON" : "Shuffle OFF"}
+            aria-label="Shuffle"
+            aria-pressed={isShuffle}
           >
             <ShuffleIcon />
           </button>
@@ -352,6 +488,7 @@ function Player({
             onClick={onPrev}
             data-testid="player-prev-btn"
             title="Previous"
+            aria-label="Previous"
           >
             <PrevIcon />
           </button>
@@ -360,6 +497,7 @@ function Player({
             onClick={onTogglePlay}
             data-testid="player-play-btn"
             title={isPlaying ? "Pause" : "Play"}
+            aria-label={isPlaying ? "Pause" : "Play"}
           >
             {isPlaying ? <PauseIcon/> : <PlayIcon/>}
           </button>
@@ -368,6 +506,7 @@ function Player({
             onClick={onNext}
             data-testid="player-next-btn"
             title="Next"
+            aria-label="Next"
           >
             <NextIcon />
           </button>
@@ -376,6 +515,8 @@ function Player({
             onClick={onToggleLoop}
             data-testid="player-loop-btn"
             title={isLoop ? "Repeat ON" : "Repeat OFF"}
+            aria-label="Repeat"
+            aria-pressed={isLoop}
           >
             <LoopIcon />
           </button>
@@ -388,6 +529,8 @@ function Player({
             className={`btn-icon player-lyrics-btn ${showLyrics ? 'active' : ''}`}
             onClick={onToggleLyrics}
             title={showLyrics ? "Hide Lyrics" : "Show Synced Lyrics"}
+            aria-label="Toggle synced lyrics"
+            aria-pressed={showLyrics}
             data-testid="lyrics-toggle-btn"
           >
             <LyricsIcon />
@@ -398,6 +541,8 @@ function Player({
             className={`btn-icon ${showRightPanel ? 'active' : ''}`}
             onClick={onToggleRightPanel}
             title="Now Playing View"
+            aria-label="Toggle now playing panel"
+            aria-expanded={showRightPanel}
             data-testid="player-right-panel-toggle"
           >
             <PanelIcon />
@@ -407,14 +552,16 @@ function Player({
           className="btn-icon player-devices-btn"
           onClick={onOpenDevices}
           title="Connected Devices"
+          aria-label="Connected devices"
           data-testid="player-devices-btn"
         >
           <DevicesIcon />
         </button>
         <button
           className="btn-icon"
-          onClick={() => onVolumeChange(volume === 0 ? 80 : 0)}
+          onClick={handleMuteToggle}
           title={volume === 0 ? "Unmute" : "Mute"}
+          aria-label={volume === 0 ? "Unmute" : "Mute"}
           data-testid="player-volume-toggle"
         >
           {volume === 0 ? <MuteIcon /> : <VolumeIcon />}
@@ -423,10 +570,15 @@ function Player({
           type="range"
           min="0"
           max="100"
+          step="5"
           value={volume}
+          aria-label="Volume"
+          aria-valuetext={`${volume}%`}
           onChange={e => onVolumeChange(Number(e.target.value))}
+          onKeyDown={handleVolumeKeyDown}
           className="range-slider"
           style={sliderStyle(volume, 90)}
+          data-testid="player-volume-slider"
         />
       </div>
     </footer>

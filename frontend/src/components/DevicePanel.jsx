@@ -1,60 +1,176 @@
-import React from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
-export default function DevicePanel({ devices, myDeviceId, activeDeviceId, onTransfer, onClose }) {
-  if (!devices) return null;
+export default function DevicePanel({
+  devices,
+  myDeviceId,
+  activeDeviceId,
+  onTransfer,
+  onClose,
+  transferStatus = 'idle',
+  retryTransfer,
+}) {
+  const [transferringId, setTransferringId] = useState(null)
+  const [statusAnnouncement, setStatusAnnouncement] = useState('')
+  const prevActiveIdRef = useRef(activeDeviceId)
+
+  // Close on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose?.()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  // Track active device transitions to confirm transfer
+  useEffect(() => {
+    if (transferringId && activeDeviceId === transferringId) {
+      const activeDev = devices?.find(d => d.deviceId === activeDeviceId)
+      setStatusAnnouncement(`Playback transferred to ${activeDev?.deviceName || 'selected device'}`)
+      setTransferringId(null)
+    }
+    prevActiveIdRef.current = activeDeviceId
+  }, [activeDeviceId, transferringId, devices])
+
+  // Update announcement on transfer failure
+  useEffect(() => {
+    if (transferStatus === 'failed') {
+      setStatusAnnouncement('Transfer failed. Please try again.')
+    } else if (transferStatus === 'idle' && transferringId && activeDeviceId === transferringId) {
+      setTransferringId(null)
+    }
+  }, [transferStatus, transferringId, activeDeviceId])
+
+  if (!devices) return null
+
+  const handleTransferClick = (deviceId) => {
+    const target = devices?.find(d => d.deviceId === deviceId)
+    setTransferringId(deviceId)
+    setStatusAnnouncement(`Transferring playback to ${target?.deviceName || 'device'}...`)
+    onTransfer?.(deviceId)
+  }
+
+  const handleRetryClick = (deviceId) => {
+    const target = devices?.find(d => d.deviceId === deviceId)
+    setTransferringId(deviceId)
+    setStatusAnnouncement(`Retrying transfer to ${target?.deviceName || 'device'}...`)
+    if (retryTransfer) {
+      retryTransfer()
+    } else {
+      onTransfer?.(deviceId)
+    }
+  }
+
   return (
     <>
       <div className="device-panel-backdrop" onClick={onClose} data-testid="device-backdrop" />
-      <div className="device-panel" data-testid="device-panel">
+      <div
+        className="device-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="device-panel-title"
+        data-testid="device-panel"
+      >
+        <div className="sr-only" aria-live="polite">
+          {statusAnnouncement}
+        </div>
         <div className="device-panel-header">
-          <div className="device-panel-title">
+          <div className="device-panel-title" id="device-panel-title">
             <DevicesIcon />
             <span>Connect to a device</span>
           </div>
-          <button className="btn-icon device-panel-close" onClick={onClose} title="Close" data-testid="device-close-btn">
+          <button
+            className="btn-icon device-panel-close"
+            onClick={onClose}
+            title="Close"
+            aria-label="Close device panel"
+            data-testid="device-close-btn"
+          >
             <CloseIcon />
           </button>
         </div>
         <div className="device-panel-list">
           {devices.length === 0 ? (
             <div className="device-panel-empty">No other devices found</div>
-          ) : devices.map(device => {
-            const isMe = device.deviceId === myDeviceId;
-            const isActive = device.deviceId === activeDeviceId;
-            return (
-              <div key={device.deviceId} className={`device-item ${isActive ? 'device-item-active' : ''}`} data-testid={`device-item-${device.deviceId}`}>
-                <div className="device-item-icon">
-                  <DeviceTypeIcon type={device.deviceType} />
-                </div>
-                <div className="device-item-info">
-                  <div className="device-item-name-row">
-                    <span className="device-item-name" title={device.deviceName}>
-                      {device.deviceName}
-                    </span>
-                    {isMe && <span className="device-badge">THIS DEVICE</span>}
+          ) : (
+            devices.map(device => {
+              const isMe = device.deviceId === myDeviceId
+              const isActive = device.deviceId === activeDeviceId
+              const isThisDeviceTransferring = transferringId === device.deviceId && transferStatus !== 'failed'
+              const isThisDeviceFailed = transferringId === device.deviceId && transferStatus === 'failed'
+
+              let statusText = 'Connected'
+              if (isMe && isActive) {
+                statusText = 'Active · Playing on this device'
+              } else if (!isMe && isActive) {
+                statusText = `Active · Playing on ${device.deviceName}`
+              } else if (isMe && !isActive) {
+                statusText = 'This device · Inactive'
+              } else {
+                statusText = 'Connected'
+              }
+
+              return (
+                <div
+                  key={device.deviceId}
+                  className={`device-item ${isActive ? 'device-item-active' : ''}`}
+                  data-testid={`device-item-${device.deviceId}`}
+                >
+                  <div className="device-item-icon">
+                    <DeviceTypeIcon type={device.deviceType} />
                   </div>
-                  <div className="device-item-status">
-                    <span className={`device-dot ${isActive ? 'device-dot-active' : ''}`} />
-                    {isActive ? 'Active · Playing here' : 'Connected'}
+                  <div className="device-item-info">
+                    <div className="device-item-name-row">
+                      <span className="device-item-name" title={device.deviceName}>
+                        {device.deviceName}
+                      </span>
+                      {isMe && <span className="device-badge">THIS DEVICE</span>}
+                    </div>
+                    <div className="device-item-status">
+                      <span className={`device-dot ${isActive ? 'device-dot-active' : ''}`} />
+                      {statusText}
+                    </div>
                   </div>
+                  {!isActive && (
+                    isThisDeviceTransferring ? (
+                      <button
+                        className="device-transfer-btn device-transfer-btn-transferring"
+                        disabled
+                        aria-busy="true"
+                        data-testid={`transfer-btn-${device.deviceId}`}
+                      >
+                        Transferring...
+                      </button>
+                    ) : isThisDeviceFailed ? (
+                      <button
+                        className="device-transfer-btn device-transfer-btn-failed"
+                        onClick={() => handleRetryClick(device.deviceId)}
+                        data-testid={`transfer-btn-${device.deviceId}`}
+                      >
+                        Retry
+                      </button>
+                    ) : (
+                      <button
+                        className="device-transfer-btn"
+                        onClick={() => handleTransferClick(device.deviceId)}
+                        data-testid={`transfer-btn-${device.deviceId}`}
+                      >
+                        SWITCH HERE
+                      </button>
+                    )
+                  )}
                 </div>
-                {!isActive && (
-                  <button
-                    className="device-transfer-btn"
-                    onClick={() => { onTransfer(device.deviceId); onClose(); }}
-                    data-testid={`transfer-btn-${device.deviceId}`}
-                  >
-                    SWITCH HERE
-                  </button>
-                )}
-              </div>
-            );
-          })}
+              )
+            })
+          )}
         </div>
         <div className="device-panel-footer">Devices sharing the same account are listed above.</div>
       </div>
     </>
-  );
+  )
 }
 
 function DeviceTypeIcon({ type }) {

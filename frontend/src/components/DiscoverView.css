@@ -1,0 +1,751 @@
+/* ==========================================================================
+   DISCOVER VIEW & ARTIST DETAIL VIEW STYLES
+   Sangita Design System: AMOLED / Dark / Light token compliant
+   ========================================================================== */
+
+/* --- Discover View Root --- */
+.discover-view {
+  padding: 32px 48px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  box-sizing: border-box;
+  animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Discover Header & Quick Search --- */
+.discover-header {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.discover-header-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.discover-title {
+  font-size: clamp(2rem, 5vw, 2.75rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.1;
+}
+
+.discover-subtitle {
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.discover-search-bar {
+  position: relative;
+  max-width: 440px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.discover-search-icon {
+  position: absolute;
+  left: 14px;
+  pointer-events: none;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.discover-search-input {
+  width: 100%;
+  height: 42px;
+  padding: 0 40px 0 42px;
+  border-radius: 24px;
+  background: var(--surface-hi, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: inherit;
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+  box-sizing: border-box;
+}
+
+.discover-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  background: var(--card, #141824);
+}
+
+.discover-search-input::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.discover-search-clear {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.discover-search-clear:hover {
+  color: var(--text);
+}
+
+.discover-search-clear:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+/* --- Section Layout --- */
+.discover-section {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.discover-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+
+.discover-section-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0;
+}
+
+.discover-section-count {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+/* --- Artists Grid & Card --- */
+.discover-artists-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 20px;
+}
+
+.discover-artist-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 20px 14px 16px;
+  border-radius: 18px;
+  background: var(--card, #141824);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
+  user-select: none;
+}
+
+.discover-artist-card:hover {
+  background: var(--card-hover, #1c2232);
+  transform: translateY(-4px);
+  border-color: var(--border-hi);
+  box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.4);
+}
+
+.discover-artist-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.discover-artist-avatar-wrap {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 14px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  background: var(--surface-hi);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.discover-artist-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.discover-artist-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  font-weight: 700;
+  color: #FFFFFF;
+}
+
+.discover-artist-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  width: 100%;
+}
+
+.discover-artist-count {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+/* Play button on hover/focus */
+.discover-card-play-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--emerald, #10B981);
+  color: #FFFFFF;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s, transform 0.2s, background-color 0.15s;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.discover-artist-card:hover .discover-card-play-btn,
+.discover-artist-card:focus-within .discover-card-play-btn,
+.discover-playlist-card:hover .discover-card-play-btn,
+.discover-playlist-card:focus-within .discover-card-play-btn {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.discover-card-play-btn:hover {
+  transform: scale(1.08) !important;
+  background: var(--emerald-hi, #34D399);
+}
+
+.discover-card-play-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Save Entire Playlist Button on Discover Cards */
+.discover-card-save-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 56px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--card, #141824);
+  color: var(--text);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s, transform 0.2s, background-color 0.15s, color 0.15s, border-color 0.15s;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.discover-playlist-card:hover .discover-card-save-btn,
+.discover-playlist-card:focus-within .discover-card-save-btn,
+.discover-card-save-btn.saved {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.discover-card-save-btn.no-play {
+  right: 12px;
+}
+
+.discover-card-save-btn:hover {
+  transform: scale(1.08) !important;
+  background: var(--surface-hi, #202738);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.discover-card-save-btn.saved {
+  color: #FFFFFF;
+  background: var(--emerald, #10B981);
+  border-color: var(--emerald, #10B981);
+}
+
+.discover-card-save-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- Playlists Grid & Card (Public & Folder) --- */
+.discover-playlists-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 20px;
+}
+
+.discover-playlist-card {
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  border-radius: 18px;
+  background: var(--card, #141824);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
+  user-select: none;
+}
+
+.discover-playlist-card:hover {
+  background: var(--card-hover, #1c2232);
+  transform: translateY(-4px);
+  border-color: var(--border-hi);
+  box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.4);
+}
+
+.discover-playlist-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.discover-playlist-thumb-wrap {
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 12px;
+  background: var(--surface-hi);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.discover-playlist-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.discover-playlist-thumb-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.discover-playlist-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.discover-playlist-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discover-playlist-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.discover-playlist-count {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* Badges */
+.curator-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-glow, rgba(102, 163, 191, 0.18));
+  padding: 2px 7px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: fit-content;
+}
+
+.visibility-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--emerald);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 2px 6px;
+  border-radius: 6px;
+  width: fit-content;
+}
+
+.folder-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-hi, #8EC5DC);
+  background: rgba(102, 163, 191, 0.14);
+  border: 1px solid rgba(102, 163, 191, 0.25);
+  padding: 2px 6px;
+  border-radius: 6px;
+  width: fit-content;
+}
+
+/* --- Empty States --- */
+.discover-empty-state {
+  padding: 32px 20px;
+  text-align: center;
+  background: var(--card, #141824);
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.discover-empty-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.discover-empty-desc {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin: 0;
+  max-width: 360px;
+}
+
+/* --- Artist Detail View --- */
+.artist-detail-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.artist-detail-top-nav {
+  padding: 24px 48px 0;
+  display: flex;
+  align-items: center;
+}
+
+.artist-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 8px;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.artist-back-btn:hover {
+  color: var(--text);
+  background: var(--state-hover, rgba(255, 255, 255, 0.08));
+}
+
+.artist-back-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.artist-hero {
+  padding: 24px 48px 32px;
+  display: flex;
+  align-items: flex-end;
+  gap: 32px;
+}
+
+.artist-hero-avatar-wrap {
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
+  background: var(--surface-hi);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.artist-hero-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.artist-hero-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3.5rem;
+  font-weight: 800;
+  color: #FFFFFF;
+}
+
+.artist-hero-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.artist-hero-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  background: var(--accent-glow);
+  padding: 3px 10px;
+  border-radius: 12px;
+  width: fit-content;
+}
+
+.artist-hero-title {
+  font-size: clamp(2.2rem, 6vw, 3.8rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.1;
+  word-break: break-word;
+}
+
+.artist-hero-stats {
+  font-size: 0.95rem;
+  color: var(--text-sub);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.artist-transport-bar {
+  padding: 0 48px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.artist-play-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 28px;
+  border-radius: 28px;
+  background: var(--emerald, #10B981);
+  color: #FFFFFF;
+  border: none;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s, background-color 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
+}
+
+.artist-play-all-btn:hover {
+  background: var(--emerald-hi, #34D399);
+  transform: scale(1.04);
+}
+
+.artist-play-all-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.artist-shuffle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: 28px;
+  background: var(--surface-hi, rgba(255, 255, 255, 0.08));
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s, background-color 0.2s, border-color 0.2s;
+}
+
+.artist-shuffle-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--border-hi);
+  transform: scale(1.04);
+}
+
+.artist-shuffle-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.artist-empty-tracks {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+
+/* Unavailable Tracks Count Banner (Public Playlist View) */
+.unavailable-tracks-banner {
+  margin: 0 48px 16px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--amber, #F59E0B);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* --- Responsive Media Queries --- */
+@media (max-width: 900px) {
+  .discover-view {
+    padding: 24px 28px;
+    gap: 28px;
+  }
+  .artist-detail-top-nav {
+    padding: 18px 28px 0;
+  }
+  .artist-hero {
+    padding: 20px 28px 24px;
+    gap: 24px;
+  }
+  .artist-hero-avatar-wrap {
+    width: 140px;
+    height: 140px;
+  }
+  .artist-transport-bar {
+    padding: 0 28px 20px;
+  }
+  .unavailable-tracks-banner {
+    margin: 0 28px 14px;
+  }
+}
+
+@media (max-width: 640px) {
+  .discover-view {
+    padding: 16px;
+    gap: 24px;
+  }
+  .discover-header-top {
+    gap: 4px;
+  }
+  .discover-search-bar {
+    max-width: 100%;
+  }
+  .discover-artists-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 12px;
+  }
+  .discover-artist-avatar-wrap {
+    width: 86px;
+    height: 86px;
+  }
+  .discover-playlists-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .artist-detail-top-nav {
+    padding: 14px 16px 0;
+  }
+  .artist-hero {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 16px 16px 20px;
+    gap: 16px;
+  }
+  .artist-hero-avatar-wrap {
+    width: 120px;
+    height: 120px;
+  }
+  .artist-hero-info {
+    align-items: center;
+  }
+  .artist-transport-bar {
+    padding: 0 16px 18px;
+    justify-content: center;
+  }
+  .unavailable-tracks-banner {
+    margin: 0 16px 12px;
+  }
+}

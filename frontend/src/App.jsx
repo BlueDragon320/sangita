@@ -166,6 +166,8 @@ import HomeDashboard from './components/HomeDashboard.jsx'
 import CreatePlaylistModal from './components/CreatePlaylistModal.jsx'
 import LyricsView from './components/LyricsView.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import DiscoverView from './components/DiscoverView.jsx'
+import ArtistDetailView from './components/ArtistDetailView.jsx'
 
 export default function App() {
   const [token,           setToken]           = useState(() => localStorage.getItem('sangita_token') || '')
@@ -175,6 +177,14 @@ export default function App() {
   const [favorites,       setFavorites]       = useState([])
   const [currentPlaylist, setCurrentPlaylist] = useState('')
   const [addToPlaylistTrack, setAddToPlaylistTrack] = useState(null)
+  const [selectedArtistId,   setSelectedArtistId]   = useState(null)
+  const [selectedArtistName, setSelectedArtistName] = useState('')
+  const [selectedArtistData, setSelectedArtistData] = useState(null)
+  const [playlistViewMeta,   setPlaylistViewMeta]   = useState({})
+  const [activePlaylistMeta, setActivePlaylistMeta] = useState(null)
+  const [folderClassifications, setFolderClassifications] = useState({})
+  const [userPlaylists, setUserPlaylists] = useState([])
+  const [playlistMetadata, setPlaylistMetadata] = useState({})
   const [view,            setView]            = useState(() => {
     const isAdminPath = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')
     const savedRole = typeof window !== 'undefined' ? localStorage.getItem('sangita_role') : ''
@@ -212,6 +222,14 @@ export default function App() {
   const [showLyrics,         setShowLyrics]         = useState(false)
   const [lyricsData,         setLyricsData]         = useState(null)
   const [lyricsLoading,      setLyricsLoading]      = useState(false)
+  const [toastNotification,  setToastNotification]  = useState(null)
+
+  useEffect(() => {
+    if (toastNotification) {
+      const t = setTimeout(() => setToastNotification(null), 4000)
+      return () => clearTimeout(t)
+    }
+  }, [toastNotification])
 
   const audioRef     = useRef(null)
   const shuffleRef = useRef({ signature: '', remaining: [], history: [], forward: [] })
@@ -296,16 +314,16 @@ export default function App() {
     if (newView === 'admin') {
       if (role === 'admin') {
         setView('admin');
-        window.history.pushState({}, '', '/admin');
+        if (typeof window !== 'undefined') window.history.pushState({ view: 'admin' }, '', '/admin');
       } else {
         setView('music');
-        window.history.replaceState({}, '', '/');
+        if (typeof window !== 'undefined') window.history.replaceState({ view: 'music' }, '', '/');
       }
     } else {
       setView(newView);
-      window.history.pushState({}, '', '/');
+      if (typeof window !== 'undefined') window.history.pushState({ view: newView, playlist: currentPlaylist }, '', '/');
     }
-  }, [role]);
+  }, [role, currentPlaylist]);
 
   const handleLogin = useCallback((tok, user, userRole) => {
     localStorage.setItem('sangita_token', tok)
@@ -328,6 +346,7 @@ export default function App() {
     localStorage.removeItem('sangita_user')
     localStorage.removeItem('sangita_role')
     setToken(''); setUsername(''); setRole(''); setPlaylists({})
+    setActivePlaylistMeta(null); setFolderClassifications({}); setUserPlaylists([]); setPlaylistMetadata({})
     setQueue([]); setCurrentIndex(-1); setIsLocalPlaying(false)
     setCurrentTime(0); setDuration(0); setView('music')
     window.history.replaceState({}, '', '/');
@@ -434,6 +453,7 @@ export default function App() {
     devices, isActiveDevice, setIsActiveDevice, syncState, setSyncState,
     broadcastState, transferPlayback, sendRemoteControl,
     claimActiveDevice, getMyDeviceId,
+    transferStatus, retryTransfer,
   } = useDeviceSync({ token, audioRef, isPlaying: isLocalPlaying, onRemoteCommand: handleRemoteCommand,
     getTrackId: () => loadedTrackIdRef.current });
 
@@ -553,17 +573,45 @@ export default function App() {
 
   // Sync view history with browser back/forward buttons
   useEffect(() => {
-    const handlePopState = () => {
-      const isAdminPath = window.location.pathname.startsWith('/admin');
+    const handlePopState = (e) => {
+      // Cleanly dismiss lyrics on browser back
+      setShowLyrics(false);
+
+      const isAdminPath = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
       if (isAdminPath) {
         if (role === 'admin') {
           setView('admin');
         } else {
           setView('music');
-          window.history.replaceState({}, '', '/');
+          if (typeof window !== 'undefined') window.history.replaceState({ view: 'music' }, '', '/');
         }
+        return;
+      }
+
+      const state = e?.state;
+      if (state?.view === 'lyrics') {
+        setShowLyrics(true);
+      } else if (state?.view === 'search') {
+        setView('search');
+        setSearchQuery(state.query || '');
+      } else if (state?.view === 'home') {
+        setSearchQuery('');
+        setView('home');
+      } else if (state?.view === 'discover') {
+        setSearchQuery('');
+        setView('discover');
+      } else if (state?.view === 'artist') {
+        setSearchQuery('');
+        setView('artist');
+        if (state.artistId) setSelectedArtistId(state.artistId);
+        if (state.artistName) setSelectedArtistName(state.artistName);
       } else {
+        // Exits search and restores playlist navigation
+        setSearchQuery('');
         setView('music');
+        if (state?.playlist) {
+          setCurrentPlaylist(state.playlist);
+        }
       }
     };
     window.addEventListener('popstate', handlePopState);
@@ -849,10 +897,34 @@ export default function App() {
           const defaultPl = keys.includes('Library') ? 'Library' : keys[0];
           setCurrentPlaylist(defaultPl);
         }
+        fetchSourceClassifications();
       })
       .catch(err => { if (err.status === 401 || err.status === 403) handleLogout(); else setLibraryError(true) })
       .finally(() => setDataLoading(false))
   }, [token, handleLogout, libraryRetry])
+
+  const fetchSourceClassifications = useCallback(async () => {
+    if (!token) return
+    try {
+      const res = await fetch('/api/v2/catalog/sources', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const sources = Array.isArray(data) ? data : (data?.sources || [])
+        const classMap = {}
+        sources.forEach(s => {
+          const name = s.folder_name || s.display_name || s.name
+          if (name && s.classification) {
+            classMap[name] = s.classification
+          }
+        })
+        setFolderClassifications(classMap)
+      }
+    } catch (err) {
+      console.warn('Failed to fetch source classifications:', err)
+    }
+  }, [token])
 
   const fetchPlaylists = useCallback(() => {
     if (!token) return
@@ -862,7 +934,46 @@ export default function App() {
         setPlaylists(data);
       })
       .catch(console.error)
-  }, [token])
+
+    fetch('/api/user-playlists', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : {})
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data?.playlists || [])
+        setUserPlaylists(list)
+      })
+      .catch(() => {})
+
+    fetch('/api/v2/playlists', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : {})
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data?.playlists || [])
+        const metaMap = {}
+        list.forEach(p => {
+          const title = p.title || p.name
+          if (title) {
+            metaMap[title] = {
+              id: p.id,
+              title: title,
+              owner: p.owner,
+              visibility: p.visibility || (p.is_public ? 'public' : 'private'),
+              description: p.description || '',
+              unavailableCount: p.unavailable_count || 0,
+              isFolderPlaylist: Boolean(p.is_folder_playlist),
+              isOwner: p.owner ? p.owner === username : true
+            }
+          }
+        })
+        setPlaylistMetadata(metaMap)
+      })
+      .catch(() => {})
+  }, [token, username])
+
+  useEffect(() => {
+    if (token) {
+      fetchSourceClassifications();
+      fetchPlaylists();
+    }
+  }, [token, fetchSourceClassifications, fetchPlaylists])
 
   const fetchUserStats = useCallback(async () => {
     if (!token) return
@@ -922,14 +1033,21 @@ export default function App() {
   }, [currentPlaylist])
 
   useEffect(() => {
-    if (!currentPlaylist || !playlists[currentPlaylist]) return
-    const tracks = buildTracks(currentPlaylist, playlists[currentPlaylist])
-    setQueue(tracks)
+    if (!currentPlaylist) return
+    let currentTracks = []
+    if (activePlaylistMeta && activePlaylistMeta.title === currentPlaylist && Array.isArray(activePlaylistMeta.tracks)) {
+      currentTracks = activePlaylistMeta.tracks
+    } else if (playlists[currentPlaylist]) {
+      currentTracks = buildTracks(currentPlaylist, playlists[currentPlaylist])
+    } else {
+      return
+    }
+    setQueue(currentTracks)
     
     const curPath = isActiveDevice ? loadedTrackIdRef.current : (syncState?.trackId || loadedTrackIdRef.current);
-    const newIdx = tracks.findIndex(t => t.path === curPath);
+    const newIdx = currentTracks.findIndex(t => t.path === curPath);
     setCurrentIndex(newIdx);
-  }, [currentPlaylist, playlists, syncState?.trackId, isActiveDevice])
+  }, [currentPlaylist, playlists, activePlaylistMeta, syncState?.trackId, isActiveDevice])
 
   useEffect(() => {
     const tick = () => {
@@ -1338,15 +1456,36 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      if (view !== 'music') return
-      if (e.defaultPrevented || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName) || e.target.getAttribute('role') === 'slider') return
-      if (e.code === 'Space')      { e.preventDefault(); togglePlay() }
-      if (e.code === 'ArrowRight') playNext()
-      if (e.code === 'ArrowLeft')  playPrev()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [togglePlay, playNext, playPrev, view])
+      const inInput = e.target && ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
+
+      // Global '/' key listener (when not in input) to focus search bar
+      if (!inInput && (e.key === '/' || e.code === 'Slash') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        const searchInput = document.querySelector('[data-testid="header-search-input"]') || document.querySelector('.search-input');
+        if (searchInput) {
+          searchInput.focus();
+        }
+        return;
+      }
+
+      // Media keys: only ignore when in input/textarea
+      if (inInput) return;
+
+      // Allow media keys to function on Home, Search, and Music views
+      if (view === 'admin') return;
+
+      if (e.code === 'Space' || e.key === ' ') {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.code === 'ArrowRight' || e.key === 'ArrowRight') {
+        playNext();
+      } else if (e.code === 'ArrowLeft' || e.key === 'ArrowLeft') {
+        playPrev();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [togglePlay, playNext, playPrev, view]);
 
   // Set up Media Session Action Handlers
   useEffect(() => {
@@ -1498,22 +1637,322 @@ export default function App() {
     }
   }, [currentTrack])
 
-  const downloadTrack = useCallback(() => {
-    const track = currentTrack; if (!track) return
+  const downloadTrack = useCallback((overrideTrack) => {
+    const track = (overrideTrack && overrideTrack.path) ? overrideTrack : currentTrack; if (!track) return
     const t = localStorage.getItem('sangita_token') || ''
     const a = document.createElement('a')
     a.href = `/api/stream/${encodeURIComponent(track.path)}?token=${t}`
     a.download = track.name; document.body.appendChild(a); a.click(); document.body.removeChild(a)
   }, [currentTrack])
 
-  const handleSidebarSelect = useCallback((name) => {
+  const handleSidebarSelect = useCallback(async (name, plMeta) => {
+    if (name === 'Discover') {
+      setView('discover');
+      setSearchQuery('');
+      setShowLyrics(false);
+      setMobileMenuOpen(false);
+      if (typeof window !== 'undefined') window.history.pushState({ view: 'discover' }, '', '/');
+      return;
+    }
+
+    const playlistId = plMeta?.id || playlistMetadata[name]?.id;
+
+    if (playlistId) {
+      try {
+        const res = await fetch(`/api/v2/playlists/${playlistId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const formattedTracks = Array.isArray(data.tracks) ? data.tracks.map((t, idx) => {
+            if (typeof t === 'string') {
+              return {
+                id: `${data.title}-${idx}`,
+                path: t,
+                name: t.split('/').pop().replace(/\.[^/.]+$/, ''),
+                playlist: data.title,
+                artist: trackMetadata[t]?.artist || data.title
+              };
+            }
+            const path = t.track_path || t.path || '';
+            const tName = t.title || t.name || (path ? path.split('/').pop().replace(/\.[^/.]+$/, '') : (t.is_available === false ? 'Unavailable track' : 'Unknown track'));
+            return {
+              id: t.id || `${data.title}-${idx}`,
+              path: path,
+              name: tName,
+              artist: t.artist || trackMetadata[path]?.artist || data.title,
+              playlist: data.title,
+              duration: t.duration,
+              is_unavailable: Boolean(t.is_unavailable || t.unavailable || (t.is_available === false)),
+              position: t.position
+            };
+          }) : [];
+
+          const activeMeta = {
+            ...data,
+            unavailableCount: data.unavailable_count || 0,
+            tracks: formattedTracks,
+            isFolderPlaylist: Boolean(data.is_folder_playlist)
+          };
+          setActivePlaylistMeta(activeMeta);
+          setCurrentPlaylist(data.title || name);
+          setView('music');
+          setSearchQuery('');
+          setShowLyrics(false);
+          setMobileMenuOpen(false);
+          if (typeof window !== 'undefined') window.history.pushState({ view: 'music', playlist: data.title || name }, '', '/');
+          return;
+        }
+      } catch (err) {
+        console.warn('Failed to load playlist by id:', err);
+      }
+    }
+
+    if (plMeta) {
+      setActivePlaylistMeta({
+        ...plMeta,
+        title: plMeta.title || name,
+        owner: plMeta.owner || plMeta.curator,
+        visibility: plMeta.visibility,
+        description: plMeta.description,
+        unavailableCount: plMeta.unavailable_count || plMeta.unavailableCount || 0,
+        isFolderPlaylist: Boolean(plMeta.is_folder_playlist || plMeta.isFolderPlaylist)
+      });
+    } else {
+      setActivePlaylistMeta(null);
+    }
+
     setView('music');
     setSearchQuery('');
     setCurrentPlaylist(name);
     setShowLyrics(false);
     setMobileMenuOpen(false);
-    window.history.pushState({}, '', '/');
+    if (typeof window !== 'undefined') window.history.pushState({ view: 'music', playlist: name }, '', '/');
+  }, [token, playlistMetadata, trackMetadata]);
+
+  const handleEditPlaylist = useCallback(async ({ id, name, description, visibility }) => {
+    const plId = id || activePlaylistMeta?.id;
+    if (plId) {
+      try {
+        const res = await fetch(`/api/v2/playlists/${plId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            title: name,
+            description,
+            visibility
+          })
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setActivePlaylistMeta(prev => ({
+            ...prev,
+            ...updated,
+            title: updated.title || name,
+            description: updated.description ?? description,
+            visibility: updated.visibility || visibility
+          }));
+          setCurrentPlaylist(updated.title || name);
+          fetchPlaylists();
+        }
+      } catch (err) {
+        console.error('Failed to update playlist:', err);
+      }
+    }
+  }, [activePlaylistMeta, token, fetchPlaylists]);
+
+  const handleDeletePlaylist = useCallback(async (plName, plId) => {
+    const targetId = plId || activePlaylistMeta?.id;
+    try {
+      if (targetId) {
+        await fetch(`/api/v2/playlists/${targetId}`, {
+          method: 'DELETE',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+      } else {
+        await fetch(`/api/user-playlists/${encodeURIComponent(plName)}`, {
+          method: 'DELETE',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+      }
+      setActivePlaylistMeta(null);
+      fetchPlaylists();
+      setCurrentPlaylist('Library');
+      setView('music');
+    } catch (err) {
+      console.error('Failed to delete playlist:', err);
+    }
+  }, [activePlaylistMeta, token, fetchPlaylists]);
+
+  const handleSaveEntirePlaylist = useCallback(async (sourcePlaylist) => {
+    if (!sourcePlaylist) return;
+    const rawName = (sourcePlaylist.name || sourcePlaylist.title || 'Saved Playlist').trim();
+    const description = sourcePlaylist.description || '';
+
+    // If the user already has a playlist with that exact name, append a suffix or handle gracefully
+    let targetName = rawName;
+    if (playlists && playlists[targetName]) {
+      let counter = 1;
+      while (playlists[`${rawName} (${counter})`]) {
+        counter++;
+      }
+      targetName = `${rawName} (${counter})`;
+    }
+
+    let newPlaylistId = null;
+    let savedSuccessfully = false;
+
+    // 1. Can use POST /api/v2/playlists/<playlist_id>/clone if sourcePlaylist.id exists
+    if (sourcePlaylist.id) {
+      try {
+        const cloneRes = await fetch(`/api/v2/playlists/${encodeURIComponent(sourcePlaylist.id)}/clone`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            title: targetName,
+            description: description
+          })
+        });
+        if (cloneRes.ok) {
+          const cloneData = await cloneRes.json();
+          newPlaylistId = cloneData?.id || null;
+          savedSuccessfully = true;
+        }
+      } catch (err) {
+        console.warn('Playlist clone error:', err);
+      }
+    }
+
+    // 2. OR POST /api/v2/playlists with { title, description, tracks }
+    if (!savedSuccessfully) {
+      let rawTracks = sourcePlaylist.tracks;
+      if ((!rawTracks || rawTracks.length === 0) && sourcePlaylist.id) {
+        try {
+          const detailRes = await fetch(`/api/v2/playlists/${encodeURIComponent(sourcePlaylist.id)}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {}
+          });
+          if (detailRes.ok) {
+            const detailData = await detailRes.json();
+            if (Array.isArray(detailData.tracks)) {
+              rawTracks = detailData.tracks;
+            }
+          }
+        } catch {}
+      }
+
+      const trackPaths = Array.isArray(rawTracks)
+        ? rawTracks.map(t => (typeof t === 'string' ? t : (t?.track_path || t?.path || ''))).filter(Boolean)
+        : [];
+
+      try {
+        const v2Res = await fetch('/api/v2/playlists', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            title: targetName,
+            description: description,
+            visibility: 'private',
+            tracks: trackPaths
+          })
+        });
+        if (v2Res.ok) {
+          const v2Data = await v2Res.json();
+          newPlaylistId = v2Data?.id || null;
+          savedSuccessfully = true;
+        }
+      } catch (err) {
+        console.warn('POST /api/v2/playlists error:', err);
+      }
+
+      if (!savedSuccessfully) {
+        // Fallback to legacy batch endpoint
+        try {
+          const batchRes = await fetch('/api/user-playlists/batch', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify({
+              name: targetName,
+              tracks: trackPaths,
+              description: description
+            })
+          });
+          if (batchRes.ok) {
+            const bData = await batchRes.json();
+            newPlaylistId = bData?.id || null;
+            savedSuccessfully = true;
+          }
+        } catch (err) {
+          console.warn('Batch playlist creation error:', err);
+        }
+      }
+    }
+
+    if (savedSuccessfully) {
+      fetchPlaylists();
+      setToastNotification(`Added "${targetName}" to your playlists`);
+      if (view !== 'discover' && newPlaylistId) {
+        handleSidebarSelect(targetName, { id: newPlaylistId });
+      }
+    }
+  }, [playlists, token, fetchPlaylists, view, handleSidebarSelect]);
+
+  const handleDiscover = useCallback(() => {
+    setView('discover');
+    setSearchQuery('');
+    setShowLyrics(false);
+    setMobileMenuOpen(false);
+    if (typeof window !== 'undefined') window.history.pushState({ view: 'discover' }, '', '/');
   }, []);
+
+  const handleSelectArtist = useCallback((artistId, artistName, artistData) => {
+    setView('artist');
+    setSelectedArtistId(artistId);
+    setSelectedArtistName(artistName || artistId);
+    setSelectedArtistData(artistData || null);
+    setShowLyrics(false);
+    setMobileMenuOpen(false);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ view: 'artist', artistId, artistName }, '', '/');
+    }
+  }, []);
+
+  const handleBackFromArtist = useCallback(() => {
+    setView('discover');
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ view: 'discover' }, '', '/');
+    }
+  }, []);
+
+  const handlePlayDiscoveredTracks = useCallback((tracksToPlay, startIndex = 0, shuffle = false) => {
+    if (!tracksToPlay || tracksToPlay.length === 0) return;
+    let q = [...tracksToPlay];
+    let startIdx = startIndex;
+    if (shuffle) {
+      const shuffled = [...tracksToPlay];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      q = shuffled;
+      startIdx = 0;
+      setIsShuffle(true);
+    }
+    setQueue(q);
+    setCurrentIndex(startIdx);
+    internalPlayTrack(q[startIdx], startIdx, true);
+  }, [internalPlayTrack]);
 
   const handleToggleSidebar = useCallback(() => {
     setSidebarCollapsed(c => !c);
@@ -1540,7 +1979,13 @@ export default function App() {
   }, []);
 
   const handleToggleLyrics = useCallback(() => {
-    setShowLyrics(v => !v);
+    setShowLyrics(v => {
+      const next = !v;
+      if (next && typeof window !== 'undefined') {
+        window.history.pushState({ view: 'lyrics' }, '', window.location.href);
+      }
+      return next;
+    });
   }, []);
 
   const handleCloseRightPanel = useCallback(() => {
@@ -1554,13 +1999,41 @@ export default function App() {
   const handleSearchChange = useCallback((val) => {
     setSearchQuery(val);
     if (val.trim()) {
-      setView('search');
+      setView((prevView) => {
+        if (prevView !== 'search' && typeof window !== 'undefined') {
+          window.history.pushState({ view: 'search', query: val }, '', window.location.href);
+        } else if (typeof window !== 'undefined' && window.history.state?.view === 'search') {
+          window.history.replaceState({ view: 'search', query: val }, '', window.location.href);
+        }
+        return 'search';
+      });
     } else {
-      setView('music');
+      setView((prevView) => {
+        if (prevView === 'search') {
+          return 'music';
+        }
+        return prevView;
+      });
     }
   }, []);
 
-  if (!token) return <Login onLogin={handleLogin} />
+  const handleBackFromSearch = useCallback(() => {
+    setSearchQuery('');
+    setView('music');
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ view: 'music', playlist: currentPlaylist }, '', '/');
+    }
+  }, [currentPlaylist]);
+
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery('');
+    setView('music');
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ view: 'music', playlist: currentPlaylist }, '', '/');
+    }
+  }, [currentPlaylist]);
+
+  if (!token) return <Login onLogin={handleLogin} currentTheme={theme} onSelectTheme={setTheme} />
 
   if (view === 'admin') {
     return (
@@ -1599,6 +2072,8 @@ export default function App() {
           devices={devices} myDeviceId={getMyDeviceId()}
           activeDeviceId={syncState?.activeDeviceId}
           onTransfer={transferPlayback} onClose={handleCloseDevices}
+          transferStatus={transferStatus}
+          retryTransfer={retryTransfer}
         />
       )}
       <div className="app-body">
@@ -1609,7 +2084,14 @@ export default function App() {
           isOpen={mobileMenuOpen}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
+          onCloseDrawer={() => setMobileMenuOpen(false)}
+          onCreatePlaylist={() => setShowCreatePlaylist(true)}
+          onDiscover={handleDiscover}
+          view={view}
           token={token}
+          userPlaylists={userPlaylists}
+          playlistMetadata={playlistMetadata}
+          folderClassifications={folderClassifications}
         />
         <div className="main-area">
           <Header
@@ -1626,7 +2108,7 @@ export default function App() {
             onLogout={handleLogout}
             onOpenDevices={handleOpenDevices}
             deviceCount={devices.length}
-            onOpenMobileMenu={handleOpenMobileMenu}
+            onOpenMobileMenu={() => setMobileMenuOpen(true)}
           />
 
           <div className={`main-scroll-body ${showLyrics && currentTrack ? 'lyrics-mode' : ''}`}>
@@ -1650,6 +2132,41 @@ export default function App() {
               <div className="loading-state"><div className="spinner" /><p>Loading your music library…</p></div>
             ) : libraryError ? (
               <div className="empty-state" role="alert"><p>Could not load your music library. Check your connection and try again.</p><button onClick={() => setLibraryRetry(n => n + 1)}>Try again</button></div>
+            ) : view === 'discover' ? (
+              <DiscoverView
+                token={token}
+                playlists={playlists}
+                trackMetadata={trackMetadata}
+                onSelectArtist={handleSelectArtist}
+                onSelectPlaylist={(plName, plMeta) => {
+                  handleSidebarSelect(plName, plMeta);
+                }}
+                onPlayTracks={handlePlayDiscoveredTracks}
+                username={username}
+                onSavePlaylist={handleSaveEntirePlaylist}
+              />
+            ) : view === 'artist' ? (
+              <ArtistDetailView
+                artistId={selectedArtistId}
+                artistName={selectedArtistName}
+                artist={selectedArtistData}
+                playlists={playlists}
+                trackMetadata={trackMetadata}
+                durations={durations}
+                token={token}
+                currentTrack={currentTrack}
+                isPlaying={isPlaying}
+                onPlayTrack={(track, idx, tracks) => {
+                  handlePlayDiscoveredTracks(tracks, idx, false);
+                }}
+                onPlayAll={(tracks) => handlePlayDiscoveredTracks(tracks, 0, false)}
+                onShuffle={(tracks) => handlePlayDiscoveredTracks(tracks, 0, true)}
+                favorites={favorites}
+                onToggleFavorite={toggleFavorite}
+                onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                onDownloadTrack={downloadTrack}
+                onBack={handleBackFromArtist}
+              />
             ) : view === 'home' ? (
               <HomeDashboard
                 username={username}
@@ -1682,6 +2199,29 @@ export default function App() {
             ) : view === 'search' ? (
               <>
                 <div className="hero" style={{ padding: '40px 48px 24px' }}>
+                  <button
+                    className="search-back-btn"
+                    onClick={handleBackFromSearch}
+                    data-testid="search-back-btn"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-dim, #94a3b8)',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      fontWeight: 500,
+                      padding: 0,
+                      marginBottom: 16
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                      <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
+                    </svg>
+                    Back to {currentPlaylist || 'music'}
+                  </button>
                   <h1 style={{ fontSize: 'clamp(2.5rem, 8vw, 4rem)', fontWeight: 800 }}>Search Results</h1>
                   <p className="hero-subtitle" style={{ marginTop: 4 }}>Showing matches for "{searchQuery}"</p>
                 </div>
@@ -1692,6 +2232,24 @@ export default function App() {
                     </svg>
                     <h3>No matches found</h3>
                     <p>Try searching for a different song name or playlist.</p>
+                    <button
+                      className="clear-search-cta"
+                      onClick={handleClearSearch}
+                      data-testid="search-clear-cta"
+                      style={{
+                        marginTop: 16,
+                        padding: '8px 20px',
+                        borderRadius: 20,
+                        border: '1px solid var(--border, rgba(255,255,255,0.12))',
+                        background: 'var(--surface-hover, rgba(255,255,255,0.08))',
+                        color: 'var(--text, #fff)',
+                        cursor: 'pointer',
+                        fontSize: '0.875rem',
+                        fontWeight: 600
+                      }}
+                    >
+                      Clear search
+                    </button>
                   </div>
                 ) : (
                   <TrackList
@@ -1708,10 +2266,11 @@ export default function App() {
                     favorites={favorites}
                     onToggleFavorite={toggleFavorite}
                     onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                    onDownloadTrack={downloadTrack}
                   />
                 )}
               </>
-            ) : Object.keys(playlists).length === 0 ? (
+            ) : (Object.keys(playlists).length === 0 && !activePlaylistMeta) ? (
               <div className="empty-state" style={{ marginTop: 80 }}>
                 <svg viewBox="0 0 24 24" width="64" height="64" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
                 <h3>No music found</h3><p>Add audio files to your music/ folder and restart.</p>
@@ -1736,6 +2295,15 @@ export default function App() {
                   username={username}
                   durations={durations}
                   token={token}
+                  owner={activePlaylistMeta?.owner || playlistViewMeta?.curator || playlistViewMeta?.owner}
+                  visibility={activePlaylistMeta?.visibility || playlistViewMeta?.visibility}
+                  description={activePlaylistMeta?.description || playlistViewMeta?.description}
+                  unavailableCount={activePlaylistMeta?.unavailableCount ?? activePlaylistMeta?.unavailable_count ?? (playlistViewMeta?.unavailable_count || 0)}
+                  isOwner={activePlaylistMeta?.owner ? activePlaylistMeta.owner === username : true}
+                  playlistId={activePlaylistMeta?.id}
+                  onEditPlaylist={handleEditPlaylist}
+                  onDeletePlaylist={handleDeletePlaylist}
+                  onSaveToMyPlaylists={handleSaveEntirePlaylist}
                 />
 
                 {/* Track List */}
@@ -1749,6 +2317,8 @@ export default function App() {
                   favorites={favorites}
                   onToggleFavorite={toggleFavorite}
                   onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                  onDownloadTrack={downloadTrack}
+                  onEmptyAction={() => handleSidebarSelect('Discover')}
                 />
               </>
             )}
@@ -1815,14 +2385,32 @@ export default function App() {
         <CreatePlaylistModal
           isOpen={showCreatePlaylist}
           onClose={() => setShowCreatePlaylist(false)}
-          onCreated={(newPlName) => {
+          onCreated={(newPlName, plId, plData) => {
             fetchPlaylists()
-            setCurrentPlaylist(newPlName)
-            setShowLyrics(false)
-            setView('music')
+            if (plId) {
+              handleSidebarSelect(newPlName, { id: plId, ...plData })
+            } else {
+              setCurrentPlaylist(newPlName)
+              setShowLyrics(false)
+              setView('music')
+            }
           }}
           token={token}
         />
+      )}
+
+      {toastNotification && (
+        <div className="toast-notification" role="status" data-testid="toast-notification">
+          <span>{toastNotification}</span>
+          <button
+            type="button"
+            className="toast-close-btn"
+            onClick={() => setToastNotification(null)}
+            aria-label="Close notification"
+          >
+            &times;
+          </button>
+        </div>
       )}
     </div>
   )

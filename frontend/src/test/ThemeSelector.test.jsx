@@ -19,6 +19,8 @@ describe('ThemeSelector Component', () => {
     const btn = screen.getByTestId('admin-theme-btn')
     expect(btn).toBeInTheDocument()
     expect(btn).toHaveAttribute('tabIndex', '0')
+    expect(btn).toHaveAttribute('aria-label', 'Cycle color theme')
+    expect(btn).toHaveAttribute('title', 'Cycle color theme')
     expect(screen.getByTestId('mock-icon')).toHaveTextContent('dark')
 
     fireEvent.click(btn)
@@ -151,5 +153,21 @@ describe('ThemeSelector Component', () => {
     const menu = screen.getByTestId('theme-selector-menu')
     fireEvent.keyDown(menu, { key: 'Tab' })
     expect(screen.queryByTestId('theme-selector-menu')).not.toBeInTheDocument()
+  })
+
+  it('previews each theme accent color in the swatch dot', () => {
+    render(<ThemeSelector theme="amoled" onSelectTheme={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('theme-selector-btn'))
+
+    const amoledDot = screen.getByTestId('theme-swatch-dot-amoled')
+    const darkDot = screen.getByTestId('theme-swatch-dot-dark')
+    const lightDot = screen.getByTestId('theme-swatch-dot-light')
+
+    expect(amoledDot).toBeInTheDocument()
+    expect(darkDot).toBeInTheDocument()
+    expect(lightDot).toBeInTheDocument()
+    expect(amoledDot).toHaveStyle({ backgroundColor: 'rgb(102, 163, 191)' })
+    expect(darkDot).toHaveStyle({ backgroundColor: 'rgb(102, 163, 191)' })
+    expect(lightDot).toHaveStyle({ backgroundColor: 'rgb(3, 47, 114)' })
   })
 })

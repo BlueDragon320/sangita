@@ -69,4 +69,72 @@ describe('AddToPlaylistModal Component', () => {
     fireEvent.click(favRow)
     expect(handleToggleFav).toHaveBeenCalledWith('Anuv Jain/Afsos.mp3')
   })
+
+  it('has accessible dialog attributes and aria-label on close button', () => {
+    render(
+      <AddToPlaylistModal
+        track={mockTrack}
+        playlists={mockPlaylists}
+        favorites={['Anuv Jain/Afsos.mp3']}
+        token="test-token"
+        onClose={vi.fn()}
+      />
+    )
+
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAttribute('aria-labelledby', 'add-playlist-title')
+    expect(screen.getByRole('heading', { level: 3, name: 'Add to playlist' })).toHaveAttribute('id', 'add-playlist-title')
+
+    const closeBtn = screen.getByTestId('add-playlist-close')
+    expect(closeBtn).toHaveAttribute('aria-label', 'Close dialog')
+  })
+
+  it('renders playlist items as accessible checkboxes that can be toggled via keyboard', () => {
+    const handleToggleFav = vi.fn()
+    render(
+      <AddToPlaylistModal
+        track={mockTrack}
+        playlists={mockPlaylists}
+        favorites={['Anuv Jain/Afsos.mp3']}
+        token="test-token"
+        onClose={vi.fn()}
+        onToggleFavorite={handleToggleFav}
+      />
+    )
+
+    const favCheckbox = screen.getByTestId('add-to-favorites-row')
+    expect(favCheckbox).toHaveAttribute('role', 'checkbox')
+    expect(favCheckbox).toHaveAttribute('tabIndex', '0')
+    expect(favCheckbox).toHaveAttribute('aria-checked', 'true')
+
+    const chillCheckbox = screen.getByTestId('playlist-check-Late Night Chill')
+    expect(chillCheckbox).toHaveAttribute('role', 'checkbox')
+    expect(chillCheckbox).toHaveAttribute('tabIndex', '0')
+    expect(chillCheckbox).toHaveAttribute('aria-checked', 'false')
+
+    // Press Enter to toggle
+    fireEvent.keyDown(favCheckbox, { key: 'Enter' })
+    expect(handleToggleFav).toHaveBeenCalledWith('Anuv Jain/Afsos.mp3')
+
+    // Press Space to toggle
+    fireEvent.keyDown(favCheckbox, { key: ' ' })
+    expect(handleToggleFav).toHaveBeenCalledTimes(2)
+  })
+
+  it('dismisses modal on Escape key press', () => {
+    const handleClose = vi.fn()
+    render(
+      <AddToPlaylistModal
+        track={mockTrack}
+        playlists={mockPlaylists}
+        favorites={[]}
+        token="test-token"
+        onClose={handleClose}
+      />
+    )
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(handleClose).toHaveBeenCalledTimes(1)
+  })
 })

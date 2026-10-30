@@ -25,7 +25,7 @@ describe('LyricsView Component', () => {
 
     expect(screen.getByText('Bohemian Rhapsody')).toBeInTheDocument()
     expect(screen.getByText('Queen')).toBeInTheDocument()
-    expect(screen.getByText(/No lyrics avaliable/i)).toBeInTheDocument()
+    expect(screen.getByText(/No lyrics avail/i)).toBeInTheDocument()
   })
 
   it('renders synced lines properly and highlights active line', () => {
@@ -411,6 +411,181 @@ describe('LyricsView Component', () => {
 
     // Line 5 is far (distance >= 3)
     expect(line5).toHaveClass('distance-far')
+  })
+
+  it('supports aria-current on active line, role button, tabIndex, and hover preview', () => {
+    const lrcContent = `
+[00:02.00] First Verse
+[00:05.00] Second Verse
+    `.trim()
+
+    render(
+      <LyricsView
+        track={mockTrack}
+        currentTime={2.5}
+        duration={100}
+        lyricsData={{ has_lyrics: true, raw: lrcContent }}
+        loading={false}
+      />
+    )
+
+    const line0 = screen.getByTestId('lyric-line-0')
+    const line1 = screen.getByTestId('lyric-line-1')
+
+    expect(line0).toHaveAttribute('role', 'button')
+    expect(line0).toHaveAttribute('tabIndex', '0')
+    expect(line0).toHaveAttribute('aria-current', 'time')
+
+    expect(line1).toHaveAttribute('role', 'button')
+    expect(line1).toHaveAttribute('tabIndex', '0')
+    expect(line1).not.toHaveAttribute('aria-current')
+
+    // Line previews with timestamps
+    expect(line0.querySelector('.lyric-line-preview')).toBeInTheDocument()
+    expect(line0.querySelector('.lyric-line-preview')).toHaveTextContent('0:02')
+    expect(line1.querySelector('.lyric-line-preview')).toHaveTextContent('0:05')
+  })
+
+  it('supports keyboard navigation: ArrowDown, ArrowUp, Home, End, and Enter/Space seeking', () => {
+    const lrcContent = `
+[00:01.00] Line A
+[00:03.00] Line B
+[00:06.00] Line C
+[00:10.00] Line D
+    `.trim()
+
+    const onSeek = vi.fn()
+
+    render(
+      <LyricsView
+        track={mockTrack}
+        currentTime={1.0}
+        duration={100}
+        lyricsData={{ has_lyrics: true, raw: lrcContent }}
+        loading={false}
+        onSeek={onSeek}
+      />
+    )
+
+    const lineA = screen.getByTestId('lyric-line-0')
+    const lineB = screen.getByTestId('lyric-line-1')
+    const lineC = screen.getByTestId('lyric-line-2')
+    const lineD = screen.getByTestId('lyric-line-3')
+
+    // Focus first line
+    lineA.focus()
+    expect(document.activeElement).toBe(lineA)
+
+    // ArrowDown navigates to line B
+    fireEvent.keyDown(lineA, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(lineB)
+
+    // ArrowDown navigates to line C
+    fireEvent.keyDown(lineB, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(lineC)
+
+    // ArrowUp navigates back to line B
+    fireEvent.keyDown(lineC, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(lineB)
+
+    // End navigates to last line (line D)
+    fireEvent.keyDown(lineB, { key: 'End' })
+    expect(document.activeElement).toBe(lineD)
+
+    // Home navigates to first line (line A)
+    fireEvent.keyDown(lineD, { key: 'Home' })
+    expect(document.activeElement).toBe(lineA)
+
+    // Pressing Space on line A seeks to 1.0s
+    fireEvent.keyDown(lineA, { key: ' ' })
+    expect(onSeek).toHaveBeenCalledWith(1)
+
+    // Pressing Enter on line C seeks to 6.0s
+    fireEvent.keyDown(lineC, { key: 'Enter' })
+    expect(onSeek).toHaveBeenCalledWith(6)
+  })
+
+  it('displays floating return to current line pill on manual scroll and auto-resumes after 10s', () => {
+    vi.useFakeTimers()
+
+    const lrcContent = `
+[00:01.00] Intro
+[00:05.00] Chorus
+    `.trim()
+
+    render(
+      <LyricsView
+        track={mockTrack}
+        currentTime={1.5}
+        duration={100}
+        lyricsData={{ has_lyrics: true, raw: lrcContent }}
+        loading={false}
+      />
+    )
+
+    // Let initial mount layout timers (60ms, 200ms, 450ms) settle
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+
+    // Initially floating pill is not present
+    expect(screen.queryByTestId('lyrics-sync-scroll-btn')).not.toBeInTheDocument()
+
+    // Trigger scroll
+    const scrollBody = screen.getByTestId('lyric-line-0').closest('.lyrics-scroll-body')
+    fireEvent.wheel(scrollBody, { deltaY: 200 })
+
+    // Floating pill appears
+    const returnBtn = screen.getByTestId('lyrics-sync-scroll-btn')
+    expect(returnBtn).toBeInTheDocument()
+    expect(returnBtn).toHaveTextContent(/Return to Current Line/i)
+
+    // Clicking return button resumes auto-scroll
+    fireEvent.click(returnBtn)
+    expect(screen.queryByTestId('lyrics-sync-scroll-btn')).not.toBeInTheDocument()
+
+    // Trigger wheel again
+    fireEvent.wheel(scrollBody, { deltaY: 150 })
+    expect(screen.getByTestId('lyrics-sync-scroll-btn')).toBeInTheDocument()
+
+    // 9 seconds passed -> still visible
+    act(() => {
+      vi.advanceTimersByTime(9000)
+    })
+    expect(screen.getByTestId('lyrics-sync-scroll-btn')).toBeInTheDocument()
+
+    // After 10s total (1000ms more) -> auto-resumes and hides
+    act(() => {
+      vi.advanceTimersByTime(1100)
+    })
+    expect(screen.queryByTestId('lyrics-sync-scroll-btn')).not.toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  it('renders persistent exit cue in fullscreen mode', () => {
+    render(
+      <LyricsView
+        track={mockTrack}
+        currentTime={2}
+        duration={100}
+        lyricsData={{ has_lyrics: true, raw: '[00:02.00] Line 1' }}
+        loading={false}
+      />
+    )
+
+    const maxBtn = screen.getByTestId('lyrics-maximize-btn')
+    expect(screen.queryByTestId('lyrics-fs-exit-cue')).not.toBeInTheDocument()
+
+    // Enter fullscreen
+    fireEvent.click(maxBtn)
+    const exitCue = screen.getByTestId('lyrics-fs-exit-cue')
+    expect(exitCue).toBeInTheDocument()
+    expect(exitCue).toHaveTextContent(/Exit/i)
+
+    // Clicking exit cue exits fullscreen
+    fireEvent.click(exitCue)
+    expect(screen.queryByTestId('lyrics-fs-exit-cue')).not.toBeInTheDocument()
   })
 })
 

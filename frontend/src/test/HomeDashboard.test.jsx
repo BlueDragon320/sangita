@@ -73,17 +73,82 @@ describe('HomeDashboard Component', () => {
       />
     )
 
+    expect(screen.getByTestId('home-greeting')).toBeInTheDocument()
     expect(screen.getByText('blue')).toBeInTheDocument()
+    expect(screen.getByTestId('home-stat-time')).toBeInTheDocument()
     expect(screen.getByText('2h 0m')).toBeInTheDocument()
+    expect(screen.getByTestId('home-stat-plays')).toBeInTheDocument()
     expect(screen.getByText('45')).toBeInTheDocument()
+    expect(screen.getByTestId('home-stat-tracks')).toBeInTheDocument()
     expect(screen.getByText('15')).toBeInTheDocument()
     expect(screen.getAllByText('Bohemian Rhapsody').length).toBeGreaterThan(0)
     expect(screen.getByText('Billie Jean')).toBeInTheDocument()
     expect(screen.getByText('18 plays')).toBeInTheDocument()
     expect(screen.getAllByText('Queen').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('home-recently-played-section')).toBeInTheDocument()
+    expect(screen.getByTestId('home-top-tracks-section')).toBeInTheDocument()
+    expect(screen.getByTestId('home-top-artists-section')).toBeInTheDocument()
   })
 
-  it('triggers onOpenCreatePlaylist when Make Playlist button is clicked', () => {
+  it('renders skeleton loading state without zero-stats when loading is true', () => {
+    const { container } = render(
+      <HomeDashboard
+        username="blue"
+        stats={null}
+        loading={true}
+        onPlayTrack={vi.fn()}
+        isPlaying={false}
+        currentTrack={null}
+        onOpenCreatePlaylist={vi.fn()}
+        onSaveTop10Playlist={vi.fn()}
+        onQuickShuffle={vi.fn()}
+        token="test-token"
+        favorites={[]}
+        onToggleFavorite={vi.fn()}
+        onAddToPlaylist={vi.fn()}
+        durations={{}}
+      />
+    )
+
+    expect(screen.getByTestId('home-dashboard')).toHaveAttribute('aria-busy', 'true')
+    expect(container.querySelector('.skeleton-box')).toBeInTheDocument()
+    expect(container.querySelectorAll('.skeleton-card').length).toBe(6)
+    // Should NOT show zero stats numbers during loading
+    expect(screen.queryByText('0 min')).not.toBeInTheDocument()
+    expect(screen.queryByText('No plays yet')).not.toBeInTheDocument()
+  })
+
+  it('triggers onPlayTrack when 1-click play card in Jump Back In is clicked', () => {
+    const handlePlayTrack = vi.fn()
+    render(
+      <HomeDashboard
+        username="blue"
+        stats={mockStats}
+        loading={false}
+        onPlayTrack={handlePlayTrack}
+        isPlaying={false}
+        currentTrack={null}
+        onOpenCreatePlaylist={vi.fn()}
+        onSaveTop10Playlist={vi.fn()}
+        onQuickShuffle={vi.fn()}
+        token="test-token"
+        favorites={[]}
+        onToggleFavorite={vi.fn()}
+        onAddToPlaylist={vi.fn()}
+        durations={{}}
+      />
+    )
+
+    const recentCard = screen.getByTestId('home-recent-card-0')
+    fireEvent.click(recentCard)
+    expect(handlePlayTrack).toHaveBeenCalledWith(
+      mockStats.recently_played[0],
+      'Rock',
+      mockStats.recently_played
+    )
+  })
+
+  it('triggers onOpenCreatePlaylist when New Playlist button is clicked', () => {
     const handleOpenCreate = vi.fn()
     render(
       <HomeDashboard
@@ -107,6 +172,32 @@ describe('HomeDashboard Component', () => {
     const createBtn = screen.getByTestId('home-create-playlist-btn')
     fireEvent.click(createBtn)
     expect(handleOpenCreate).toHaveBeenCalledTimes(1)
+  })
+
+  it('triggers onQuickShuffle when Quick Shuffle button is clicked', () => {
+    const handleQuickShuffle = vi.fn()
+    render(
+      <HomeDashboard
+        username="blue"
+        stats={mockStats}
+        loading={false}
+        onPlayTrack={vi.fn()}
+        isPlaying={false}
+        currentTrack={null}
+        onOpenCreatePlaylist={vi.fn()}
+        onSaveTop10Playlist={vi.fn()}
+        onQuickShuffle={handleQuickShuffle}
+        token="test-token"
+        favorites={[]}
+        onToggleFavorite={vi.fn()}
+        onAddToPlaylist={vi.fn()}
+        durations={{}}
+      />
+    )
+
+    const shuffleBtn = screen.getByTestId('home-quick-shuffle-btn')
+    fireEvent.click(shuffleBtn)
+    expect(handleQuickShuffle).toHaveBeenCalledTimes(1)
   })
 
   it('triggers onSaveTop10Playlist when Save Top 10 button is clicked', () => {
@@ -163,5 +254,40 @@ describe('HomeDashboard Component', () => {
       'Rock',
       mockStats.top_tracks
     )
+  })
+
+  it('allows toggling Listening Insights & Activity disclosure', () => {
+    render(
+      <HomeDashboard
+        username="blue"
+        stats={mockStats}
+        loading={false}
+        onPlayTrack={vi.fn()}
+        isPlaying={false}
+        currentTrack={null}
+        onOpenCreatePlaylist={vi.fn()}
+        onSaveTop10Playlist={vi.fn()}
+        onQuickShuffle={vi.fn()}
+        token="test-token"
+        favorites={[]}
+        onToggleFavorite={vi.fn()}
+        onAddToPlaylist={vi.fn()}
+        durations={{}}
+      />
+    )
+
+    expect(screen.getByText('Listening Insights & Activity')).toBeInTheDocument()
+    const toggleBtn = screen.getByRole('button', { name: /Listening Insights & Activity/i })
+    expect(toggleBtn).toHaveAttribute('aria-expanded', 'true')
+
+    // Collapse insights
+    fireEvent.click(toggleBtn)
+    expect(toggleBtn).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('home-stat-time')).not.toBeInTheDocument()
+
+    // Expand insights back
+    fireEvent.click(toggleBtn)
+    expect(toggleBtn).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('home-stat-time')).toBeInTheDocument()
   })
 })

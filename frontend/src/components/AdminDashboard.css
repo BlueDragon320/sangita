@@ -627,7 +627,7 @@
   align-items: center;
   justify-content: space-between;
 }
-.alert-banner.error { background: rgba(239, 68, 68, 0.15); border: 1px solid var(--red); color: #fca5a5; }
+.alert-banner.error { background: rgba(239, 68, 68, 0.15); border: 1px solid var(--red); color: var(--red); }
 .alert-banner.success { background: rgba(52, 211, 153, 0.15); border: 1px solid var(--accent); color: var(--accent-hi); }
 
 .admin-loading-state {
@@ -710,6 +710,14 @@
 @media (max-width: 768px) {
   .admin-navbar {
     padding: 12px 16px;
+    gap: 12px;
+  }
+  .admin-modal-backdrop {
+    padding: 14px;
+  }
+  .admin-modal {
+    padding: 20px 16px;
+    border-radius: var(--radius-card);
   }
   .admin-controls-bar {
     padding: 12px 16px;
@@ -730,6 +738,20 @@
   }
   .admin-nav-btn, .timeframe-pill, .admin-select-input, .admin-tab-btn {
     min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-navbar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .admin-modal-backdrop {
+    padding: 8px;
+  }
+  .admin-modal {
+    padding: 16px 14px;
+    border-radius: var(--radius-md);
   }
 }
 
@@ -1051,3 +1073,178 @@
   margin-bottom: 20px;
   flex-wrap: wrap;
 }
+
+/* =========================================================================
+   Library Organization & Global Playlist Inventory
+   ========================================================================= */
+.library-org-view {
+  animation: fadeIn 0.25s ease-out;
+}
+
+.library-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.library-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.library-stat-num {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.library-stat-lbl {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.library-stat-num.artist-color {
+  color: #c4b5fd;
+}
+
+.library-stat-num.playlist-color {
+  color: #93c5fd;
+}
+
+.library-stat-num.unclassified-color {
+  color: #fcd34d;
+}
+
+/* Classification status pills */
+.classification-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.classification-pill.artist {
+  background: rgba(139, 92, 246, 0.16);
+  color: #c4b5fd;
+  border: 1px solid rgba(139, 92, 246, 0.4);
+}
+
+.classification-pill.playlist {
+  background: rgba(59, 130, 246, 0.16);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.classification-pill.unclassified {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+/* Visibility badges */
+.visibility-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.visibility-badge.public {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--emerald-hi);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.visibility-badge.private {
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--zinc-300);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+/* Playlist Type pills */
+.playlist-type-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-sub);
+}
+
+.playlist-type-pill.folder {
+  border-color: rgba(99, 102, 241, 0.3);
+  color: var(--text);
+}
+
+/* Light Mode Overrides for WCAG 2.2 AA Contrast */
+[data-theme="light"] .library-stat-num.artist-color {
+  color: #6d28d9;
+}
+
+[data-theme="light"] .library-stat-num.playlist-color {
+  color: #1d4ed8;
+}
+
+[data-theme="light"] .library-stat-num.unclassified-color {
+  color: #b45309;
+}
+
+[data-theme="light"] .classification-pill.artist {
+  background: #f3e8ff;
+  color: #6d28d9;
+  border-color: #d8b4fe;
+}
+
+[data-theme="light"] .classification-pill.playlist {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: #93c5fd;
+}
+
+[data-theme="light"] .classification-pill.unclassified {
+  background: #fef3c7;
+  color: #b45309;
+  border-color: #fcd34d;
+}
+
+[data-theme="light"] .visibility-badge.public {
+  background: #d1fae5;
+  color: #047857;
+  border-color: #6ee7b7;
+}
+
+[data-theme="light"] .visibility-badge.private {
+  background: #f1f5f9;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+
+[data-theme="light"] .playlist-type-pill {
+  background: #f8fafc;
+  color: #334155;
+}
+

@@ -146,11 +146,30 @@ const LyricsDocIcon = ({ width = 18, height = 18, className = '' }) => (
   </svg>
 )
 
+const FolderIcon = ({ width = 18, height = 18, className = '' }) => (
+  <svg viewBox="0 0 24 24" width={width} height={height} fill="currentColor" className={className} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+    <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+  </svg>
+)
+
+const LockIcon = ({ width = 12, height = 12 }) => (
+  <svg viewBox="0 0 24 24" width={width} height={height} fill="currentColor" style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+    <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+  </svg>
+)
+
+const GlobeIcon = ({ width = 12, height = 12 }) => (
+  <svg viewBox="0 0 24 24" width={width} height={height} fill="currentColor" style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+  </svg>
+)
+
 const TABS = [
   { id: 'analytics', label: 'Overview', icon: <ActivityIcon />, testId: 'admin-tab-analytics' },
   { id: 'music', label: 'Music', icon: <MusicIcon />, testId: 'admin-tab-music' },
   { id: 'live', label: 'Activity', icon: <FlameIcon />, testId: 'admin-tab-live' },
   { id: 'users', label: 'Users', icon: <UsersIcon />, testId: 'admin-tab-users' },
+  { id: 'library-org', label: 'Library Organization', icon: <FolderIcon />, testId: 'admin-tab-library-org' },
   { id: 'lyrics', label: 'Lyrics', icon: <LyricsDocIcon />, testId: 'admin-tab-lyrics' },
   { id: 'system', label: 'System', icon: <DeviceIcon />, testId: 'admin-tab-system' },
 ]
@@ -302,6 +321,239 @@ export default function AdminDashboard({
   })
   const [lyricsLogFilter, setLyricsLogFilter] = useState('all')
   const [lyricsLogSearch, setLyricsLogSearch] = useState('')
+
+  // =========================================================================
+  // Library Organization State & Handlers
+  // =========================================================================
+  const [folders, setFolders] = useState([])
+  const [foldersLoading, setFoldersLoading] = useState(false)
+  const [foldersError, setFoldersError] = useState(null)
+
+  const [adminPlaylists, setAdminPlaylists] = useState([])
+  const [playlistsLoading, setPlaylistsLoading] = useState(false)
+  const [playlistsError, setPlaylistsError] = useState(null)
+  const [playlistSearch, setPlaylistSearch] = useState('')
+  const [playlistVisibilityFilter, setPlaylistVisibilityFilter] = useState('all')
+
+  const [artists, setArtists] = useState([])
+  const [artistsLoading, setArtistsLoading] = useState(false)
+  const [artistsError, setArtistsError] = useState(null)
+
+  // Modals for Library Org
+  const [classifyModal, setClassifyModal] = useState({
+    open: false,
+    folder: '',
+    classification: 'unclassified',
+    display_name: '',
+    mapped_artist: '',
+    mapped_artist_id: null,
+    saving: false,
+    error: null
+  })
+
+  const [artistModal, setArtistModal] = useState({
+    open: false,
+    name: '',
+    bio: '',
+    saving: false,
+    error: null
+  })
+
+  const [deletePlaylistDialog, setDeletePlaylistDialog] = useState({
+    open: false,
+    playlist: null,
+    deleting: false,
+    error: null
+  })
+
+  const fetchFolders = useCallback(async () => {
+    setFoldersLoading(true)
+    setFoldersError(null)
+    try {
+      const res = await fetch('/api/admin/library/folders', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error('Failed to load folders')
+      const data = await res.json()
+      setFolders(Array.isArray(data) ? data : (data.folders || []))
+    } catch (err) {
+      setFoldersError(err.message)
+    } finally {
+      setFoldersLoading(false)
+    }
+  }, [token])
+
+  const fetchAdminPlaylists = useCallback(async () => {
+    setPlaylistsLoading(true)
+    setPlaylistsError(null)
+    try {
+      const res = await fetch('/api/admin/library/playlists', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error('Failed to load playlists')
+      const data = await res.json()
+      setAdminPlaylists(Array.isArray(data) ? data : (data.playlists || []))
+    } catch (err) {
+      setPlaylistsError(err.message)
+    } finally {
+      setPlaylistsLoading(false)
+    }
+  }, [token])
+
+  const fetchArtists = useCallback(async () => {
+    setArtistsLoading(true)
+    setArtistsError(null)
+    try {
+      const res = await fetch('/api/admin/library/artists', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error('Failed to load artists')
+      const data = await res.json()
+      setArtists(Array.isArray(data) ? data : (data.artists || []))
+    } catch (err) {
+      setArtistsError(err.message)
+    } finally {
+      setArtistsLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (activeTab === 'library-org' && token) {
+      fetchFolders()
+      fetchAdminPlaylists()
+      fetchArtists()
+    }
+  }, [activeTab, token, fetchFolders, fetchAdminPlaylists, fetchArtists])
+
+  const handleOpenClassifyModal = (f) => {
+    setClassifyModal({
+      open: true,
+      folder: f.folder,
+      classification: f.classification || 'unclassified',
+      display_name: f.display_name || f.folder,
+      mapped_artist: f.mapped_artist || '',
+      mapped_artist_id: f.mapped_artist_id || null,
+      saving: false,
+      error: null
+    })
+  }
+
+  const handleSaveClassification = async (e) => {
+    e.preventDefault()
+    if (!classifyModal.folder) return
+    setClassifyModal(m => ({ ...m, saving: true, error: null }))
+    try {
+      const res = await fetch('/api/admin/library/folders/classify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          folder: classifyModal.folder,
+          classification: classifyModal.classification,
+          display_name: classifyModal.display_name,
+          mapped_artist: classifyModal.mapped_artist || undefined,
+          mapped_artist_id: classifyModal.mapped_artist_id || undefined
+        })
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || 'Failed to update folder classification')
+      }
+      setClassifyModal(m => ({ ...m, open: false, saving: false }))
+      fetchFolders()
+      fetchAdminPlaylists()
+      fetchArtists()
+    } catch (err) {
+      setClassifyModal(m => ({ ...m, saving: false, error: err.message }))
+    }
+  }
+
+  const handleCreateArtist = async (e) => {
+    e.preventDefault()
+    if (!artistModal.name.trim()) return
+    setArtistModal(m => ({ ...m, saving: true, error: null }))
+    try {
+      const res = await fetch('/api/admin/library/artists', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: artistModal.name.trim(),
+          bio: artistModal.bio.trim()
+        })
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || 'Failed to create artist')
+      }
+      setArtistModal({ open: false, name: '', bio: '', saving: false, error: null })
+      fetchArtists()
+    } catch (err) {
+      setArtistModal(m => ({ ...m, saving: false, error: err.message }))
+    }
+  }
+
+  const handleOpenDeletePlaylist = (playlist) => {
+    setDeletePlaylistDialog({
+      open: true,
+      playlist,
+      deleting: false,
+      error: null
+    })
+  }
+
+  const handleConfirmDeletePlaylist = async () => {
+    if (!deletePlaylistDialog.playlist) return
+    setDeletePlaylistDialog(d => ({ ...d, deleting: true, error: null }))
+    try {
+      const res = await fetch(`/api/admin/library/playlists/${deletePlaylistDialog.playlist.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || 'Failed to delete playlist')
+      }
+      setDeletePlaylistDialog({ open: false, playlist: null, deleting: false, error: null })
+      fetchAdminPlaylists()
+    } catch (err) {
+      setDeletePlaylistDialog(d => ({ ...d, deleting: false, error: err.message }))
+    }
+  }
+
+  const filteredPlaylists = useMemo(() => {
+    return adminPlaylists.filter(pl => {
+      if (playlistVisibilityFilter !== 'all' && pl.visibility !== playlistVisibilityFilter) {
+        return false
+      }
+      if (playlistSearch.trim()) {
+        const query = playlistSearch.trim().toLowerCase()
+        const matchTitle = (pl.title || '').toLowerCase().includes(query)
+        const matchOwner = (pl.owner || '').toLowerCase().includes(query)
+        return matchTitle || matchOwner
+      }
+      return true
+    })
+  }, [adminPlaylists, playlistVisibilityFilter, playlistSearch])
+
+  const folderStats = useMemo(() => {
+    const total = folders.length
+    const artistsCount = folders.filter(f => f.classification === 'artist').length
+    const playlistsCount = folders.filter(f => f.classification === 'playlist').length
+    const unclassifiedCount = folders.filter(f => f.classification === 'unclassified').length
+    const totalTracks = folders.reduce((sum, f) => sum + (f.track_count || 0), 0)
+    return {
+      total,
+      artists: artistsCount,
+      playlists: playlistsCount,
+      unclassified: unclassifiedCount,
+      totalTracks
+    }
+  }, [folders])
 
   useEffect(() => {
     if ((!playlists || Object.keys(playlists).length === 0) && token) {
@@ -1388,6 +1640,7 @@ export default function AdminDashboard({
             <div className="admin-page-header-text">
               <h1 className="admin-page-title">
                 {activeTab === 'analytics' && 'Overview'}
+                {activeTab === 'library-org' && 'Library Organization'}
                 {activeTab === 'music' && 'Music & Catalog'}
                 {activeTab === 'live' && 'Activity'}
                 {activeTab === 'users' && 'Users'}
@@ -1396,6 +1649,7 @@ export default function AdminDashboard({
               </h1>
               <p className="admin-page-desc">
                 {activeTab === 'analytics' && 'Monitor key listening trends, session activity, and audience metrics.'}
+                {activeTab === 'library-org' && 'Classify source audio folders, manage catalog artists, and audit global playlists.'}
                 {activeTab === 'music' && 'Inspect top tracks, artists, playlists, and library engagement.'}
                 {activeTab === 'live' && 'Inspect real-time listening sessions, active streams, and audit logs.'}
                 {activeTab === 'users' && 'Create, edit, and manage user accounts and access permissions.'}
@@ -1600,7 +1854,7 @@ export default function AdminDashboard({
             ) : analyticsError ? (
               <div className="admin-empty-state admin-error-state" data-testid="analytics-error" style={{ borderColor: 'var(--red)' }}>
                 <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
-                <h3 style={{ color: '#fca5a5' }}>Failed to Load Analytics</h3>
+                <h3 style={{ color: 'var(--red)' }}>Failed to Load Analytics</h3>
                 <p>{analyticsError}</p>
                 <button
                   className="admin-nav-btn admin-retry-analytics-btn"
@@ -1837,6 +2091,423 @@ export default function AdminDashboard({
               </>
             )}
           </div>
+        ) : activeTab === 'library-org' ? (
+          /* =========================================================================
+              TAB: LIBRARY ORGANIZATION & GLOBAL PLAYLIST INVENTORY
+             ========================================================================= */
+          <div className="library-org-view" data-testid="library-org-tab-content">
+            {/* 1. Folder Classification Panel */}
+            <div className="admin-panel" data-testid="folder-classification-panel">
+              <div className="admin-panel-header">
+                <div>
+                  <div className="admin-panel-title">
+                    <FolderIcon width={20} height={20} />
+                    <span>Folder Classification</span>
+                  </div>
+                  <div className="admin-panel-subtitle">
+                    Classify physical audio folders as Artists or Playlists, assign custom display titles, and map catalog entities.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="admin-nav-btn"
+                  onClick={fetchFolders}
+                  disabled={foldersLoading}
+                  aria-label="Refresh folders"
+                  data-testid="btn-refresh-folders"
+                >
+                  <RefreshIcon />
+                  <span>{foldersLoading ? 'Scanning…' : 'Refresh Folders'}</span>
+                </button>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="library-summary-cards">
+                <div className="library-stat-card">
+                  <div className="library-stat-num">{folderStats.total}</div>
+                  <div className="library-stat-lbl">Detected Folders</div>
+                </div>
+                <div className="library-stat-card">
+                  <div className="library-stat-num artist-color">{folderStats.artists}</div>
+                  <div className="library-stat-lbl">Artist Folders</div>
+                </div>
+                <div className="library-stat-card">
+                  <div className="library-stat-num playlist-color">{folderStats.playlists}</div>
+                  <div className="library-stat-lbl">Playlist Folders</div>
+                </div>
+                <div className="library-stat-card">
+                  <div className="library-stat-num unclassified-color">{folderStats.unclassified}</div>
+                  <div className="library-stat-lbl">Unclassified</div>
+                </div>
+                <div className="library-stat-card">
+                  <div className="library-stat-num">{folderStats.totalTracks}</div>
+                  <div className="library-stat-lbl">Total Audio Tracks</div>
+                </div>
+              </div>
+
+              {/* Folder Table */}
+              {foldersLoading && folders.length === 0 ? (
+                <div className="loading-state" style={{ padding: 36 }}>
+                  <div className="spinner" />
+                  <p>Scanning source folders…</p>
+                </div>
+              ) : foldersError ? (
+                <div className="admin-empty-state admin-error-state" style={{ borderColor: 'var(--red)', margin: '16px 0' }}>
+                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <h3 style={{ color: 'var(--red)' }}>Failed to Load Folders</h3>
+                  <p>{foldersError}</p>
+                  <button className="admin-nav-btn" onClick={fetchFolders} style={{ marginTop: 12 }}>
+                    <RefreshIcon />
+                    <span>Retry</span>
+                  </button>
+                </div>
+              ) : folders.length === 0 ? (
+                <div className="empty-state" style={{ padding: 36 }}>
+                  <FolderIcon width={40} height={40} />
+                  <h3 style={{ marginTop: 10, fontSize: '14px' }}>No Source Folders Detected</h3>
+                  <p style={{ fontSize: '12px' }}>Check that MUSIC_DIR contains audio files or subdirectories.</p>
+                </div>
+              ) : (
+                <div className="admin-table-container">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '22%' }}>Source Folder</th>
+                        <th style={{ width: '15%' }}>Classification</th>
+                        <th style={{ width: '20%' }}>Display Name</th>
+                        <th style={{ width: '18%' }}>Mapped Artist</th>
+                        <th style={{ width: '10%' }}>Tracks</th>
+                        <th style={{ width: '15%' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {folders.map(f => (
+                        <tr key={f.folder} data-testid={`folder-row-${f.folder}`}>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <FolderIcon width={16} height={16} />
+                              <strong style={{ fontFamily: 'monospace', fontSize: '12.5px' }}>{f.folder}</strong>
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 2 }}>
+                              Grants: {f.user_access_grants?.includes('*') || f.user_access_grants?.length === users.length
+                                ? 'All Users (*)'
+                                : f.user_access_grants?.join(', ') || 'No users'}
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`classification-pill ${f.classification}`}>
+                              {f.classification === 'artist' ? '🎨 Artist' : f.classification === 'playlist' ? '📋 Playlist' : '⚠️ Unclassified'}
+                            </span>
+                          </td>
+                          <td>
+                            <span style={{ fontWeight: 600 }}>{f.display_name || f.folder}</span>
+                          </td>
+                          <td>
+                            {f.mapped_artist ? (
+                              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{f.mapped_artist}</span>
+                            ) : (
+                              <span style={{ color: 'var(--text-dim)' }}>—</span>
+                            )}
+                          </td>
+                          <td>
+                            <span style={{ fontWeight: 600 }}>{formatNumber(f.track_count)}</span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="admin-nav-btn small"
+                              onClick={() => handleOpenClassifyModal(f)}
+                              data-testid={`btn-classify-folder-${f.folder}`}
+                              aria-label={`Classify folder ${f.folder}`}
+                            >
+                              <EditIcon />
+                              <span>Classify</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Global Playlist Inventory Panel */}
+            <div className="admin-panel" data-testid="global-playlist-inventory-panel">
+              <div className="admin-panel-header">
+                <div>
+                  <div className="admin-panel-title">
+                    <MusicIcon />
+                    <span>Global Playlist Inventory</span>
+                  </div>
+                  <div className="admin-panel-subtitle">
+                    Inspect all user-created and system folder playlists across all users, filter visibility, and manage administrative actions.
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  {/* Search input */}
+                  <input
+                    type="search"
+                    className="admin-input-search"
+                    placeholder="Search by title or owner…"
+                    value={playlistSearch}
+                    onChange={e => setPlaylistSearch(e.target.value)}
+                    data-testid="input-playlist-search"
+                    aria-label="Search playlists"
+                  />
+
+                  {/* Visibility Filters */}
+                  <div className="timeframe-pill-group" role="group" aria-label="Filter playlists by visibility">
+                    <button
+                      type="button"
+                      className={`timeframe-pill ${playlistVisibilityFilter === 'all' ? 'active' : ''}`}
+                      onClick={() => setPlaylistVisibilityFilter('all')}
+                      data-testid="filter-visibility-all"
+                    >
+                      All ({adminPlaylists.length})
+                    </button>
+                    <button
+                      type="button"
+                      className={`timeframe-pill ${playlistVisibilityFilter === 'public' ? 'active' : ''}`}
+                      onClick={() => setPlaylistVisibilityFilter('public')}
+                      data-testid="filter-visibility-public"
+                    >
+                      Public
+                    </button>
+                    <button
+                      type="button"
+                      className={`timeframe-pill ${playlistVisibilityFilter === 'private' ? 'active' : ''}`}
+                      onClick={() => setPlaylistVisibilityFilter('private')}
+                      data-testid="filter-visibility-private"
+                    >
+                      Private
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="admin-nav-btn"
+                    onClick={fetchAdminPlaylists}
+                    disabled={playlistsLoading}
+                    aria-label="Refresh playlists"
+                    data-testid="btn-refresh-playlists"
+                  >
+                    <RefreshIcon />
+                  </button>
+                </div>
+              </div>
+
+              {playlistsLoading && adminPlaylists.length === 0 ? (
+                <div className="loading-state" style={{ padding: 36 }}>
+                  <div className="spinner" />
+                  <p>Loading playlist inventory…</p>
+                </div>
+              ) : playlistsError ? (
+                <div className="admin-empty-state admin-error-state" style={{ borderColor: 'var(--red)', margin: '16px 0' }}>
+                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <h3 style={{ color: 'var(--red)' }}>Failed to Load Playlists</h3>
+                  <p>{playlistsError}</p>
+                  <button className="admin-nav-btn" onClick={fetchAdminPlaylists} style={{ marginTop: 12 }}>
+                    <RefreshIcon />
+                    <span>Retry</span>
+                  </button>
+                </div>
+              ) : filteredPlaylists.length === 0 ? (
+                <div className="empty-state" style={{ padding: 36 }}>
+                  <MusicIcon />
+                  <h3 style={{ marginTop: 10, fontSize: '14px' }}>No Playlists Found</h3>
+                  <p style={{ fontSize: '12px' }}>
+                    {playlistSearch || playlistVisibilityFilter !== 'all'
+                      ? 'No playlists match your search and filter criteria.'
+                      : 'No user playlists or folder playlists have been recorded yet.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="admin-table-container">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '25%' }}>Title</th>
+                        <th style={{ width: '16%' }}>Owner</th>
+                        <th style={{ width: '14%' }}>Visibility</th>
+                        <th style={{ width: '15%' }}>Type</th>
+                        <th style={{ width: '10%' }}>Tracks</th>
+                        <th style={{ width: '12%' }}>Created</th>
+                        <th style={{ width: '8%', textAlign: 'right' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPlaylists.map(pl => (
+                        <tr key={pl.id} data-testid={`playlist-row-${pl.id}`}>
+                          <td>
+                            <div style={{ fontWeight: 600, fontSize: '13px' }}>{pl.title}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>ID: {pl.id}</div>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span
+                                style={{
+                                  display: 'inline-block',
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: '50%',
+                                  background: pl.owner === 'system' ? 'var(--accent)' : `hsl(${strHue(pl.owner)}, 70%, 55%)`
+                                }}
+                              />
+                              <span style={{ fontWeight: 600 }}>{pl.owner}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`visibility-badge ${pl.visibility}`}>
+                              {pl.visibility === 'public' ? (
+                                <>
+                                  <GlobeIcon width={12} height={12} />
+                                  <span>Public</span>
+                                </>
+                              ) : (
+                                <>
+                                  <LockIcon width={12} height={12} />
+                                  <span>Private</span>
+                                </>
+                              )}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`playlist-type-pill ${pl.is_folder_playlist ? 'folder' : 'user'}`}>
+                              {pl.is_folder_playlist ? '📁 Folder Playlist' : '👤 User Playlist'}
+                            </span>
+                          </td>
+                          <td>
+                            <span style={{ fontWeight: 600 }}>{formatNumber(pl.track_count)}</span>
+                          </td>
+                          <td>
+                            <span style={{ fontSize: '11px', color: 'var(--text-sub)' }}>
+                              {formatTimestamp(pl.created_at, timezone)}
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button
+                              type="button"
+                              className="admin-action-btn delete"
+                              onClick={() => handleOpenDeletePlaylist(pl)}
+                              title={`Delete playlist ${pl.title}`}
+                              aria-label={`Delete playlist ${pl.title}`}
+                              data-testid={`btn-delete-playlist-${pl.id}`}
+                            >
+                              <TrashIcon />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Artists Management Panel */}
+            <div className="admin-panel" data-testid="artists-management-panel">
+              <div className="admin-panel-header">
+                <div>
+                  <div className="admin-panel-title">
+                    <span>🎨</span>
+                    <span>Artists Management</span>
+                  </div>
+                  <div className="admin-panel-subtitle">
+                    Manage catalog artist profiles, descriptions, and linked audio collections.
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    className="admin-nav-btn primary"
+                    onClick={() => setArtistModal({ open: true, name: '', bio: '', saving: false, error: null })}
+                    data-testid="btn-add-artist"
+                  >
+                    <PlusIcon />
+                    <span>Add New Artist</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-nav-btn"
+                    onClick={fetchArtists}
+                    disabled={artistsLoading}
+                    aria-label="Refresh artists"
+                    data-testid="btn-refresh-artists"
+                  >
+                    <RefreshIcon />
+                  </button>
+                </div>
+              </div>
+
+              {artistsLoading && artists.length === 0 ? (
+                <div className="loading-state" style={{ padding: 36 }}>
+                  <div className="spinner" />
+                  <p>Loading artists catalog…</p>
+                </div>
+              ) : artistsError ? (
+                <div className="admin-empty-state admin-error-state" style={{ borderColor: 'var(--red)', margin: '16px 0' }}>
+                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <h3 style={{ color: 'var(--red)' }}>Failed to Load Artists</h3>
+                  <p>{artistsError}</p>
+                  <button className="admin-nav-btn" onClick={fetchArtists} style={{ marginTop: 12 }}>
+                    <RefreshIcon />
+                    <span>Retry</span>
+                  </button>
+                </div>
+              ) : artists.length === 0 ? (
+                <div className="empty-state" style={{ padding: 36 }}>
+                  <div style={{ fontSize: '32px', marginBottom: 8 }}>🎨</div>
+                  <h3 style={{ marginTop: 6, fontSize: '14px' }}>No Catalog Artists Configured</h3>
+                  <p style={{ fontSize: '12px' }}>
+                    Click "Add New Artist" to register an artist profile or classify a source folder to automatically register one.
+                  </p>
+                </div>
+              ) : (
+                <div className="admin-table-container">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '25%' }}>Artist Name</th>
+                        <th style={{ width: '35%' }}>Bio / Description</th>
+                        <th style={{ width: '15%' }}>Mapped Folders</th>
+                        <th style={{ width: '12%' }}>Total Tracks</th>
+                        <th style={{ width: '13%' }}>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {artists.map(a => (
+                        <tr key={a.id} data-testid={`artist-row-${a.id}`}>
+                          <td>
+                            <strong style={{ fontSize: '13px', color: 'var(--text)' }}>{a.name}</strong>
+                            <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>ID: #{a.id}</div>
+                          </td>
+                          <td>
+                            <span style={{ color: a.bio ? 'var(--text-sub)' : 'var(--text-dim)', fontSize: '12px' }}>
+                              {a.bio || 'No biography entered'}
+                            </span>
+                          </td>
+                          <td>
+                            <span style={{ fontWeight: 600 }}>{formatNumber(a.folder_count)}</span>
+                          </td>
+                          <td>
+                            <span style={{ fontWeight: 600 }}>{formatNumber(a.track_count)}</span>
+                          </td>
+                          <td>
+                            <span style={{ fontSize: '11px', color: 'var(--text-sub)' }}>
+                              {formatTimestamp(a.created_at, timezone)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
         ) : activeTab === 'music' ? (
           /* =========================================================================
               TAB 2: MUSIC & CATALOG ANALYTICS
@@ -1850,7 +2521,7 @@ export default function AdminDashboard({
             ) : analyticsError ? (
               <div className="admin-empty-state admin-error-state" data-testid="music-analytics-error" style={{ borderColor: 'var(--red)' }}>
                 <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
-                <h3 style={{ color: '#fca5a5' }}>Failed to Load Music Analytics</h3>
+                <h3 style={{ color: 'var(--red)' }}>Failed to Load Music Analytics</h3>
                 <p>{analyticsError}</p>
                 <button
                   className="admin-nav-btn"
@@ -2024,7 +2695,7 @@ export default function AdminDashboard({
               ) : analyticsError && !analytics?.live_sessions ? (
                 <div className="admin-empty-state admin-error-state" data-testid="live-sessions-error" style={{ borderColor: 'var(--red)', margin: '20px 0' }}>
                   <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
-                  <h3 style={{ color: '#fca5a5' }}>Failed to Load Live Sessions</h3>
+                  <h3 style={{ color: 'var(--red)' }}>Failed to Load Live Sessions</h3>
                   <p>{analyticsError}</p>
                   <button className="admin-nav-btn" onClick={fetchAnalytics} style={{ marginTop: 16 }}>
                     <RefreshIcon />
@@ -2116,7 +2787,7 @@ export default function AdminDashboard({
               ) : logsError ? (
                 <div className="admin-empty-state admin-error-state" data-testid="logs-error" style={{ borderColor: 'var(--red)', margin: '20px 0' }}>
                   <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
-                  <h3 style={{ color: '#fca5a5' }}>Failed to Load Audit Logs</h3>
+                  <h3 style={{ color: 'var(--red)' }}>Failed to Load Audit Logs</h3>
                   <p>{logsError}</p>
                   <button className="admin-nav-btn" onClick={() => fetchLogs(logsPage)} style={{ marginTop: 16 }}>
                     <RefreshIcon />
@@ -2254,7 +2925,7 @@ export default function AdminDashboard({
               ) : usersError ? (
                 <div className="admin-empty-state admin-error-state" data-testid="users-error" style={{ borderColor: 'var(--red)', margin: '20px 0' }}>
                   <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
-                  <h3 style={{ color: '#fca5a5' }}>Failed to Load Users</h3>
+                  <h3 style={{ color: 'var(--red)' }}>Failed to Load Users</h3>
                   <p>{usersError}</p>
                   <button className="admin-nav-btn" onClick={fetchUsers} style={{ marginTop: 16 }}>
                     <RefreshIcon />
@@ -2348,7 +3019,7 @@ export default function AdminDashboard({
                       Generating Lyrics ({lyricsStatus.job.current_index || 0} / {lyricsStatus.job.total_songs || 0})
                     </span>
                   ) : lyricsStatus?.job?.state === 'stopped' ? (
-                    <span className="lyrics-hero-badge idle" style={{ borderColor: 'rgba(239, 68, 68, 0.4)', color: '#f87171' }}>
+                    <span className="lyrics-hero-badge idle" style={{ borderColor: 'rgba(239, 68, 68, 0.4)', color: 'var(--red)' }}>
                       🛑 Stopped
                     </span>
                   ) : (
@@ -2845,7 +3516,7 @@ export default function AdminDashboard({
                     LIVE SYNC
                   </span>
                 ) : lyricsConfig.remote_whisper_url ? (
-                  <span className="badge-pill offline" style={{ fontSize: '9px', padding: '1px 6px', background: 'rgba(239, 68, 68, 0.15)', color: '#FCA5A5', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 10 }}>
+                  <span className="badge-pill offline" style={{ fontSize: '9px', padding: '1px 6px', background: 'rgba(239, 68, 68, 0.15)', color: 'var(--red)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 10 }}>
                     STANDBY
                   </span>
                 ) : null}
@@ -3167,7 +3838,7 @@ export default function AdminDashboard({
 
                       {/* Detected Connected PC Specs Profile Banner */}
                       <div className="pc-specs-banner" data-testid="detected-pc-specs-banner" style={{
-                        background: 'rgba(255, 255, 255, 0.03)',
+                        background: 'var(--card)',
                         border: '1px solid var(--border)',
                         borderRadius: 8,
                         padding: '10px 14px',
@@ -3237,7 +3908,7 @@ export default function AdminDashboard({
                             pc_cooldown_sec: 1.0
                           }))}
                           title="Uses ~25% of PC specs with 1.0s cooldown so PC stays quiet"
-                          style={{ fontSize: '10.5px', padding: '3px 8px', borderRadius: 6, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border)', color: 'var(--text)', cursor: 'pointer' }}
+                          style={{ fontSize: '10.5px', padding: '3px 8px', borderRadius: 6, background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)', cursor: 'pointer' }}
                         >
                           🌿 Quiet (25% Specs)
                         </button>
@@ -4077,6 +4748,251 @@ export default function AdminDashboard({
                 disabled={lyricsActionLoading}
               >
                 🚀 Start Processing (Zero-Trace GPU)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          LIBRARY ORGANIZATION MODALS
+         ========================================================================= */}
+
+      {/* 1. Folder Classification Modal */}
+      {classifyModal.open && (
+        <div
+          className="admin-modal-backdrop"
+          onClick={() => setClassifyModal(m => ({ ...m, open: false }))}
+          data-testid="classify-folder-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="classify-folder-modal-title"
+        >
+          <div className="admin-modal" style={{ maxWidth: 540 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 id="classify-folder-modal-title" className="modal-title">Classify Source Folder</h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 4 }}>
+                Folder: <code style={{ color: 'var(--accent)', fontWeight: 700 }}>{classifyModal.folder}</code>
+              </p>
+            </div>
+
+            {classifyModal.error && (
+              <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--red)', borderRadius: 6, color: 'var(--red)', fontSize: '12px', marginBottom: 12 }}>
+                {classifyModal.error}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveClassification}>
+              <div className="form-row">
+                <label className="form-label" htmlFor="select-classification">Folder Classification Role</label>
+                <select
+                  id="select-classification"
+                  className="form-input-text"
+                  value={classifyModal.classification}
+                  onChange={e => setClassifyModal(m => ({ ...m, classification: e.target.value }))}
+                  data-testid="select-classification"
+                >
+                  <option value="unclassified">Unclassified (Default review queue)</option>
+                  <option value="artist">Artist (Tracks cataloged under artist)</option>
+                  <option value="playlist">Playlist (Admin-managed folder playlist)</option>
+                </select>
+                <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 4 }}>
+                  {classifyModal.classification === 'artist' && 'Tracks inside this folder will represent catalog discography for the mapped artist.'}
+                  {classifyModal.classification === 'playlist' && 'Creates an admin-managed catalog playlist with contents discovered from this folder.'}
+                  {classifyModal.classification === 'unclassified' && 'Preserves folder access permissions without publishing as an artist or playlist.'}
+                </div>
+              </div>
+
+              <div className="form-row">
+                <label className="form-label" htmlFor="input-folder-display-name">Display Name</label>
+                <input
+                  id="input-folder-display-name"
+                  type="text"
+                  className="form-input-text"
+                  placeholder={classifyModal.folder}
+                  value={classifyModal.display_name}
+                  onChange={e => setClassifyModal(m => ({ ...m, display_name: e.target.value }))}
+                  data-testid="input-folder-display-name"
+                />
+              </div>
+
+              {classifyModal.classification === 'artist' && (
+                <div className="form-row">
+                  <label className="form-label" htmlFor="select-mapped-artist">Mapped Catalog Artist</label>
+                  <input
+                    id="select-mapped-artist"
+                    type="text"
+                    list="catalog-artists-datalist"
+                    className="form-input-text"
+                    placeholder="Enter or select artist name…"
+                    value={classifyModal.mapped_artist}
+                    onChange={e => setClassifyModal(m => ({ ...m, mapped_artist: e.target.value }))}
+                    data-testid="select-mapped-artist"
+                  />
+                  <datalist id="catalog-artists-datalist">
+                    {artists.map(a => (
+                      <option key={a.id} value={a.name} />
+                    ))}
+                  </datalist>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 4 }}>
+                    Type an existing artist name or enter a new artist to automatically register them in the catalog.
+                  </div>
+                </div>
+              )}
+
+              <div className="modal-btn-row">
+                <button
+                  type="button"
+                  className="admin-nav-btn"
+                  onClick={() => setClassifyModal(m => ({ ...m, open: false }))}
+                  disabled={classifyModal.saving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="admin-nav-btn primary"
+                  disabled={classifyModal.saving}
+                  data-testid="btn-save-classification"
+                >
+                  {classifyModal.saving ? 'Saving…' : 'Save Classification'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Add Artist Modal */}
+      {artistModal.open && (
+        <div
+          className="admin-modal-backdrop"
+          onClick={() => setArtistModal(m => ({ ...m, open: false }))}
+          data-testid="add-artist-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-artist-modal-title"
+        >
+          <div className="admin-modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 id="add-artist-modal-title" className="modal-title">Add Catalog Artist</h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 4 }}>
+                Create a registered artist profile for source folder mappings.
+              </p>
+            </div>
+
+            {artistModal.error && (
+              <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--red)', borderRadius: 6, color: 'var(--red)', fontSize: '12px', marginBottom: 12 }}>
+                {artistModal.error}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateArtist}>
+              <div className="form-row">
+                <label className="form-label" htmlFor="input-artist-name">Artist Name *</label>
+                <input
+                  id="input-artist-name"
+                  type="text"
+                  className="form-input-text"
+                  placeholder="e.g. Mac DeMarco"
+                  value={artistModal.name}
+                  onChange={e => setArtistModal(m => ({ ...m, name: e.target.value }))}
+                  required
+                  data-testid="input-artist-name"
+                />
+              </div>
+
+              <div className="form-row">
+                <label className="form-label" htmlFor="input-artist-bio">Bio / Description</label>
+                <textarea
+                  id="input-artist-bio"
+                  className="form-input-text"
+                  rows={3}
+                  placeholder="Artist description, genre, or notes…"
+                  value={artistModal.bio}
+                  onChange={e => setArtistModal(m => ({ ...m, bio: e.target.value }))}
+                  data-testid="input-artist-bio"
+                />
+              </div>
+
+              <div className="modal-btn-row">
+                <button
+                  type="button"
+                  className="admin-nav-btn"
+                  onClick={() => setArtistModal(m => ({ ...m, open: false }))}
+                  disabled={artistModal.saving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="admin-nav-btn primary"
+                  disabled={artistModal.saving || !artistModal.name.trim()}
+                  data-testid="btn-save-artist"
+                >
+                  {artistModal.saving ? 'Saving…' : 'Create Artist'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Administrative Delete Playlist Dialog */}
+      {deletePlaylistDialog.open && deletePlaylistDialog.playlist && (
+        <div
+          className="admin-modal-backdrop"
+          onClick={() => setDeletePlaylistDialog({ open: false, playlist: null, deleting: false, error: null })}
+          data-testid="delete-playlist-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-playlist-dialog-title"
+        >
+          <div className="admin-modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 id="delete-playlist-dialog-title" className="modal-title" style={{ color: 'var(--red)' }}>
+                Confirm Administrative Deletion
+              </h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 4 }}>
+                You are about to permanently delete an existing playlist.
+              </p>
+            </div>
+
+            {deletePlaylistDialog.error && (
+              <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--red)', borderRadius: 6, color: 'var(--red)', fontSize: '12px', marginBottom: 12 }}>
+                {deletePlaylistDialog.error}
+              </div>
+            )}
+
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, margin: '14px 0', fontSize: '12.5px', lineHeight: 1.6 }}>
+              <div><strong>Playlist:</strong> {deletePlaylistDialog.playlist.title}</div>
+              <div><strong>Owner:</strong> {deletePlaylistDialog.playlist.owner}</div>
+              <div><strong>Tracks:</strong> {deletePlaylistDialog.playlist.track_count} tracks</div>
+              <div><strong>Visibility:</strong> {deletePlaylistDialog.playlist.visibility}</div>
+            </div>
+
+            <div style={{ fontSize: '12px', color: 'var(--text-sub)', lineHeight: 1.5, marginBottom: 16 }}>
+              ⚠️ <strong>Impact Warning:</strong> This will permanently remove this playlist from the user's account and clear track associations. Physical audio files on the server are never touched or deleted. This action will be recorded in the security audit log with your admin identity.
+            </div>
+
+            <div className="modal-btn-row">
+              <button
+                type="button"
+                className="admin-nav-btn"
+                onClick={() => setDeletePlaylistDialog({ open: false, playlist: null, deleting: false, error: null })}
+                disabled={deletePlaylistDialog.deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="admin-nav-btn"
+                style={{ background: 'var(--red)', color: '#fff', borderColor: 'transparent' }}
+                onClick={handleConfirmDeletePlaylist}
+                disabled={deletePlaylistDialog.deleting}
+                data-testid="btn-confirm-delete-playlist"
+              >
+                {deletePlaylistDialog.deleting ? 'Deleting…' : 'Delete Playlist'}
               </button>
             </div>
           </div>

@@ -201,4 +201,119 @@ describe('Header Component & Theme Toggle', () => {
     fireEvent.keyDown(menu, { key: 'Escape' })
     expect(screen.queryByTestId('theme-selector-menu')).not.toBeInTheDocument()
   })
+
+  it('renders mobile menu button when onOpenMobileMenu is provided and triggers callback', () => {
+    const handleOpenMobile = vi.fn()
+    render(
+      <Header
+        view="music"
+        onSelectView={vi.fn()}
+        isAdmin={false}
+        searchQuery=""
+        onSearchChange={vi.fn()}
+        theme="amoled"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        username="blue"
+        onLogout={vi.fn()}
+        onOpenDevices={vi.fn()}
+        deviceCount={1}
+        onOpenMobileMenu={handleOpenMobile}
+      />
+    )
+
+    const mobileBtn = screen.getByTestId('header-mobile-menu-btn')
+    expect(mobileBtn).toBeInTheDocument()
+    expect(mobileBtn).toHaveAttribute('aria-label', 'Open library navigation')
+    fireEvent.click(mobileBtn)
+    expect(handleOpenMobile).toHaveBeenCalledTimes(1)
+  })
+
+  it('has accessible home button with aria-label', () => {
+    render(
+      <Header
+        view="music"
+        onSelectView={vi.fn()}
+        isAdmin={false}
+        searchQuery=""
+        onSearchChange={vi.fn()}
+        theme="amoled"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        username="blue"
+        onLogout={vi.fn()}
+        onOpenDevices={vi.fn()}
+        deviceCount={1}
+      />
+    )
+
+    const homeBtn = screen.getByTestId('header-home-btn')
+    expect(homeBtn).toHaveAttribute('aria-label', 'Home Dashboard')
+  })
+
+  it('clears search and blurs input on Escape keydown, clear button has aria-label', () => {
+    const handleSearch = vi.fn()
+    render(
+      <Header
+        view="music"
+        onSelectView={vi.fn()}
+        isAdmin={false}
+        searchQuery="Beatles"
+        onSearchChange={handleSearch}
+        theme="amoled"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        username="blue"
+        onLogout={vi.fn()}
+        onOpenDevices={vi.fn()}
+        deviceCount={1}
+      />
+    )
+
+    const searchInput = screen.getByTestId('header-search-input')
+    expect(searchInput).toHaveAttribute('aria-label', 'Search songs or playlists')
+
+    const clearBtn = screen.getByTestId('header-search-clear')
+    expect(clearBtn).toHaveAttribute('aria-label', 'Clear search')
+
+    const blurSpy = vi.spyOn(searchInput, 'blur')
+    fireEvent.keyDown(searchInput, { key: 'Escape' })
+    expect(handleSearch).toHaveBeenCalledWith('')
+    expect(blurSpy).toHaveBeenCalled()
+  })
+
+  it('supports keyboard navigation on user profile widget with Enter and Space keys', () => {
+    render(
+      <Header
+        view="music"
+        onSelectView={vi.fn()}
+        isAdmin={false}
+        searchQuery=""
+        onSearchChange={vi.fn()}
+        theme="amoled"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        username="blue"
+        onLogout={vi.fn()}
+        onOpenDevices={vi.fn()}
+        deviceCount={1}
+      />
+    )
+
+    const profileWidget = screen.getByTestId('header-user-profile')
+    expect(profileWidget).toHaveAttribute('role', 'button')
+    expect(profileWidget).toHaveAttribute('tabIndex', '0')
+    expect(profileWidget).toHaveAttribute('aria-haspopup', 'menu')
+    expect(profileWidget).toHaveAttribute('aria-expanded', 'false')
+
+    // Open using Enter key
+    fireEvent.keyDown(profileWidget, { key: 'Enter' })
+    expect(screen.getByTestId('dropdown-logout-btn')).toBeInTheDocument()
+    expect(profileWidget).toHaveAttribute('aria-expanded', 'true')
+
+    // Close using Space key
+    fireEvent.keyDown(profileWidget, { key: ' ' })
+    expect(screen.queryByTestId('dropdown-logout-btn')).not.toBeInTheDocument()
+    expect(profileWidget).toHaveAttribute('aria-expanded', 'false')
+  })
 })

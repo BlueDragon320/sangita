@@ -47,20 +47,38 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
   const [isActiveDevice, setIsActiveDevice] = useState(true);
   const [syncState,      setSyncState]      = useState(null);
 
-  const socketRef      = useRef(null);
-  const isActiveRef    = useRef(true);
-  const posReportRef   = useRef(null);
-  const heartbeatRef   = useRef(null);
-  const deviceId       = useRef(getOrCreateDeviceId());
-  const onRemoteCmdRef = useRef(onRemoteCommand);
-  const getTrackIdRef = useRef(getTrackId);
-  getTrackIdRef.current = getTrackId;
+  const [isConnecting,   setIsConnecting]   = useState(Boolean(token));
+  const [isConnected,    setIsConnected]    = useState(false);
+  const [connectError,   setConnectError]   = useState(null);
+  const [transferStatus, setTransferStatus] = useState('idle'); // 'idle' | 'transferring' | 'failed'
+
+  const socketRef          = useRef(null);
+  const isActiveRef        = useRef(true);
+  const syncStateRef       = useRef(null);
+  const posReportRef       = useRef(null);
+  const heartbeatRef       = useRef(null);
+  const transferTimeoutRef = useRef(null);
+  const pendingTransferRef = useRef(null);
+  const lastTargetRef      = useRef(null);
+  const deviceId           = useRef(getOrCreateDeviceId());
+  const onRemoteCmdRef     = useRef(onRemoteCommand);
+  const getTrackIdRef      = useRef(getTrackId);
+  getTrackIdRef.current    = getTrackId;
 
   useEffect(() => { onRemoteCmdRef.current = onRemoteCommand; }, [onRemoteCommand]);
   useEffect(() => { isActiveRef.current    = isActiveDevice;  }, [isActiveDevice]);
+  useEffect(() => { syncStateRef.current   = syncState;       }, [syncState]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      setIsConnecting(false);
+      setIsConnected(false);
+      setConnectError(null);
+      return;
+    }
+    setIsConnecting(true);
+    setConnectError(null);
+
     const socket = io(SYNC_URL, {
       auth: { token },
       transports: ['websocket', 'polling'],
@@ -70,13 +88,25 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
     socketRef.current = socket;
 
     socket.on('connect', () => {
+      setIsConnecting(false);
+      setIsConnected(true);
+      setConnectError(null);
       socket.emit('REGISTER_DEVICE', {
         deviceId  : deviceId.current,
         deviceName: detectDeviceName(),
         deviceType: detectDeviceType(),
       });
     });
-    socket.on('connect_error', (err) => console.warn('[Sync] connect error:', err.message));
+    socket.on('connect_error', (err) => {
+      console.warn('[Sync] connect error:', err.message);
+      setIsConnecting(false);
+      setIsConnected(false);
+      setConnectError(err?.message || 'Connection error');
+    });
+    socket.on('disconnect', () => {
+      setIsConnected(false);
+      setIsConnecting(false);
+    });
     socket.on('DEVICE_LIST_UPDATED', ({ devices: list }) => {
       const curList = list || [];
       setDevices(curList);
@@ -91,6 +121,16 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
       });
     });
     socket.on('PLAYBACK_STATE_CHANGED', (state) => {
+      // Check if this confirms an in-flight transfer
+      if (pendingTransferRef.current && state?.activeDeviceId === pendingTransferRef.current.targetDeviceId) {
+        if (transferTimeoutRef.current) {
+          clearTimeout(transferTimeoutRef.current);
+          transferTimeoutRef.current = null;
+        }
+        pendingTransferRef.current = null;
+        setTransferStatus('idle');
+      }
+
       if (state?.originDeviceId && state.originDeviceId === deviceId.current) return;
       setSyncState(state);
       const amActive = !state?.activeDeviceId || state.activeDeviceId === deviceId.current;
@@ -117,6 +157,10 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
     }, 25_000);
 
     return () => {
+      if (transferTimeoutRef.current) {
+        clearTimeout(transferTimeoutRef.current);
+        transferTimeoutRef.current = null;
+      }
       clearInterval(heartbeatRef.current);
       clearInterval(posReportRef.current);
       socket.disconnect();
@@ -149,7 +193,26 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
   }, []);
   const transferPlayback = useCallback((targetDeviceId) => {
     console.log('[transferPlayback] target:', targetDeviceId, 'myId:', deviceId.current);
+    lastTargetRef.current = targetDeviceId;
+
+    // Save rollback snapshot
     const wasActive = isActiveRef.current;
+    const previousSyncState = syncStateRef.current;
+
+    if (transferTimeoutRef.current) {
+      clearTimeout(transferTimeoutRef.current);
+      transferTimeoutRef.current = null;
+    }
+
+    pendingTransferRef.current = {
+      targetDeviceId,
+      rollbackState: {
+        wasActive,
+        previousSyncState,
+      },
+    };
+    setTransferStatus('transferring');
+
     const isBecomingActive = targetDeviceId === deviceId.current;
     setIsActiveDevice(isBecomingActive);
     isActiveRef.current = isBecomingActive;
@@ -187,7 +250,21 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
         return { ...base, activeDeviceId: targetDeviceId, positionMs: updatedPos, updatedAt: Date.now() };
       });
     }
+
+    // 6-second transfer timeout that rolls back optimistic state if confirmation is not received
+    transferTimeoutRef.current = setTimeout(() => {
+      if (pendingTransferRef.current) {
+        const { rollbackState } = pendingTransferRef.current;
+        setIsActiveDevice(rollbackState.wasActive);
+        isActiveRef.current = rollbackState.wasActive;
+        setSyncState(rollbackState.previousSyncState);
+        setTransferStatus('failed');
+        pendingTransferRef.current = null;
+      }
+      transferTimeoutRef.current = null;
+    }, 6000);
   }, [audioRef]);
+
   const sendRemoteControl = useCallback((command) => {
     if (socketRef.current) {
       socketRef.current.emit('REMOTE_CONTROL', {
@@ -199,11 +276,18 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
   const claimActiveDevice = useCallback(() => {
     transferPlayback(deviceId.current);
   }, [transferPlayback]);
+  const retryTransfer = useCallback(() => {
+    if (lastTargetRef.current) {
+      transferPlayback(lastTargetRef.current);
+    }
+  }, [transferPlayback]);
   const getMyDeviceId = useCallback(() => deviceId.current, []);
 
   return {
     devices, isActiveDevice, setIsActiveDevice, syncState, setSyncState,
     broadcastState, transferPlayback, sendRemoteControl,
     claimActiveDevice, getMyDeviceId,
+    isConnecting, isConnected, connectError,
+    transferStatus, retryTransfer,
   };
 }

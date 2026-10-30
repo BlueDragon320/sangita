@@ -22,8 +22,21 @@ function Header({
 
   return (
     <header className="app-header">
-      {/* LEFT: Home */}
+      {/* LEFT: Mobile Menu & Home */}
       <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {onOpenMobileMenu && (
+          <button
+            className="header-icon-btn header-mobile-menu-btn"
+            onClick={onOpenMobileMenu}
+            aria-label="Open library navigation"
+            title="Open library navigation"
+            data-testid="header-mobile-menu-btn"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+            </svg>
+          </button>
+        )}
         <button
           className={`header-home-btn ${view === 'home' && !searchQuery ? 'active' : ''}`}
           onClick={() => {
@@ -31,6 +44,7 @@ function Header({
             onSelectView('home');
           }}
           title="Home Dashboard"
+          aria-label="Home Dashboard"
           data-testid="header-home-btn"
         >
           <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -57,11 +71,23 @@ function Header({
             aria-label="Search songs or playlists"
             value={searchQuery || ''}
             onChange={e => onSearchChange(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') {
+                onSearchChange('');
+                e.target.blur();
+              }
+            }}
             className="search-input"
             data-testid="header-search-input"
           />
           {searchQuery && (
-            <button onClick={() => onSearchChange('')} className="search-clear-btn" title="Clear search" data-testid="header-search-clear">
+            <button
+              onClick={() => onSearchChange('')}
+              className="search-clear-btn"
+              title="Clear search"
+              aria-label="Clear search"
+              data-testid="header-search-clear"
+            >
               &times;
             </button>
           )}
@@ -111,7 +137,18 @@ function Header({
         <div className="user-profile-container" style={{ position: 'relative' }}>
           <div
             className="user-profile-widget"
+            role="button"
+            tabIndex={0}
+            aria-haspopup="menu"
+            aria-expanded={dropdownOpen}
+            aria-label="User profile menu"
             onClick={() => setDropdownOpen(!dropdownOpen)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setDropdownOpen(!dropdownOpen);
+              }
+            }}
             data-testid="header-user-profile"
           >
             <div className="user-avatar">

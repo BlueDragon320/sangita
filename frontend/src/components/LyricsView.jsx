@@ -636,7 +636,7 @@ export default function LyricsView({
     }
   }, [scrollToActiveLine])
 
-  // Handle user manual scroll interruption (pause auto-scroll and resume after 3 seconds of inactivity)
+  // Handle user manual scroll interruption (pause auto-scroll and resume after 10 seconds of inactivity)
   const handleUserScroll = useCallback(() => {
     userIsScrollingRef.current = true
     setUserIsScrolling(true)
@@ -651,7 +651,7 @@ export default function LyricsView({
       userIsScrollingRef.current = false
       setUserIsScrolling(false)
       scrollToActiveLine()
-    }, 3000)
+    }, 10000)
   }, [scrollToActiveLine])
 
   const resumeAutoScroll = useCallback(() => {
@@ -674,6 +674,34 @@ export default function LyricsView({
     }
     scrollToActiveLine(lineIndex, true)
   }, [onSeek, scrollToActiveLine])
+
+  // Keyboard navigation on lyric lines (ArrowUp/Down, Enter/Space to seek, Home/End)
+  const handleLineKeyDown = useCallback((e, line, idx) => {
+    if (!isSynced) return
+
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      handleLineClick(line.time, idx)
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      const nextIdx = Math.min(lines.length - 1, idx + 1)
+      const nextEl = containerRef.current?.querySelector(`[data-line-index="${nextIdx}"]`)
+      nextEl?.focus()
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      const prevIdx = Math.max(0, idx - 1)
+      const prevEl = containerRef.current?.querySelector(`[data-line-index="${prevIdx}"]`)
+      prevEl?.focus()
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      const firstEl = containerRef.current?.querySelector(`[data-line-index="0"]`)
+      firstEl?.focus()
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      const lastEl = containerRef.current?.querySelector(`[data-line-index="${lines.length - 1}"]`)
+      lastEl?.focus()
+    }
+  }, [isSynced, lines.length, handleLineClick])
 
   useEffect(() => {
     return () => {
@@ -740,20 +768,6 @@ export default function LyricsView({
             </div>
           )}
 
-          {userIsScrolling && isSynced && (
-            <button
-              className="btn-sync-scroll"
-              onClick={resumeAutoScroll}
-              title="Jump to currently playing line"
-              data-testid="lyrics-sync-scroll-btn"
-            >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-                <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
-              </svg>
-              <span>Jump to Current</span>
-            </button>
-          )}
-
           {/* Dynamic Moving Gradient Background Toggle */}
           <button
             className={`btn-icon lyrics-action-icon-btn lyrics-ambient-btn ${theme !== 'default' ? 'active' : ''} ${isPendingClick ? 'pending-click' : ''}`}
@@ -798,6 +812,21 @@ export default function LyricsView({
         </div>
       </div>
 
+      {/* Subtle Persistent Exit Cue in Fullscreen */}
+      {isFullscreen && (
+        <button
+          type="button"
+          className="lyrics-fs-exit-cue"
+          onClick={toggleFullscreen}
+          title="Exit full screen (Esc)"
+          aria-label="Exit full screen"
+          data-testid="lyrics-fs-exit-cue"
+        >
+          <kbd>Esc</kbd>
+          <span>Exit</span>
+        </button>
+      )}
+
       {/* Main Lyrics Body */}
       <div
         className={`lyrics-scroll-body ${isSynced ? 'is-synced-mode' : 'is-plain-mode'}`}
@@ -815,7 +844,8 @@ export default function LyricsView({
             <div className="music-note-card" title="Playing music">
               <span className="music-note-symbol">♪</span>
             </div>
-            <h3>No lyrics avaliable Sorry :)</h3>
+            <h3>No lyrics available</h3>
+            <p>Lyrics haven't been synchronized or added for this song yet.</p>
             <button className="btn-modal-primary" onClick={onClose} style={{ marginTop: 16 }}>
               Return to Library
             </button>
@@ -839,8 +869,12 @@ export default function LyricsView({
                   key={idx}
                   ref={isActive ? activeLineRef : null}
                   data-line-index={idx}
+                  role={isSynced ? 'button' : undefined}
+                  tabIndex={isSynced ? 0 : undefined}
+                  aria-current={isActive ? 'time' : undefined}
                   className={`lyric-line ${isActive ? 'active' : ''} ${isPast ? 'past' : ''} ${isFuture ? 'future' : ''} ${distClass} ${isSynced ? 'clickable' : ''}`}
                   onClick={() => handleLineClick(line.time, idx)}
+                  onKeyDown={(e) => handleLineKeyDown(e, line, idx)}
                   data-testid={`lyric-line-${idx}`}
                   title={isSynced ? `Click to jump to ${line.text || 'this line'}` : undefined}
                 >
@@ -851,12 +885,38 @@ export default function LyricsView({
                       <span className="music-note-symbol">♪</span>
                     )}
                   </span>
+                  {isSynced && line.time !== null && (
+                    <span className="lyric-line-preview" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                        <path d="M8 5v14l11-7z"/>
+                      </svg>
+                      <span>{formatLyricsTime(line.time)}</span>
+                    </span>
+                  )}
                 </div>
               )
             })}
           </div>
         )}
       </div>
+
+      {/* Floating "Return to Current Line" Pill when user has scrolled away */}
+      {userIsScrolling && isSynced && (
+        <div className="lyrics-floating-return-container">
+          <button
+            className="btn-sync-scroll btn-floating-return"
+            onClick={resumeAutoScroll}
+            title="Return to currently playing line"
+            data-testid="lyrics-sync-scroll-btn"
+            aria-label="Return to currently playing line"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+              <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+            </svg>
+            <span>Return to Current Line</span>
+          </button>
+        </div>
+      )}
 
       {/* Floating Movie Cinema Playback Controls in Fullscreen */}
       {isFullscreen && (

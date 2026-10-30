@@ -572,7 +572,7 @@ describe('AdminDashboard Component', () => {
     expect(tablist).toBeInTheDocument()
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs.length).toBe(6)
+    expect(tabs.length).toBe(7)
 
     // Analytics tab is selected by default
     const analyticsTab = screen.getByTestId('admin-tab-analytics')

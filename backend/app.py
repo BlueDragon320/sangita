@@ -14,6 +14,7 @@ import threading
 import secrets
 import io
 import glob
+import uuid
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -168,6 +169,189 @@ def close_db(error=None):
         except Exception:
             pass
 
+def migrate_v2_schema(conn):
+    """
+    Migrates database schema for catalog entities, source folders, artists, playlists, and playlist tracks v2.
+    Idempotent, transactional, and safe to execute multiple times.
+    """
+    with conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS source_folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                folder_name TEXT UNIQUE NOT NULL,
+                name TEXT,
+                classification TEXT NOT NULL DEFAULT 'unclassified',
+                display_name TEXT,
+                mapped_artist_id INTEGER,
+                mapped_artist_name TEXT,
+                artist_id TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        for col_name, col_type in [
+            ("name", "TEXT"),
+            ("artist_id", "TEXT"),
+            ("created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP")
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE source_folders ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS artists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                bio TEXT DEFAULT '',
+                image_url TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        for col_name, col_type in [
+            ("image_url", "TEXT"),
+            ("updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP")
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE artists ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS playlists (
+                id TEXT PRIMARY KEY,
+                owner TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                visibility TEXT NOT NULL DEFAULT 'private',
+                is_folder_playlist INTEGER DEFAULT 0,
+                source_folder_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (source_folder_id) REFERENCES source_folders (id) ON DELETE SET NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS playlist_tracks_v2 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                playlist_id TEXT NOT NULL,
+                track_path TEXT NOT NULL,
+                position INTEGER DEFAULT 0,
+                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (playlist_id, track_path),
+                FOREIGN KEY (playlist_id) REFERENCES playlists (id) ON DELETE CASCADE
+            )
+        """)
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_source_folders_name ON source_folders (folder_name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_source_folders_classification ON source_folders (classification)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_artists_name ON artists (name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_playlists_owner ON playlists (owner)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_playlists_visibility ON playlists (visibility)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_v2_pl_pos ON playlist_tracks_v2 (playlist_id, position)")
+
+        # Scan physical folders under MUSIC_DIR and ensure top-level folders exist in source_folders
+        if os.path.exists(MUSIC_DIR):
+            try:
+                for entry in sorted(os.listdir(MUSIC_DIR)):
+                    entry_path = os.path.join(MUSIC_DIR, entry)
+                    if os.path.isdir(entry_path) and not entry.startswith("."):
+                        conn.execute("""
+                            INSERT OR IGNORE INTO source_folders (folder_name, name, display_name, classification)
+                            VALUES (?, ?, ?, 'unclassified')
+                        """, (entry, entry, entry))
+
+                root_has_audio = any(
+                    os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS)
+                    for f in os.listdir(MUSIC_DIR)
+                )
+                if root_has_audio:
+                    conn.execute("""
+                        INSERT OR IGNORE INTO source_folders (folder_name, name, display_name, classification)
+                        VALUES ('Library', 'Library', 'Library', 'unclassified')
+                    """)
+            except Exception as e:
+                print(f"[Migration scan warning] {e}")
+
+        # Synchronize source_folders name column
+        try:
+            conn.execute("UPDATE source_folders SET name = folder_name WHERE name IS NULL OR name = ''")
+        except Exception:
+            pass
+
+        # Migrate existing user_playlists into playlists
+        try:
+            user_pls = conn.execute("SELECT id, username, name, COALESCE(created_at, CURRENT_TIMESTAMP) as created_at FROM user_playlists").fetchall()
+            for r in user_pls:
+                u_name = r["username"]
+                p_title = r["name"]
+                c_at = r["created_at"]
+                existing = conn.execute(
+                    "SELECT id FROM playlists WHERE owner = ? AND title = ? AND is_folder_playlist = 0",
+                    (u_name, p_title)
+                ).fetchone()
+                if not existing:
+                    pl_id = str(uuid.uuid4())
+                    conn.execute("""
+                        INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist, created_at, updated_at)
+                        VALUES (?, ?, ?, '', 'private', 0, ?, ?)
+                    """, (pl_id, u_name, p_title, c_at, c_at))
+                else:
+                    pl_id = existing["id"]
+
+                # Migrate playlist tracks into playlist_tracks_v2
+                pl_tracks = conn.execute("""
+                    SELECT track_path, position, COALESCE(added_at, CURRENT_TIMESTAMP) as added_at
+                    FROM playlist_tracks
+                    WHERE username = ? AND playlist_name = ?
+                    ORDER BY position ASC, id ASC
+                """, (u_name, p_title)).fetchall()
+                for idx, trk in enumerate(pl_tracks):
+                    t_pos = trk["position"] if trk["position"] is not None else idx
+                    conn.execute("""
+                        INSERT OR IGNORE INTO playlist_tracks_v2 (playlist_id, track_path, position, added_at)
+                        VALUES (?, ?, ?, ?)
+                    """, (pl_id, trk["track_path"], t_pos, trk["added_at"]))
+        except Exception as e:
+            print(f"[Migration user_playlists warning] {e}")
+
+        # Check for any custom playlists in playlist_tracks not present in user_playlists (excluding Favorites)
+        try:
+            orphan_pls = conn.execute("""
+                SELECT DISTINCT username, playlist_name
+                FROM playlist_tracks
+                WHERE playlist_name != 'Favorites'
+            """).fetchall()
+            for r in orphan_pls:
+                u_name = r["username"]
+                p_title = r["playlist_name"]
+                existing = conn.execute(
+                    "SELECT id FROM playlists WHERE owner = ? AND title = ? AND is_folder_playlist = 0",
+                    (u_name, p_title)
+                ).fetchone()
+                if not existing:
+                    pl_id = str(uuid.uuid4())
+                    conn.execute("""
+                        INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist)
+                        VALUES (?, ?, ?, '', 'private', 0)
+                    """, (pl_id, u_name, p_title))
+                    conn.execute("INSERT OR IGNORE INTO user_playlists (username, name) VALUES (?, ?)", (u_name, p_title))
+                    pl_tracks = conn.execute("""
+                        SELECT track_path, position, COALESCE(added_at, CURRENT_TIMESTAMP) as added_at
+                        FROM playlist_tracks
+                        WHERE username = ? AND playlist_name = ?
+                        ORDER BY position ASC, id ASC
+                    """, (u_name, p_title)).fetchall()
+                    for idx, trk in enumerate(pl_tracks):
+                        t_pos = trk["position"] if trk["position"] is not None else idx
+                        conn.execute("""
+                            INSERT OR IGNORE INTO playlist_tracks_v2 (playlist_id, track_path, position, added_at)
+                            VALUES (?, ?, ?, ?)
+                        """, (pl_id, trk["track_path"], t_pos, trk["added_at"]))
+        except Exception as e:
+            print(f"[Migration orphan playlists warning] {e}")
+
 def init_db():
     conn = get_db()
     try:
@@ -268,12 +452,46 @@ def init_db():
             PRIMARY KEY (username, date)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS source_folders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            folder_name TEXT UNIQUE NOT NULL,
+            classification TEXT NOT NULL DEFAULT 'unclassified',
+            display_name TEXT,
+            mapped_artist_id INTEGER,
+            mapped_artist_name TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS artists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            bio TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS admin_audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_username TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT,
+            details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     try:
         conn.execute("ALTER TABLE user_totals ADD COLUMN total_bytes INTEGER DEFAULT 0")
     except Exception:
         pass
     try:
         conn.execute("ALTER TABLE user_device_totals ADD COLUMN bytes_consumed INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE user_playlists ADD COLUMN visibility TEXT DEFAULT 'private'")
     except Exception:
         pass
     
@@ -313,11 +531,42 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_track_totals_user ON user_track_totals (username, total_seconds DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_user_playlist ON playlist_tracks (username, playlist_name)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_daily_data_user_date ON user_daily_data (username, date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_source_folders_name ON source_folders (folder_name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_artists_name ON artists (name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_action ON admin_audit_logs (action, created_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_playlists_visibility ON user_playlists (visibility)")
     except Exception as e:
         print(f"[DB Index Creation Warning] {e}")
 
+    # Ensure existing custom playlists are registered in user_playlists with stable entries
+    try:
+        conn.execute("""
+            INSERT OR IGNORE INTO user_playlists (username, name, visibility)
+            SELECT DISTINCT username, playlist_name, 'private'
+            FROM playlist_tracks
+            WHERE playlist_name != 'Favorites'
+        """)
+    except Exception as e:
+        print(f"[DB Playlist Migration Warning] {e}")
+
+    try:
+        migrate_v2_schema(conn)
+    except Exception as e:
+        print(f"[DB V2 Migration Warning] {e}")
+
     conn.commit()
     conn.close()
+
+    try:
+        other_backend_db = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "stats.db")
+        if os.path.isfile(other_backend_db) and os.path.abspath(other_backend_db) != os.path.abspath(STATS_DB):
+            bconn = sqlite3.connect(other_backend_db)
+            bconn.row_factory = sqlite3.Row
+            migrate_v2_schema(bconn)
+            bconn.commit()
+            bconn.close()
+    except Exception as e:
+        print(f"[DB V2 Secondary DB Migration Warning] {e}")
 
 init_db()
 
@@ -677,6 +926,55 @@ def sanitize_name(name, max_len=64):
         return None
     return cleaned
 
+def user_has_source_access(user, source_name):
+    """Returns True if user is authorized to access songs in source_name ('*' wildcard, explicit list, or admin)."""
+    if not user:
+        return False
+    if user.get("role") == "admin":
+        return True
+    allowed = user.get("rules", {}).get("allowed_playlists", ["*"])
+    if "*" in allowed:
+        return True
+    return source_name in allowed
+
+def get_track_source(track_path):
+    """Extracts the top-level folder name or 'Library' for root songs."""
+    if not track_path or not isinstance(track_path, str):
+        return "Library"
+    safe = os.path.normpath(track_path).replace("\\", "/")
+    parts = [p for p in safe.split("/") if p]
+    if len(parts) > 1:
+        return parts[0]
+    return "Library"
+
+def user_can_access_track(user, track_path):
+    """Returns True if user has access to the source folder containing track_path."""
+    source_name = get_track_source(track_path)
+    return user_has_source_access(user, source_name)
+
+def get_track_info(track_path):
+    """Retrieves metadata (title, artist, duration) for a given track_path."""
+    name, artist = parse_track_name(track_path)
+    duration = None
+    try:
+        conn = get_db()
+        row = conn.execute("SELECT duration, title, artist FROM track_cache WHERE path = ?", (track_path,)).fetchone()
+        if row:
+            if row["duration"]:
+                duration = row["duration"]
+            if row["title"]:
+                name = row["title"]
+            if row["artist"]:
+                artist = row["artist"]
+    except Exception:
+        pass
+    return {
+        "track_path": track_path,
+        "title": name,
+        "artist": artist,
+        "duration": duration
+    }
+
 def _is_authorized_node_or_admin():
     """Verify authorization via Bearer JWT, internal node cluster secret, or loopback (Items 3, 4, 9)."""
     if app.config.get("TESTING"):
@@ -716,7 +1014,7 @@ def login():
 
     users = load_users()
     user = users.get(username)
-    if user and check_password_hash(user["password_hash"], password):
+    if user and user.get("password_hash") and check_password_hash(user["password_hash"], password):
         # Successful login: clear failed attempts
         _clear_login_lockout(username, ip)
         return jsonify({
@@ -761,6 +1059,7 @@ def get_playlists():
     
     # 1. Fetch user virtual reference playlists (Favorites first)
     conn = get_db()
+    source_classifications = {}
     try:
         fav_rows = conn.execute(
             "SELECT track_path FROM playlist_tracks WHERE username = ? AND playlist_name = 'Favorites' ORDER BY added_at DESC, id DESC",
@@ -788,6 +1087,32 @@ def get_playlists():
             pname = row["name"]
             if pname not in result:
                 result[pname] = []
+
+        # Also include personal playlists from playlists table owned by the user
+        try:
+            v2_rows = conn.execute(
+                "SELECT id, title FROM playlists WHERE owner = ? AND is_folder_playlist = 0 ORDER BY title ASC",
+                (username,)
+            ).fetchall()
+            for v2_pl in v2_rows:
+                pname = v2_pl["title"]
+                if pname not in result:
+                    v2_trks = conn.execute(
+                        "SELECT track_path FROM playlist_tracks_v2 WHERE playlist_id = ? ORDER BY position ASC, id ASC",
+                        (v2_pl["id"],)
+                    ).fetchall()
+                    result[pname] = [r["track_path"] for r in v2_trks]
+        except Exception:
+            pass
+
+        # Look up source folder classifications
+        try:
+            sf_rows = conn.execute("SELECT folder_name, classification FROM source_folders").fetchall()
+            for r in sf_rows:
+                if r["folder_name"]:
+                    source_classifications[r["folder_name"]] = r["classification"]
+        except Exception:
+            pass
     except Exception as e:
         print(f"[Playlist DB Error] {e}")
     finally:
@@ -811,6 +1136,11 @@ def get_playlists():
     for folder in sorted(os.listdir(MUSIC_DIR)):
         folder_path = os.path.join(MUSIC_DIR, folder)
         if os.path.isdir(folder_path):
+            classification = source_classifications.get(folder)
+            if classification == "artist":
+                continue
+            if folder in result:
+                continue
             if "*" in allowed or folder in allowed:
                 tracks = sorted([
                     f for f in os.listdir(folder_path)
@@ -958,14 +1288,40 @@ def create_user_playlist():
     if not name or name in ("Favorites", "Library"):
         return jsonify({"error": "Invalid playlist name"}), 400
 
+    visibility = data.get("visibility", "private")
+    if visibility not in ("private", "public"):
+        visibility = "private"
+    description = (data.get("description") or "").strip()
+
     conn = get_db()
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO user_playlists (username, name) VALUES (?, ?)",
-            (username, name)
+            "INSERT INTO user_playlists (username, name, visibility) VALUES (?, ?, ?) ON CONFLICT(username, name) DO UPDATE SET visibility = excluded.visibility",
+            (username, name, visibility)
         )
+        existing_v2 = conn.execute(
+            "SELECT id FROM playlists WHERE owner = ? AND title = ? AND is_folder_playlist = 0",
+            (username, name)
+        ).fetchone()
+        if not existing_v2:
+            pl_id = str(uuid.uuid4())
+            conn.execute("""
+                INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist)
+                VALUES (?, ?, ?, ?, ?, 0)
+            """, (pl_id, username, name, description, visibility))
+        else:
+            pl_id = existing_v2["id"]
+            conn.execute("""
+                UPDATE playlists SET visibility = ?, description = ? WHERE id = ?
+            """, (visibility, description, pl_id))
         conn.commit()
-        return jsonify({"status": "created", "name": name})
+        return jsonify({
+            "status": "created",
+            "name": name,
+            "id": pl_id,
+            "visibility": visibility,
+            "description": description
+        })
     finally:
         conn.close()
 
@@ -978,8 +1334,17 @@ def add_track_to_user_playlist(name):
     username = g.user.get("username", "admin")
     data = request.get_json(force=True, silent=True) or {}
     track_path = data.get("track_path")
-    if not track_path or ".." in track_path or track_path.startswith("/"):
+    if not track_path or not isinstance(track_path, str) or ".." in track_path or track_path.startswith("/"):
         return jsonify({"error": "track_path is required"}), 400
+
+    full_path = os.path.join(MUSIC_DIR, os.path.normpath(track_path))
+    real_music_dir = os.path.realpath(MUSIC_DIR)
+    real_target = os.path.realpath(full_path)
+    if not (real_target == real_music_dir or real_target.startswith(real_music_dir + os.sep)):
+        return jsonify({"error": "Access denied"}), 403
+
+    if not user_can_access_track(g.user, track_path):
+        return jsonify({"error": "Access denied to source folder for track"}), 403
 
     conn = get_db()
     try:
@@ -987,6 +1352,26 @@ def add_track_to_user_playlist(name):
             "INSERT OR IGNORE INTO playlist_tracks (username, playlist_name, track_path) VALUES (?, ?, ?)",
             (username, name, track_path)
         )
+        pl_row = conn.execute(
+            "SELECT id FROM playlists WHERE owner = ? AND title = ? AND is_folder_playlist = 0",
+            (username, name)
+        ).fetchone()
+        if pl_row:
+            max_p = conn.execute("SELECT COALESCE(MAX(position), -1) as mp FROM playlist_tracks_v2 WHERE playlist_id = ?", (pl_row["id"],)).fetchone()["mp"]
+            conn.execute("""
+                INSERT OR IGNORE INTO playlist_tracks_v2 (playlist_id, track_path, position)
+                VALUES (?, ?, ?)
+            """, (pl_row["id"], track_path, max_p + 1))
+        else:
+            pl_id = str(uuid.uuid4())
+            conn.execute("""
+                INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist)
+                VALUES (?, ?, ?, '', 'private', 0)
+            """, (pl_id, username, name))
+            conn.execute("""
+                INSERT OR IGNORE INTO playlist_tracks_v2 (playlist_id, track_path, position)
+                VALUES (?, ?, 0)
+            """, (pl_id, track_path))
         conn.commit()
         return jsonify({"status": "added", "playlist": name, "track_path": track_path})
     finally:
@@ -1010,8 +1395,93 @@ def remove_track_from_user_playlist(name):
             "DELETE FROM playlist_tracks WHERE username = ? AND playlist_name = ? AND track_path = ?",
             (username, name, track_path)
         )
+        pl_row = conn.execute(
+            "SELECT id FROM playlists WHERE owner = ? AND title = ? AND is_folder_playlist = 0",
+            (username, name)
+        ).fetchone()
+        if pl_row:
+            conn.execute("DELETE FROM playlist_tracks_v2 WHERE playlist_id = ? AND track_path = ?", (pl_row["id"], track_path))
         conn.commit()
         return jsonify({"status": "removed", "playlist": name, "track_path": track_path})
+    finally:
+        conn.close()
+
+@app.route("/api/user-playlists/<name>", methods=["PUT"])
+@app.route("/api/user-playlists", methods=["PUT"])
+@require_auth
+def update_user_playlist(name=None):
+    username = g.user.get("username", "admin")
+    data = request.get_json(force=True, silent=True) or {}
+    if not name:
+        name = data.get("name") or data.get("title")
+    name = sanitize_name(name)
+    if not name or name in ("Favorites", "Library"):
+        return jsonify({"error": "Invalid playlist name"}), 400
+
+    tracks = data.get("tracks")
+    if tracks is None:
+        tracks = data.get("track_paths") if "track_paths" in data else data.get("track_order")
+
+    if tracks is not None:
+        if not isinstance(tracks, list):
+            return jsonify({"error": "tracks must be a list"}), 400
+        for item in tracks:
+            tp = item if isinstance(item, str) else (item.get("track_path") if isinstance(item, dict) else None)
+            if not tp or not isinstance(tp, str) or ".." in tp or tp.startswith("/"):
+                return jsonify({"error": "Invalid track path"}), 400
+            full_path = os.path.join(MUSIC_DIR, os.path.normpath(tp))
+            real_music_dir = os.path.realpath(MUSIC_DIR)
+            real_target = os.path.realpath(full_path)
+            if not (real_target == real_music_dir or real_target.startswith(real_music_dir + os.sep)):
+                return jsonify({"error": "Access denied"}), 403
+            if not user_can_access_track(g.user, tp):
+                return jsonify({"error": "Access denied to source folder for track"}), 403
+
+    conn = get_db()
+    try:
+        pl_row = conn.execute(
+            "SELECT id, owner, title FROM playlists WHERE owner = ? AND title = ? AND is_folder_playlist = 0",
+            (username, name)
+        ).fetchone()
+
+        if tracks is not None:
+            conn.execute("DELETE FROM playlist_tracks WHERE username = ? AND playlist_name = ?", (username, name))
+            for pos, item in enumerate(tracks):
+                tp = item if isinstance(item, str) else item.get("track_path")
+                conn.execute(
+                    "INSERT INTO playlist_tracks (username, playlist_name, track_path, position) VALUES (?, ?, ?, ?)",
+                    (username, name, tp, pos)
+                )
+
+            if pl_row:
+                conn.execute("DELETE FROM playlist_tracks_v2 WHERE playlist_id = ?", (pl_row["id"],))
+                for pos, item in enumerate(tracks):
+                    tp = item if isinstance(item, str) else item.get("track_path")
+                    conn.execute(
+                        "INSERT INTO playlist_tracks_v2 (playlist_id, track_path, position) VALUES (?, ?, ?)",
+                        (pl_row["id"], tp, pos)
+                    )
+
+        new_name = data.get("new_name") or data.get("new_title")
+        if new_name:
+            clean_new_name = sanitize_name(new_name)
+            if clean_new_name and clean_new_name not in ("Favorites", "Library") and clean_new_name != name:
+                conn.execute("UPDATE user_playlists SET name = ? WHERE username = ? AND name = ?", (clean_new_name, username, name))
+                conn.execute("UPDATE playlist_tracks SET playlist_name = ? WHERE username = ? AND playlist_name = ?", (clean_new_name, username, name))
+                if pl_row:
+                    conn.execute("UPDATE playlists SET title = ? WHERE id = ?", (clean_new_name, pl_row["id"]))
+                name = clean_new_name
+
+        if pl_row:
+            vis = data.get("visibility")
+            desc = data.get("description")
+            if vis in ("private", "public"):
+                conn.execute("UPDATE playlists SET visibility = ? WHERE id = ?", (vis, pl_row["id"]))
+            if desc is not None:
+                conn.execute("UPDATE playlists SET description = ? WHERE id = ?", (desc.strip(), pl_row["id"]))
+
+        conn.commit()
+        return jsonify({"status": "updated", "playlist": name, "tracks_count": len(tracks) if tracks is not None else 0})
     finally:
         conn.close()
 
@@ -1025,20 +1495,963 @@ def create_user_playlist_batch():
     if not name or name in ("Favorites", "Library"):
         return jsonify({"error": "Invalid playlist name"}), 400
 
+    visibility = data.get("visibility", "private")
+    if visibility not in ("private", "public"):
+        visibility = "private"
+    description = (data.get("description") or "").strip()
+
+    for track_path in track_paths:
+        if track_path:
+            if not isinstance(track_path, str) or ".." in track_path or track_path.startswith("/"):
+                return jsonify({"error": "track_path is required"}), 400
+            full_path = os.path.join(MUSIC_DIR, os.path.normpath(track_path))
+            real_music_dir = os.path.realpath(MUSIC_DIR)
+            real_target = os.path.realpath(full_path)
+            if not (real_target == real_music_dir or real_target.startswith(real_music_dir + os.sep)):
+                return jsonify({"error": "Access denied"}), 403
+            if not user_can_access_track(g.user, track_path):
+                return jsonify({"error": "Access denied to source folder for track"}), 403
+
     conn = get_db()
     try:
         conn.execute(
             "INSERT OR IGNORE INTO user_playlists (username, name) VALUES (?, ?)",
             (username, name)
         )
+        existing_v2 = conn.execute(
+            "SELECT id FROM playlists WHERE owner = ? AND title = ? AND is_folder_playlist = 0",
+            (username, name)
+        ).fetchone()
+        if existing_v2:
+            pl_id = existing_v2["id"]
+            conn.execute("UPDATE playlists SET visibility = ?, description = ? WHERE id = ?", (visibility, description, pl_id))
+        else:
+            pl_id = str(uuid.uuid4())
+            conn.execute("""
+                INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist)
+                VALUES (?, ?, ?, ?, ?, 0)
+            """, (pl_id, username, name, description, visibility))
+
         for idx, track_path in enumerate(track_paths):
             if track_path:
                 conn.execute(
                     "INSERT OR IGNORE INTO playlist_tracks (username, playlist_name, track_path, position) VALUES (?, ?, ?, ?)",
                     (username, name, track_path, idx)
                 )
+                conn.execute(
+                    "INSERT OR IGNORE INTO playlist_tracks_v2 (playlist_id, track_path, position) VALUES (?, ?, ?)",
+                    (pl_id, track_path, idx)
+                )
         conn.commit()
-        return jsonify({"status": "created", "name": name, "tracks_added": len(track_paths)})
+        return jsonify({"status": "created", "name": name, "id": pl_id, "tracks_added": len(track_paths), "visibility": visibility, "description": description})
+    finally:
+        conn.close()
+
+# ---------------------------------------------------------------------------
+# Version 2 API Endpoints (/api/v2/...)
+# Strict permission enforcement, catalog entities, visibility, and privacy
+# ---------------------------------------------------------------------------
+
+@app.route("/api/v2/catalog/sources", methods=["GET"])
+@require_auth
+def v2_get_sources():
+    """List sources with classification ('artist', 'playlist', 'unclassified'), track count, and access indicator."""
+    conn = get_db()
+    try:
+        # Sync physical folders under MUSIC_DIR
+        if os.path.exists(MUSIC_DIR):
+            for entry in sorted(os.listdir(MUSIC_DIR)):
+                entry_path = os.path.join(MUSIC_DIR, entry)
+                if os.path.isdir(entry_path) and not entry.startswith("."):
+                    conn.execute("""
+                        INSERT OR IGNORE INTO source_folders (folder_name, name, display_name, classification)
+                        VALUES (?, ?, ?, 'unclassified')
+                    """, (entry, entry, entry))
+            root_has_audio = any(
+                os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS)
+                for f in os.listdir(MUSIC_DIR)
+            )
+            if root_has_audio:
+                conn.execute("""
+                    INSERT OR IGNORE INTO source_folders (folder_name, name, display_name, classification)
+                    VALUES ('Library', 'Library', 'Library', 'unclassified')
+                """)
+            conn.commit()
+
+        rows = conn.execute("SELECT * FROM source_folders ORDER BY display_name COLLATE NOCASE ASC").fetchall()
+        result = []
+        for r in rows:
+            s_name = r["folder_name"] if ("folder_name" in r.keys() and r["folder_name"]) else r["name"]
+            d_name = r["display_name"] or s_name
+            classification = r["classification"] or "unclassified"
+            has_access = user_has_source_access(g.user, s_name)
+            track_count = 0
+            if has_access:
+                if s_name == "Library":
+                    track_count = sum(
+                        1 for f in os.listdir(MUSIC_DIR)
+                        if os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS)
+                    )
+                else:
+                    fpath = os.path.join(MUSIC_DIR, s_name)
+                    if os.path.isdir(fpath):
+                        track_count = sum(
+                            1 for f in os.listdir(fpath)
+                            if f.lower().endswith(AUDIO_EXTS)
+                        )
+            # If user lacks access, track_count is 0 to avoid leaking restricted info
+            art_id = None
+            if "artist_id" in r.keys() and r["artist_id"]:
+                art_id = str(r["artist_id"])
+            elif "mapped_artist_id" in r.keys() and r["mapped_artist_id"]:
+                art_id = str(r["mapped_artist_id"])
+
+            result.append({
+                "id": r["id"],
+                "name": s_name,
+                "display_name": d_name,
+                "classification": classification,
+                "artist_id": art_id,
+                "has_access": has_access,
+                "track_count": track_count
+            })
+        return jsonify({"sources": result})
+    finally:
+        conn.close()
+
+@app.route("/api/v2/catalog/sources/<int:source_id>", methods=["PUT"])
+@require_admin
+def v2_update_source(source_id):
+    """Admin endpoint to classify or reclassify source folder."""
+    conn = get_db()
+    try:
+        sf = conn.execute("SELECT * FROM source_folders WHERE id = ?", (source_id,)).fetchone()
+        if not sf:
+            return jsonify({"error": "Source folder not found"}), 404
+
+        data = request.get_json(force=True, silent=True) or {}
+        new_class = data.get("classification")
+        new_display = data.get("display_name")
+        new_artist_id = data.get("artist_id")
+
+        if new_class and new_class not in ("artist", "playlist", "unclassified"):
+            return jsonify({"error": "Classification must be 'artist', 'playlist', or 'unclassified'"}), 400
+
+        classification = new_class if new_class is not None else sf["classification"]
+        display_name = new_display.strip() if (new_display is not None and new_display.strip()) else sf["display_name"]
+        artist_id = str(new_artist_id) if new_artist_id is not None else (str(sf["artist_id"]) if "artist_id" in sf.keys() and sf["artist_id"] else None)
+
+        s_name = sf["folder_name"] if ("folder_name" in sf.keys() and sf["folder_name"]) else sf["name"]
+
+        if classification == "artist":
+            if not artist_id:
+                existing_art = conn.execute("SELECT id FROM artists WHERE LOWER(name) = LOWER(?)", (display_name,)).fetchone()
+                if existing_art:
+                    artist_id = str(existing_art["id"])
+                else:
+                    cur = conn.execute("INSERT OR IGNORE INTO artists (name, bio) VALUES (?, '')", (display_name,))
+                    if cur.lastrowid:
+                        artist_id = str(cur.lastrowid)
+                    else:
+                        row = conn.execute("SELECT id FROM artists WHERE LOWER(name) = LOWER(?)", (display_name,)).fetchone()
+                        artist_id = str(row["id"]) if row else None
+
+        if classification == "playlist":
+            folder_pl_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"sangita:source_folder:{s_name}"))
+            conn.execute("""
+                INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist, source_folder_id)
+                VALUES (?, 'system', ?, ?, 'public', 1, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    source_folder_id = excluded.source_folder_id,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (folder_pl_id, display_name, f"Folder playlist for {s_name}", sf["id"]))
+        else:
+            conn.execute("DELETE FROM playlists WHERE source_folder_id = ? AND is_folder_playlist = 1", (sf["id"],))
+
+        conn.execute("""
+            UPDATE source_folders
+            SET classification = ?, display_name = ?, artist_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (classification, display_name, artist_id, source_id))
+        conn.commit()
+
+        updated = conn.execute("SELECT * FROM source_folders WHERE id = ?", (source_id,)).fetchone()
+        return jsonify({
+            "id": updated["id"],
+            "name": updated["folder_name"] if "folder_name" in updated.keys() and updated["folder_name"] else updated["name"],
+            "display_name": updated["display_name"],
+            "classification": updated["classification"],
+            "artist_id": str(updated["artist_id"]) if updated["artist_id"] else None
+        })
+    finally:
+        conn.close()
+
+@app.route("/api/v2/artists", methods=["GET"])
+@require_auth
+def v2_get_artists():
+    """List artists with ID, name, image_url, and track count."""
+    conn = get_db()
+    try:
+        artists = conn.execute("SELECT id, name, bio, image_url FROM artists ORDER BY name COLLATE NOCASE ASC").fetchall()
+        result = []
+        is_admin = g.user.get("role") == "admin"
+
+        for art in artists:
+            art_id = str(art["id"])
+            art_name = art["name"]
+            sf_rows = conn.execute("""
+                SELECT folder_name, classification
+                FROM source_folders
+                WHERE classification = 'artist'
+                  AND (mapped_artist_id = ? OR mapped_artist_name = ? OR artist_id = ? OR display_name = ?)
+            """, (art["id"], art_name, art_id, art_name)).fetchall()
+
+            accessible_tracks = []
+            for sf in sf_rows:
+                s_name = sf["folder_name"]
+                if is_admin or user_has_source_access(g.user, s_name):
+                    folder_path = os.path.join(MUSIC_DIR, s_name)
+                    if os.path.isdir(folder_path):
+                        for f in sorted(os.listdir(folder_path)):
+                            if f.lower().endswith(AUDIO_EXTS):
+                                accessible_tracks.append(f"{s_name}/{f}")
+
+            track_count = len(accessible_tracks)
+            # Only reveal artist if user has access to at least 1 track (or is admin)
+            if not is_admin and track_count == 0:
+                continue
+
+            img = art["image_url"]
+            if not img and accessible_tracks:
+                img = f"/api/cover/{urllib.parse.quote(accessible_tracks[0])}"
+
+            result.append({
+                "id": art_id,
+                "name": art_name,
+                "bio": art["bio"] or "",
+                "image_url": img,
+                "track_count": track_count
+            })
+        return jsonify({"artists": result})
+    finally:
+        conn.close()
+
+@app.route("/api/v2/artists/<artist_id>", methods=["GET"])
+@require_auth
+def v2_get_artist(artist_id):
+    """Retrieve artist info and accessible tracks."""
+    conn = get_db()
+    try:
+        art = conn.execute("SELECT id, name, bio, image_url FROM artists WHERE id = ? OR name = ?", (artist_id, artist_id)).fetchone()
+        if not art:
+            return jsonify({"error": "Artist not found"}), 404
+
+        is_admin = g.user.get("role") == "admin"
+        art_name = art["name"]
+        sf_rows = conn.execute("""
+            SELECT folder_name, classification
+            FROM source_folders
+            WHERE classification = 'artist'
+              AND (mapped_artist_id = ? OR mapped_artist_name = ? OR artist_id = ? OR display_name = ?)
+        """, (art["id"], art_name, str(art["id"]), art_name)).fetchall()
+
+        tracks_list = []
+        for sf in sf_rows:
+            s_name = sf["folder_name"]
+            if is_admin or user_has_source_access(g.user, s_name):
+                folder_path = os.path.join(MUSIC_DIR, s_name)
+                if os.path.isdir(folder_path):
+                    for f in sorted(os.listdir(folder_path)):
+                        if f.lower().endswith(AUDIO_EXTS):
+                            rel_path = f"{s_name}/{f}"
+                            info = get_track_info(rel_path)
+                            tracks_list.append({
+                                "path": rel_path,
+                                "title": info["title"],
+                                "artist": info["artist"] if info["artist"] != "Unknown Artist" else art_name,
+                                "duration": info["duration"]
+                            })
+
+        if not is_admin and len(tracks_list) == 0:
+            return jsonify({"error": "Artist not found"}), 404
+
+        img = art["image_url"]
+        if not img and tracks_list:
+            img = f"/api/cover/{urllib.parse.quote(tracks_list[0]['path'])}"
+
+        return jsonify({
+            "id": str(art["id"]),
+            "name": art["name"],
+            "bio": art["bio"] or "",
+            "image_url": img,
+            "track_count": len(tracks_list),
+            "tracks": tracks_list
+        })
+    finally:
+        conn.close()
+
+@app.route("/api/v2/artists", methods=["POST"])
+@require_admin
+def v2_create_artist():
+    """Create artist entity."""
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Artist name is required"}), 400
+    bio = (data.get("bio") or "").strip()
+    image_url = data.get("image_url")
+
+    conn = get_db()
+    try:
+        existing = conn.execute("SELECT id FROM artists WHERE LOWER(name) = LOWER(?)", (name,)).fetchone()
+        if existing:
+            return jsonify({"error": f"Artist '{name}' already exists"}), 400
+
+        cur = conn.execute("INSERT INTO artists (name, bio, image_url) VALUES (?, ?, ?)", (name, bio, image_url))
+        artist_id = str(cur.lastrowid)
+        conn.commit()
+        return jsonify({
+            "id": artist_id,
+            "name": name,
+            "bio": bio,
+            "image_url": image_url,
+            "track_count": 0
+        }), 201
+    finally:
+        conn.close()
+
+@app.route("/api/v2/playlists", methods=["GET"])
+@require_auth
+def v2_get_playlists():
+    """List playlists visible to user (own playlists private & public, other users' public playlists, accessible folder playlists)."""
+    conn = get_db()
+    username = g.user.get("username", "admin")
+    is_admin = g.user.get("role") == "admin"
+    try:
+        # Sync folder playlists for any source folders classified as 'playlist'
+        folder_sources = conn.execute(
+            "SELECT id, folder_name, display_name FROM source_folders WHERE classification = 'playlist'"
+        ).fetchall()
+        for fs in folder_sources:
+            fp_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"sangita:source_folder:{fs['folder_name']}"))
+            conn.execute("""
+                INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist, source_folder_id)
+                VALUES (?, 'system', ?, ?, 'public', 1, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    source_folder_id = excluded.source_folder_id
+            """, (fp_id, fs["display_name"] or fs["folder_name"], f"Folder playlist for {fs['folder_name']}", fs["id"]))
+        conn.commit()
+
+        if is_admin:
+            pl_rows = conn.execute("""
+                SELECT p.*, sf.folder_name as source_folder_name
+                FROM playlists p
+                LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
+                ORDER BY p.title COLLATE NOCASE ASC
+            """).fetchall()
+        else:
+            pl_rows = conn.execute("""
+                SELECT p.*, sf.folder_name as source_folder_name
+                FROM playlists p
+                LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
+                WHERE p.owner = ? OR p.visibility = 'public'
+                ORDER BY p.title COLLATE NOCASE ASC
+            """, (username,)).fetchall()
+
+        result = []
+        for pl in pl_rows:
+            is_folder = bool(pl["is_folder_playlist"])
+            if is_folder:
+                sf_name = pl["source_folder_name"] or pl["title"]
+                if not (is_admin or user_has_source_access(g.user, sf_name)):
+                    continue
+                track_cnt = 0
+                folder_path = os.path.join(MUSIC_DIR, sf_name)
+                if os.path.isdir(folder_path):
+                    track_cnt = sum(1 for f in os.listdir(folder_path) if f.lower().endswith(AUDIO_EXTS))
+                elif sf_name == "Library" and os.path.exists(MUSIC_DIR):
+                    track_cnt = sum(1 for f in os.listdir(MUSIC_DIR) if os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS))
+            else:
+                trks = conn.execute("SELECT track_path FROM playlist_tracks_v2 WHERE playlist_id = ?", (pl["id"],)).fetchall()
+                if is_admin or pl["owner"] == username:
+                    track_cnt = len(trks)
+                else:
+                    track_cnt = sum(1 for t in trks if user_can_access_track(g.user, t["track_path"]))
+
+            result.append({
+                "id": pl["id"],
+                "title": pl["title"],
+                "description": pl["description"] or "",
+                "owner": pl["owner"],
+                "visibility": pl["visibility"],
+                "is_folder_playlist": is_folder,
+                "track_count": track_cnt,
+                "created_at": pl["created_at"],
+                "updated_at": pl["updated_at"]
+            })
+        return jsonify({"playlists": result})
+    finally:
+        conn.close()
+
+def _insert_playlist_tracks(conn, user, playlist_id, owner_username, playlist_title, tracks_list):
+    """
+    Validates and inserts tracks into playlist_tracks_v2 and legacy playlist_tracks.
+    Enforces user_can_access_track, deduplication, path safety, and sequential positions.
+    Returns list of inserted track objects with metadata.
+    """
+    inserted = []
+    seen = set()
+    pos = 0
+    for item in tracks_list:
+        track_path = None
+        if isinstance(item, str):
+            track_path = item
+        elif isinstance(item, dict):
+            track_path = item.get("track_path") or item.get("path")
+
+        if not track_path or not isinstance(track_path, str) or ".." in track_path or track_path.startswith("/"):
+            continue
+
+        if track_path in seen:
+            continue
+        seen.add(track_path)
+
+        if not user_can_access_track(user, track_path):
+            continue
+
+        cur = conn.execute("""
+            INSERT INTO playlist_tracks_v2 (playlist_id, track_path, position)
+            VALUES (?, ?, ?)
+        """, (playlist_id, track_path, pos))
+        trk_id = cur.lastrowid
+
+        conn.execute("""
+            INSERT OR IGNORE INTO playlist_tracks (username, playlist_name, track_path, position)
+            VALUES (?, ?, ?, ?)
+        """, (owner_username, playlist_title, track_path, pos))
+
+        info = get_track_info(track_path)
+        full_p = os.path.join(MUSIC_DIR, track_path)
+        file_exists = os.path.isfile(full_p)
+        inserted.append({
+            "id": trk_id,
+            "position": pos,
+            "track_path": track_path,
+            "path": track_path,
+            "title": info.get("title") or os.path.basename(track_path),
+            "artist": info.get("artist") or "Unknown Artist",
+            "duration": info.get("duration"),
+            "is_available": file_exists
+        })
+        pos += 1
+
+    return inserted
+
+@app.route("/api/v2/playlists", methods=["POST"])
+@require_auth
+def v2_create_playlist():
+    """Create personal playlist (title, description, visibility: 'private' | 'public', tracks: optional list). Default visibility='private'."""
+    username = g.user.get("username", "admin")
+    data = request.get_json(force=True, silent=True) or {}
+    raw_title = data.get("title")
+    title = sanitize_name(raw_title)
+    if not title or title in ("Favorites", "Library"):
+        return jsonify({"error": "Invalid playlist title"}), 400
+
+    description = (data.get("description") or "").strip()
+    visibility = data.get("visibility", "private")
+    if visibility not in ("private", "public"):
+        return jsonify({"error": "Visibility must be 'private' or 'public'"}), 400
+
+    raw_tracks = data.get("tracks")
+    if not isinstance(raw_tracks, list):
+        raw_tracks = []
+
+    conn = get_db()
+    try:
+        pl_id = str(uuid.uuid4())
+        conn.execute("""
+            INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist)
+            VALUES (?, ?, ?, ?, ?, 0)
+        """, (pl_id, username, title, description, visibility))
+
+        # Sync to legacy user_playlists
+        conn.execute("""
+            INSERT INTO user_playlists (username, name, visibility)
+            VALUES (?, ?, ?)
+            ON CONFLICT(username, name) DO UPDATE SET visibility = excluded.visibility
+        """, (username, title, visibility))
+
+        inserted_tracks = _insert_playlist_tracks(conn, g.user, pl_id, username, title, raw_tracks)
+        conn.commit()
+
+        return jsonify({
+            "id": pl_id,
+            "title": title,
+            "description": description,
+            "owner": username,
+            "visibility": visibility,
+            "is_folder_playlist": False,
+            "track_count": len(inserted_tracks),
+            "tracks": inserted_tracks
+        }), 201
+    finally:
+        conn.close()
+
+@app.route("/api/v2/playlists/<playlist_id>/clone", methods=["POST"])
+@require_auth
+def v2_clone_playlist(playlist_id):
+    """Clone an accessible playlist into user's personal playlists library."""
+    username = g.user.get("username", "admin")
+    is_admin = g.user.get("role") == "admin"
+
+    conn = get_db()
+    try:
+        source_pl = conn.execute("""
+            SELECT p.*, sf.folder_name as source_folder_name
+            FROM playlists p
+            LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
+            WHERE p.id = ?
+        """, (playlist_id,)).fetchone()
+
+        if not source_pl and playlist_id.startswith("folder:"):
+            folder_name = playlist_id.split("folder:", 1)[1]
+            source_pl = conn.execute("""
+                SELECT p.*, sf.folder_name as source_folder_name
+                FROM playlists p
+                LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
+                WHERE sf.folder_name = ? OR p.title = ?
+            """, (folder_name, folder_name)).fetchone()
+
+        if not source_pl:
+            return jsonify({"error": "Playlist not found"}), 404
+
+        is_owner = (source_pl["owner"] == username)
+        is_folder = bool(source_pl["is_folder_playlist"])
+
+        # Accessibility check: either owned by user, admin, visibility == 'public', or is_folder_playlist == 1
+        if not (is_owner or is_admin or source_pl["visibility"] == "public" or is_folder):
+            return jsonify({"error": "Playlist not found"}), 404
+
+        if is_folder:
+            sf_name = source_pl["source_folder_name"] or source_pl["title"]
+            if not (is_admin or user_has_source_access(g.user, sf_name)):
+                return jsonify({"error": "Playlist not found"}), 404
+
+        data = request.get_json(force=True, silent=True) or {}
+        raw_title = data.get("title")
+        if not raw_title:
+            raw_title = source_pl["title"]
+            if raw_title in ("Favorites", "Library"):
+                raw_title = f"{raw_title} Copy"
+        title = sanitize_name(raw_title)
+        if not title or title in ("Favorites", "Library"):
+            return jsonify({"error": "Invalid playlist title"}), 400
+
+        description = data.get("description")
+        if description is None:
+            description = source_pl["description"] or ""
+        else:
+            description = description.strip()
+
+        visibility = data.get("visibility", "private")
+        if visibility not in ("private", "public"):
+            return jsonify({"error": "Visibility must be 'private' or 'public'"}), 400
+
+        # Resolve tracks from source playlist
+        source_tracks = []
+        if is_folder:
+            sf_name = source_pl["source_folder_name"] or source_pl["title"]
+            folder_path = os.path.join(MUSIC_DIR, sf_name)
+            if os.path.isdir(folder_path):
+                for f in sorted(os.listdir(folder_path)):
+                    if f.lower().endswith(AUDIO_EXTS):
+                        source_tracks.append(f"{sf_name}/{f}")
+            elif sf_name == "Library" and os.path.exists(MUSIC_DIR):
+                for f in sorted(os.listdir(MUSIC_DIR)):
+                    if os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS):
+                        source_tracks.append(f)
+        else:
+            pl_tracks = conn.execute("""
+                SELECT track_path
+                FROM playlist_tracks_v2
+                WHERE playlist_id = ?
+                ORDER BY position ASC, id ASC
+            """, (source_pl["id"],)).fetchall()
+            if not pl_tracks:
+                pl_tracks = conn.execute("""
+                    SELECT track_path
+                    FROM playlist_tracks
+                    WHERE username = ? AND playlist_name = ?
+                    ORDER BY position ASC, id ASC
+                """, (source_pl["owner"], source_pl["title"])).fetchall()
+            for trk in pl_tracks:
+                source_tracks.append(trk["track_path"])
+
+        new_pl_id = str(uuid.uuid4())
+        conn.execute("""
+            INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist)
+            VALUES (?, ?, ?, ?, ?, 0)
+        """, (new_pl_id, username, title, description, visibility))
+
+        conn.execute("""
+            INSERT INTO user_playlists (username, name, visibility)
+            VALUES (?, ?, ?)
+            ON CONFLICT(username, name) DO UPDATE SET visibility = excluded.visibility
+        """, (username, title, visibility))
+
+        inserted_tracks = _insert_playlist_tracks(conn, g.user, new_pl_id, username, title, source_tracks)
+        conn.commit()
+
+        return jsonify({
+            "id": new_pl_id,
+            "title": title,
+            "description": description,
+            "owner": username,
+            "visibility": visibility,
+            "is_folder_playlist": False,
+            "track_count": len(inserted_tracks),
+            "tracks": inserted_tracks
+        }), 201
+    finally:
+        conn.close()
+
+@app.route("/api/v2/playlists/<playlist_id>", methods=["GET"])
+@require_auth
+def v2_get_playlist_detail(playlist_id):
+    """Retrieve playlist details. If private, return 404 to non-owners (unless admin). If public, mask/omit tracks user lacks access to, return unavailable_count without leaking restricted track paths or titles."""
+    conn = get_db()
+    username = g.user.get("username", "admin")
+    is_admin = g.user.get("role") == "admin"
+    try:
+        pl = conn.execute("""
+            SELECT p.*, sf.folder_name as source_folder_name
+            FROM playlists p
+            LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
+            WHERE p.id = ?
+        """, (playlist_id,)).fetchone()
+        if not pl:
+            return jsonify({"error": "Playlist not found"}), 404
+
+        is_owner = (pl["owner"] == username)
+        is_folder = bool(pl["is_folder_playlist"])
+
+        # If private, return 404 to non-owners (unless admin)
+        if pl["visibility"] == "private" and not is_owner and not is_admin:
+            return jsonify({"error": "Playlist not found"}), 404
+
+        tracks = []
+        unavailable_count = 0
+
+        if is_folder:
+            sf_name = pl["source_folder_name"] or pl["title"]
+            if not (is_admin or user_has_source_access(g.user, sf_name)):
+                return jsonify({"error": "Playlist not found"}), 404
+
+            folder_path = os.path.join(MUSIC_DIR, sf_name)
+            if os.path.isdir(folder_path):
+                for idx, f in enumerate(sorted(os.listdir(folder_path))):
+                    if f.lower().endswith(AUDIO_EXTS):
+                        rel_path = f"{sf_name}/{f}"
+                        info = get_track_info(rel_path)
+                        tracks.append({
+                            "position": idx,
+                            "track_path": rel_path,
+                            "title": info["title"],
+                            "artist": info["artist"],
+                            "duration": info["duration"],
+                            "is_available": True
+                        })
+            elif sf_name == "Library" and os.path.exists(MUSIC_DIR):
+                for idx, f in enumerate(sorted(os.listdir(MUSIC_DIR))):
+                    if os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS):
+                        rel_path = f
+                        info = get_track_info(rel_path)
+                        tracks.append({
+                            "position": idx,
+                            "track_path": rel_path,
+                            "title": info["title"],
+                            "artist": info["artist"],
+                            "duration": info["duration"],
+                            "is_available": True
+                        })
+        else:
+            pl_tracks = conn.execute("""
+                SELECT id, track_path, position
+                FROM playlist_tracks_v2
+                WHERE playlist_id = ?
+                ORDER BY position ASC, id ASC
+            """, (playlist_id,)).fetchall()
+
+            for trk in pl_tracks:
+                tp = trk["track_path"]
+                accessible = user_can_access_track(g.user, tp)
+                full_p = os.path.join(MUSIC_DIR, tp)
+                file_exists = os.path.isfile(full_p)
+
+                if is_owner or is_admin:
+                    available = accessible and file_exists
+                    if not available:
+                        unavailable_count += 1
+                    info = get_track_info(tp)
+                    tracks.append({
+                        "id": trk["id"],
+                        "position": trk["position"],
+                        "track_path": tp,
+                        "title": info["title"],
+                        "artist": info["artist"],
+                        "duration": info["duration"],
+                        "is_available": available
+                    })
+                else:
+                    if accessible and file_exists:
+                        info = get_track_info(tp)
+                        tracks.append({
+                            "id": trk["id"],
+                            "position": trk["position"],
+                            "track_path": tp,
+                            "title": info["title"],
+                            "artist": info["artist"],
+                            "duration": info["duration"],
+                            "is_available": True
+                        })
+                    else:
+                        unavailable_count += 1
+
+        return jsonify({
+            "id": pl["id"],
+            "title": pl["title"],
+            "description": pl["description"] or "",
+            "owner": pl["owner"],
+            "visibility": pl["visibility"],
+            "is_folder_playlist": is_folder,
+            "track_count": len(tracks),
+            "unavailable_count": unavailable_count,
+            "tracks": tracks,
+            "created_at": pl["created_at"],
+            "updated_at": pl["updated_at"]
+        })
+    finally:
+        conn.close()
+
+@app.route("/api/v2/playlists/<playlist_id>", methods=["PUT"])
+@require_auth
+def v2_update_playlist(playlist_id):
+    """Update title, description, visibility, track list order. (Owner or Admin only)."""
+    conn = get_db()
+    username = g.user.get("username", "admin")
+    is_admin = g.user.get("role") == "admin"
+    try:
+        pl = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+        if not pl:
+            return jsonify({"error": "Playlist not found"}), 404
+
+        if pl["owner"] != username and not is_admin:
+            return jsonify({"error": "Forbidden - Only owner or admin can update this playlist"}), 403
+
+        data = request.get_json(force=True, silent=True) or {}
+        new_title = data.get("title")
+        new_desc = data.get("description")
+        new_vis = data.get("visibility")
+        track_order = data.get("tracks") or data.get("track_order") or data.get("track_paths")
+
+        old_title = pl["title"]
+        title = pl["title"]
+        if new_title is not None:
+            t = sanitize_name(new_title)
+            if not t or t in ("Favorites", "Library"):
+                return jsonify({"error": "Invalid playlist title"}), 400
+            title = t
+
+        description = pl["description"]
+        if new_desc is not None:
+            description = new_desc.strip()
+
+        visibility = pl["visibility"]
+        if new_vis is not None:
+            if new_vis not in ("private", "public"):
+                return jsonify({"error": "Visibility must be 'private' or 'public'"}), 400
+            visibility = new_vis
+
+        if pl["is_folder_playlist"] and track_order is not None:
+            return jsonify({"error": "Cannot reorder tracks in a folder playlist"}), 400
+
+        conn.execute("""
+            UPDATE playlists
+            SET title = ?, description = ?, visibility = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (title, description, visibility, playlist_id))
+
+        if track_order is not None and not pl["is_folder_playlist"]:
+            for pos, item in enumerate(track_order):
+                tp = item if isinstance(item, str) else item.get("track_path")
+                if tp:
+                    conn.execute("""
+                        UPDATE playlist_tracks_v2
+                        SET position = ?
+                        WHERE playlist_id = ? AND track_path = ?
+                    """, (pos, playlist_id, tp))
+                    conn.execute("""
+                        UPDATE playlist_tracks
+                        SET position = ?
+                        WHERE username = ? AND playlist_name = ? AND track_path = ?
+                    """, (pos, pl["owner"], title, tp))
+
+        if new_title is not None and title != old_title:
+            conn.execute("UPDATE user_playlists SET name = ? WHERE username = ? AND name = ?", (title, pl["owner"], old_title))
+            conn.execute("UPDATE playlist_tracks SET playlist_name = ? WHERE username = ? AND playlist_name = ?", (title, pl["owner"], old_title))
+
+        conn.commit()
+        updated = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+        return jsonify({
+            "id": updated["id"],
+            "title": updated["title"],
+            "description": updated["description"] or "",
+            "owner": updated["owner"],
+            "visibility": updated["visibility"],
+            "is_folder_playlist": bool(updated["is_folder_playlist"]),
+            "updated_at": updated["updated_at"]
+        })
+    finally:
+        conn.close()
+
+@app.route("/api/v2/playlists/<playlist_id>", methods=["DELETE"])
+@require_auth
+def v2_delete_playlist(playlist_id):
+    """Delete playlist. (Owner or Admin only)."""
+    conn = get_db()
+    username = g.user.get("username", "admin")
+    is_admin = g.user.get("role") == "admin"
+    try:
+        pl = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+        if not pl:
+            return jsonify({"error": "Playlist not found"}), 404
+
+        if pl["owner"] != username and not is_admin:
+            return jsonify({"error": "Forbidden - Only owner or admin can delete this playlist"}), 403
+
+        if pl["is_folder_playlist"] and not is_admin:
+            return jsonify({"error": "Forbidden - Only admin can delete folder playlists"}), 403
+
+        conn.execute("DELETE FROM playlist_tracks_v2 WHERE playlist_id = ?", (playlist_id,))
+        conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+
+        # Legacy sync
+        conn.execute("DELETE FROM user_playlists WHERE username = ? AND name = ?", (pl["owner"], pl["title"]))
+        conn.execute("DELETE FROM playlist_tracks WHERE username = ? AND playlist_name = ?", (pl["owner"], pl["title"]))
+        conn.commit()
+
+        return jsonify({"status": "deleted", "id": playlist_id})
+    finally:
+        conn.close()
+
+@app.route("/api/v2/playlists/<playlist_id>/tracks", methods=["POST"])
+@require_auth
+def v2_add_playlist_track(playlist_id):
+    """Add track to personal playlist (Owner or Admin only, strictly enforcing source access)."""
+    conn = get_db()
+    username = g.user.get("username", "admin")
+    is_admin = g.user.get("role") == "admin"
+    try:
+        pl = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+        if not pl:
+            return jsonify({"error": "Playlist not found"}), 404
+
+        if pl["owner"] != username and not is_admin:
+            return jsonify({"error": "Forbidden - Only owner or admin can add tracks"}), 403
+
+        if pl["is_folder_playlist"]:
+            return jsonify({"error": "Cannot add tracks to a folder playlist"}), 400
+
+        data = request.get_json(force=True, silent=True) or {}
+        track_path = data.get("track_path")
+        if not track_path or not isinstance(track_path, str) or ".." in track_path or track_path.startswith("/"):
+            return jsonify({"error": "track_path is required"}), 400
+
+        full_path = os.path.join(MUSIC_DIR, os.path.normpath(track_path))
+        real_music_dir = os.path.realpath(MUSIC_DIR)
+        real_target = os.path.realpath(full_path)
+        if not (real_target == real_music_dir or real_target.startswith(real_music_dir + os.sep)):
+            return jsonify({"error": "Access denied"}), 403
+        if not os.path.isfile(full_path) or not any(real_target.lower().endswith(ext) for ext in AUDIO_EXTS):
+            return jsonify({"error": "Audio file not found"}), 404
+
+        # Access check
+        if not user_can_access_track(g.user, track_path):
+            return jsonify({"error": "Access denied to source folder for track"}), 403
+
+        # Duplicate check
+        existing = conn.execute(
+            "SELECT id FROM playlist_tracks_v2 WHERE playlist_id = ? AND track_path = ?",
+            (playlist_id, track_path)
+        ).fetchone()
+        if existing:
+            return jsonify({"error": "Track already exists in playlist", "status": "exists"}), 409
+
+        max_pos_row = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) as mp FROM playlist_tracks_v2 WHERE playlist_id = ?",
+            (playlist_id,)
+        ).fetchone()
+        pos = (max_pos_row["mp"] if max_pos_row else -1) + 1
+
+        conn.execute("""
+            INSERT INTO playlist_tracks_v2 (playlist_id, track_path, position)
+            VALUES (?, ?, ?)
+        """, (playlist_id, track_path, pos))
+
+        # Legacy sync
+        conn.execute("""
+            INSERT OR IGNORE INTO playlist_tracks (username, playlist_name, track_path, position)
+            VALUES (?, ?, ?, ?)
+        """, (pl["owner"], pl["title"], track_path, pos))
+
+        conn.execute("UPDATE playlists SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (playlist_id,))
+        conn.commit()
+
+        return jsonify({
+            "status": "added",
+            "playlist_id": playlist_id,
+            "track_path": track_path,
+            "position": pos
+        }), 201
+    finally:
+        conn.close()
+
+@app.route("/api/v2/playlists/<playlist_id>/tracks", methods=["DELETE"])
+@require_auth
+def v2_remove_playlist_track(playlist_id):
+    """Remove track from personal playlist (Owner or Admin only)."""
+    conn = get_db()
+    username = g.user.get("username", "admin")
+    is_admin = g.user.get("role") == "admin"
+    try:
+        pl = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+        if not pl:
+            return jsonify({"error": "Playlist not found"}), 404
+
+        if pl["owner"] != username and not is_admin:
+            return jsonify({"error": "Forbidden - Only owner or admin can remove tracks"}), 403
+
+        if pl["is_folder_playlist"]:
+            return jsonify({"error": "Cannot remove tracks from a folder playlist"}), 400
+
+        data = request.get_json(force=True, silent=True) or {}
+        track_path = data.get("track_path") or request.args.get("track_path")
+        if not track_path:
+            return jsonify({"error": "track_path is required"}), 400
+
+        conn.execute("DELETE FROM playlist_tracks_v2 WHERE playlist_id = ? AND track_path = ?", (playlist_id, track_path))
+        conn.execute("DELETE FROM playlist_tracks WHERE username = ? AND playlist_name = ? AND track_path = ?", (pl["owner"], pl["title"], track_path))
+        conn.execute("UPDATE playlists SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (playlist_id,))
+        conn.commit()
+
+        return jsonify({
+            "status": "removed",
+            "playlist_id": playlist_id,
+            "track_path": track_path
+        })
     finally:
         conn.close()
 
@@ -1416,17 +2829,14 @@ def get_durations():
 @app.route("/api/stream/<path:filepath>")
 @require_auth
 def stream_audio(filepath):
-    safe = os.path.normpath(urllib.parse.unquote(filepath))
-    if safe.startswith("..") or safe.startswith("/"):
+    safe = os.path.normpath(urllib.parse.unquote(filepath)).replace("\\", "/")
+    if safe.startswith("..") or safe.startswith("/") or os.path.isabs(safe):
         abort(403)
-        
-    allowed = g.user.get("rules", {}).get("allowed_playlists", ["*"])
-    if "*" not in allowed:
-        parts = safe.split(os.sep)
-        playlist_name = parts[0] if len(parts) > 1 else "Library"
-        if playlist_name not in allowed:
-            abort(403)
-            
+
+    source_name = get_track_source(safe)
+    if not user_has_source_access(g.user, source_name):
+        abort(403)
+
     full_path = os.path.join(MUSIC_DIR, safe)
     real_music_dir = os.path.realpath(MUSIC_DIR)
     real_target = os.path.realpath(full_path)
@@ -1438,7 +2848,7 @@ def stream_audio(filepath):
         abort(404)
     resp = send_from_directory(os.path.dirname(full_path), os.path.basename(full_path), conditional=True)
     resp.headers["Cache-Control"] = "public, max-age=86400"
-    
+
     # Record data consumption for this user
     try:
         bytes_count = resp.calculate_content_length() or resp.content_length
@@ -1449,6 +2859,40 @@ def stream_audio(filepath):
             record_user_data_consumption(g.username, bytes_count, dev_id)
     except Exception as e:
         print(f"[Stream Data Tracking Error] {e}")
+
+    return resp
+
+@app.route("/api/download/<path:filepath>")
+@require_auth
+def download_audio(filepath):
+    safe = os.path.normpath(urllib.parse.unquote(filepath)).replace("\\", "/")
+    if safe.startswith("..") or safe.startswith("/") or os.path.isabs(safe):
+        abort(403)
+
+    source_name = get_track_source(safe)
+    if not user_has_source_access(g.user, source_name):
+        abort(403)
+
+    full_path = os.path.join(MUSIC_DIR, safe)
+    real_music_dir = os.path.realpath(MUSIC_DIR)
+    real_target = os.path.realpath(full_path)
+    if not (real_target == real_music_dir or real_target.startswith(real_music_dir + os.sep)):
+        abort(403)
+    if not any(real_target.lower().endswith(ext) for ext in AUDIO_EXTS):
+        abort(403)
+    if not os.path.isfile(full_path):
+        abort(404)
+
+    resp = send_file(full_path, as_attachment=True, download_name=os.path.basename(full_path))
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+
+    try:
+        bytes_count = os.path.getsize(full_path)
+        if bytes_count and hasattr(g, "username") and g.username:
+            dev_id = request.args.get("device_id") or request.headers.get("X-Device-Id")
+            record_user_data_consumption(g.username, bytes_count, dev_id)
+    except Exception as e:
+        print(f"[Download Data Tracking Error] {e}")
 
     return resp
 
@@ -1600,22 +3044,17 @@ def extract_cover_art(full_path):
 def get_cover_art(filepath):
     import urllib.parse
     from flask import Response
-    safe = os.path.normpath(urllib.parse.unquote(filepath))
-    if safe.startswith("..") or safe.startswith("/"):
+    safe = os.path.normpath(urllib.parse.unquote(filepath)).replace("\\", "/")
+    if safe.startswith("..") or safe.startswith("/") or os.path.isabs(safe):
         abort(403)
 
-    allowed = g.user.get("rules", {}).get("allowed_playlists", ["*"])
-    if "*" not in allowed:
-        parts = safe.split(os.sep)
-        playlist_name = parts[0] if len(parts) > 1 else "Library"
-        if playlist_name not in allowed:
-            abort(403)
-
     full_path = os.path.join(MUSIC_DIR, safe)
-    # If filepath points to a playlist folder (e.g. "Alan Walker"), find the first audio file in it!
+    # If filepath points to a playlist folder (e.g. "main"), check folder access!
     if os.path.isdir(full_path):
+        if not user_has_source_access(g.user, safe):
+            abort(403)
+        found = False
         for root, _, files in os.walk(full_path):
-            found = False
             for f in sorted(files):
                 if f.lower().endswith(AUDIO_EXTS):
                     full_path = os.path.join(root, f)
@@ -1623,19 +3062,40 @@ def get_cover_art(filepath):
                     break
             if found:
                 break
-
-    # If not a direct file or folder, check if it's a virtual playlist name in SQLite
-    if not os.path.isfile(full_path):
+    elif not os.path.isfile(full_path):
+        # Check if it's a virtual playlist name in SQLite or V2 playlist ID
         conn = get_db()
         try:
-            row = conn.execute(
-                "SELECT track_path FROM playlist_tracks WHERE username = ? AND playlist_name = ? ORDER BY added_at DESC, id DESC LIMIT 1",
-                (g.user.get("username", "admin"), safe)
-            ).fetchone()
-            if row:
-                full_path = os.path.join(MUSIC_DIR, row["track_path"])
+            v2_row = conn.execute("SELECT id, owner, visibility FROM playlists WHERE id = ? OR (owner = ? AND title = ?)", (safe, g.user.get("username", "admin"), safe)).fetchone()
+            if v2_row:
+                if v2_row["visibility"] == "private" and g.user.get("role") != "admin" and v2_row["owner"] != g.user.get("username", "admin"):
+                    abort(404)
+                v2_tracks = conn.execute("SELECT track_path FROM playlist_tracks_v2 WHERE playlist_id = ? ORDER BY position ASC, id ASC", (v2_row["id"],)).fetchall()
+                for trk in v2_tracks:
+                    tp = trk["track_path"]
+                    if user_can_access_track(g.user, tp):
+                        full_path = os.path.join(MUSIC_DIR, tp)
+                        break
+            else:
+                row = conn.execute(
+                    "SELECT track_path FROM playlist_tracks WHERE username = ? AND playlist_name = ? ORDER BY added_at DESC, id DESC LIMIT 1",
+                    (g.user.get("username", "admin"), safe)
+                ).fetchone()
+                if row:
+                    tp = row["track_path"]
+                    if user_can_access_track(g.user, tp):
+                        full_path = os.path.join(MUSIC_DIR, tp)
         finally:
             conn.close()
+    else:
+        source_name = get_track_source(safe)
+        if not user_has_source_access(g.user, source_name):
+            abort(403)
+
+    real_music_dir = os.path.realpath(MUSIC_DIR)
+    real_target = os.path.realpath(full_path)
+    if not (real_target == real_music_dir or real_target.startswith(real_music_dir + os.sep)):
+        abort(403)
 
     if not os.path.isfile(full_path):
         abort(404)
@@ -1752,6 +3212,415 @@ def admin_delete_user(username):
     del users[username]
     save_users(users)
     return jsonify({"message": "User deleted successfully"})
+
+# =========================================================================
+# Admin Library Organization & Global Playlist Inventory Routes
+# =========================================================================
+
+def _get_detected_source_folders(conn=None):
+    """Scan MUSIC_DIR and return all detected top-level source folders with metadata and user grants."""
+    close_conn = False
+    if conn is None:
+        conn = get_db()
+        close_conn = True
+    try:
+        users = load_users()
+        rows = conn.execute("SELECT * FROM source_folders").fetchall()
+        db_folders = {r["folder_name"]: dict(r) for r in rows}
+
+        folders_list = []
+        if not os.path.exists(MUSIC_DIR):
+            return folders_list
+
+        # Root tracks (classified as "Library" source)
+        root_tracks = [
+            f for f in os.listdir(MUSIC_DIR)
+            if os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS)
+        ]
+
+        subdirs = sorted([
+            d for d in os.listdir(MUSIC_DIR)
+            if os.path.isdir(os.path.join(MUSIC_DIR, d)) and not d.startswith(".")
+        ])
+
+        detected_names = []
+        if root_tracks or "Library" in db_folders:
+            detected_names.append("Library")
+        for d in subdirs:
+            if d not in detected_names:
+                detected_names.append(d)
+
+        for folder in detected_names:
+            if folder == "Library":
+                track_count = len(root_tracks)
+            else:
+                fpath = os.path.join(MUSIC_DIR, folder)
+                if os.path.isdir(fpath):
+                    track_count = len([f for f in os.listdir(fpath) if f.lower().endswith(AUDIO_EXTS)])
+                else:
+                    track_count = 0
+
+            db_rec = db_folders.get(folder, {})
+            classification = db_rec.get("classification", "unclassified")
+            display_name = db_rec.get("display_name") or folder
+            mapped_artist = db_rec.get("mapped_artist_name") or None
+            mapped_artist_id = db_rec.get("mapped_artist_id") or None
+
+            # User grants for this folder
+            grants = []
+            for uname, udata in users.items():
+                allowed = udata.get("rules", {}).get("allowed_playlists", ["*"])
+                if "*" in allowed or folder in allowed:
+                    grants.append(uname)
+
+            folders_list.append({
+                "folder": folder,
+                "classification": classification,
+                "display_name": display_name,
+                "mapped_artist": mapped_artist,
+                "mapped_artist_id": mapped_artist_id,
+                "track_count": track_count,
+                "user_access_grants": grants,
+                "scan_status": "synced"
+            })
+
+        return folders_list
+    finally:
+        if close_conn:
+            conn.close()
+
+@app.route("/api/admin/library/folders", methods=["GET"])
+@require_admin
+def admin_get_library_folders():
+    folders = _get_detected_source_folders()
+    if request.args.get("format") == "dict":
+        return jsonify({"folders": folders})
+    return jsonify(folders)
+
+@app.route("/api/admin/library/folders/classify", methods=["POST"])
+@require_admin
+def admin_classify_folder():
+    data = request.get_json(silent=True) or {}
+    folder = (data.get("folder") or "").strip()
+    classification = (data.get("classification") or "unclassified").strip().lower()
+    display_name = (data.get("display_name") or folder).strip()
+    mapped_artist = (data.get("mapped_artist") or "").strip() or None
+    mapped_artist_id = data.get("mapped_artist_id")
+
+    if not folder:
+        return jsonify({"error": "Folder name is required"}), 400
+    if classification not in ("artist", "playlist", "unclassified"):
+        return jsonify({"error": "Classification must be 'artist', 'playlist', or 'unclassified'"}), 400
+
+    conn = get_db()
+    try:
+        if classification == "artist":
+            if mapped_artist and not mapped_artist_id:
+                row = conn.execute("SELECT id FROM artists WHERE LOWER(name) = LOWER(?)", (mapped_artist,)).fetchone()
+                if row:
+                    mapped_artist_id = row["id"]
+                else:
+                    cur = conn.execute("INSERT INTO artists (name, bio) VALUES (?, ?)", (mapped_artist, ""))
+                    mapped_artist_id = cur.lastrowid
+            elif mapped_artist_id and not mapped_artist:
+                row = conn.execute("SELECT name FROM artists WHERE id = ?", (mapped_artist_id,)).fetchone()
+                if row:
+                    mapped_artist = row["name"]
+        else:
+            mapped_artist = None
+            mapped_artist_id = None
+
+        conn.execute("""
+            INSERT INTO source_folders (folder_name, classification, display_name, mapped_artist_name, mapped_artist_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(folder_name) DO UPDATE SET
+                classification = excluded.classification,
+                display_name = excluded.display_name,
+                mapped_artist_name = excluded.mapped_artist_name,
+                mapped_artist_id = excluded.mapped_artist_id,
+                updated_at = CURRENT_TIMESTAMP
+        """, (folder, classification, display_name, mapped_artist, mapped_artist_id))
+
+        details = f"Classified folder '{folder}' as '{classification}' (display_name='{display_name}', mapped_artist='{mapped_artist or ''}')"
+        conn.execute("""
+            INSERT INTO admin_audit_logs (admin_username, action, target_type, target_id, details)
+            VALUES (?, 'classify_folder', 'folder', ?, ?)
+        """, (g.username, folder, details))
+
+        conn.commit()
+        return jsonify({
+            "message": f"Folder '{folder}' successfully classified as '{classification}'",
+            "folder": {
+                "folder": folder,
+                "classification": classification,
+                "display_name": display_name,
+                "mapped_artist": mapped_artist,
+                "mapped_artist_id": mapped_artist_id
+            }
+        })
+    finally:
+        conn.close()
+
+@app.route("/api/admin/library/playlists", methods=["GET"])
+@require_admin
+def admin_get_library_playlists():
+    search = (request.args.get("search") or "").strip().lower()
+    visibility_filter = (request.args.get("visibility") or "all").strip().lower()
+
+    conn = get_db()
+    try:
+        up_rows = conn.execute("""
+            SELECT up.id, up.username, up.name, COALESCE(up.visibility, 'private') as visibility, up.created_at,
+                   (SELECT COUNT(*) FROM playlist_tracks pt WHERE pt.username = up.username AND pt.playlist_name = up.name) as track_count
+            FROM user_playlists up
+            ORDER BY up.id DESC
+        """).fetchall()
+
+        playlists = []
+        for r in up_rows:
+            vis = r["visibility"] or "private"
+            if visibility_filter != "all" and vis != visibility_filter:
+                continue
+            title = r["name"]
+            owner = r["username"]
+            if search and search not in title.lower() and search not in owner.lower():
+                continue
+            playlists.append({
+                "id": r["id"],
+                "title": title,
+                "owner": owner,
+                "visibility": vis,
+                "track_count": r["track_count"] or 0,
+                "is_folder_playlist": False,
+                "created_at": r["created_at"]
+            })
+
+        if visibility_filter in ("all", "public"):
+            sf_rows = conn.execute("SELECT * FROM source_folders WHERE classification = 'playlist'").fetchall()
+            for sf in sf_rows:
+                fname = sf["folder_name"]
+                dname = sf["display_name"] or fname
+                if search and search not in fname.lower() and search not in dname.lower():
+                    continue
+                fpath = os.path.join(MUSIC_DIR, fname)
+                tcount = 0
+                if os.path.isdir(fpath):
+                    tcount = len([f for f in os.listdir(fpath) if f.lower().endswith(AUDIO_EXTS)])
+                elif fname == "Library" and os.path.exists(MUSIC_DIR):
+                    tcount = len([f for f in os.listdir(MUSIC_DIR) if os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS)])
+
+                playlists.append({
+                    "id": f"folder:{fname}",
+                    "title": dname,
+                    "owner": "system",
+                    "visibility": "public",
+                    "track_count": tcount,
+                    "is_folder_playlist": True,
+                    "created_at": sf["updated_at"]
+                })
+
+        if request.args.get("format") == "dict":
+            return jsonify({"playlists": playlists})
+        return jsonify(playlists)
+    finally:
+        conn.close()
+
+@app.route("/api/admin/library/playlists/<playlist_id>", methods=["DELETE"])
+@require_admin
+def admin_delete_library_playlist(playlist_id):
+    conn = get_db()
+    try:
+        if str(playlist_id).isdigit():
+            pid = int(playlist_id)
+            row = conn.execute("SELECT * FROM user_playlists WHERE id = ?", (pid,)).fetchone()
+            if not row:
+                return jsonify({"error": "Playlist not found"}), 404
+            name = row["name"]
+            owner = row["username"]
+            tcount_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM playlist_tracks WHERE username = ? AND playlist_name = ?",
+                (owner, name)
+            ).fetchone()
+            tcount = tcount_row["cnt"] if tcount_row else 0
+
+            details = f"Admin '{g.username}' administratively deleted user playlist '{name}' owned by '{owner}' with {tcount} tracks"
+            conn.execute("""
+                INSERT INTO admin_audit_logs (admin_username, action, target_type, target_id, details)
+                VALUES (?, 'delete_playlist', 'playlist', ?, ?)
+            """, (g.username, str(pid), details))
+
+            conn.execute("DELETE FROM playlist_tracks WHERE username = ? AND playlist_name = ?", (owner, name))
+            conn.execute("DELETE FROM user_playlists WHERE id = ?", (pid,))
+
+            # Also delete matching row in playlists and playlist_tracks_v2
+            v2_match = conn.execute(
+                "SELECT id FROM playlists WHERE owner = ? AND title = ? AND is_folder_playlist = 0",
+                (owner, name)
+            ).fetchone()
+            if v2_match:
+                conn.execute("DELETE FROM playlist_tracks_v2 WHERE playlist_id = ?", (v2_match["id"],))
+                conn.execute("DELETE FROM playlists WHERE id = ?", (v2_match["id"],))
+
+            conn.commit()
+            return jsonify({
+                "status": "ok",
+                "message": f"Playlist '{name}' owned by '{owner}' was permanently deleted",
+                "id": pid
+            })
+
+        elif str(playlist_id).startswith("folder:"):
+            folder_name = playlist_id.split("folder:", 1)[1]
+            row = conn.execute("SELECT * FROM source_folders WHERE folder_name = ?", (folder_name,)).fetchone()
+            if not row or row["classification"] != "playlist":
+                return jsonify({"error": "Folder playlist not found"}), 404
+
+            details = f"Admin '{g.username}' removed folder playlist status for folder '{folder_name}' (reset to unclassified)"
+            conn.execute("""
+                INSERT INTO admin_audit_logs (admin_username, action, target_type, target_id, details)
+                VALUES (?, 'remove_folder_playlist', 'folder', ?, ?)
+            """, (g.username, folder_name, details))
+
+            conn.execute("UPDATE source_folders SET classification = 'unclassified', updated_at = CURRENT_TIMESTAMP WHERE folder_name = ?", (folder_name,))
+            fp_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"sangita:source_folder:{folder_name}"))
+            conn.execute("""
+                DELETE FROM playlists
+                WHERE is_folder_playlist = 1 AND (source_folder_id = ? OR id = ? OR title = ? OR title = ?)
+            """, (row["id"], fp_id, folder_name, row["display_name"]))
+            conn.commit()
+            return jsonify({
+                "status": "ok",
+                "message": f"Folder playlist '{folder_name}' reclassified to unclassified",
+                "id": playlist_id
+            })
+        else:
+            pl_row = conn.execute("SELECT * FROM playlists WHERE id = ?", (str(playlist_id),)).fetchone()
+            if not pl_row:
+                return jsonify({"error": "Playlist not found"}), 404
+
+            name = pl_row["title"]
+            owner = pl_row["owner"]
+            tcount_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM playlist_tracks_v2 WHERE playlist_id = ?",
+                (str(playlist_id),)
+            ).fetchone()
+            tcount = tcount_row["cnt"] if tcount_row else 0
+
+            details = f"Admin '{g.username}' administratively deleted user playlist '{name}' owned by '{owner}' with {tcount} tracks"
+            conn.execute("""
+                INSERT INTO admin_audit_logs (admin_username, action, target_type, target_id, details)
+                VALUES (?, 'delete_playlist', 'playlist', ?, ?)
+            """, (g.username, str(playlist_id), details))
+
+            conn.execute("DELETE FROM playlist_tracks_v2 WHERE playlist_id = ?", (str(playlist_id),))
+            conn.execute("DELETE FROM playlists WHERE id = ?", (str(playlist_id),))
+            conn.execute("DELETE FROM user_playlists WHERE username = ? AND name = ?", (owner, name))
+            conn.execute("DELETE FROM playlist_tracks WHERE username = ? AND playlist_name = ?", (owner, name))
+            conn.commit()
+            return jsonify({
+                "status": "ok",
+                "message": f"Playlist '{name}' owned by '{owner}' was permanently deleted",
+                "id": playlist_id
+            })
+    finally:
+        conn.close()
+
+@app.route("/api/admin/library/artists", methods=["GET"])
+@require_admin
+def admin_get_library_artists():
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT a.id, a.name, a.bio, a.created_at,
+                   (SELECT COUNT(*) FROM source_folders sf WHERE sf.mapped_artist_id = a.id OR sf.mapped_artist_name = a.name) as folder_count
+            FROM artists a
+            ORDER BY a.name COLLATE NOCASE ASC
+        """).fetchall()
+
+        detected = _get_detected_source_folders(conn=conn)
+        folder_tracks = {f["folder"]: f["track_count"] for f in detected}
+
+        artists = []
+        for r in rows:
+            mapped_folders = conn.execute(
+                "SELECT folder_name FROM source_folders WHERE mapped_artist_id = ? OR mapped_artist_name = ?",
+                (r["id"], r["name"])
+            ).fetchall()
+            track_count = sum(folder_tracks.get(mf["folder_name"], 0) for mf in mapped_folders)
+
+            artists.append({
+                "id": r["id"],
+                "name": r["name"],
+                "bio": r["bio"] or "",
+                "created_at": r["created_at"],
+                "folder_count": r["folder_count"] or len(mapped_folders),
+                "track_count": track_count
+            })
+
+        if request.args.get("format") == "dict":
+            return jsonify({"artists": artists})
+        return jsonify(artists)
+    finally:
+        conn.close()
+
+@app.route("/api/admin/library/artists", methods=["POST"])
+@require_admin
+def admin_create_library_artist():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    bio = (data.get("bio") or "").strip()
+
+    if not name:
+        return jsonify({"error": "Artist name is required"}), 400
+
+    conn = get_db()
+    try:
+        existing = conn.execute("SELECT id FROM artists WHERE LOWER(name) = LOWER(?)", (name,)).fetchone()
+        if existing:
+            return jsonify({"error": f"Artist '{name}' already exists"}), 400
+
+        cur = conn.execute("INSERT INTO artists (name, bio) VALUES (?, ?)", (name, bio))
+        artist_id = cur.lastrowid
+
+        details = f"Created catalog artist '{name}' (id={artist_id})"
+        conn.execute("""
+            INSERT INTO admin_audit_logs (admin_username, action, target_type, target_id, details)
+            VALUES (?, 'create_artist', 'artist', ?, ?)
+        """, (g.username, str(artist_id), details))
+
+        conn.commit()
+
+        row = conn.execute("SELECT * FROM artists WHERE id = ?", (artist_id,)).fetchone()
+        return jsonify({
+            "status": "created",
+            "artist": {
+                "id": row["id"],
+                "name": row["name"],
+                "bio": row["bio"] or "",
+                "folder_count": 0,
+                "track_count": 0,
+                "created_at": row["created_at"]
+            }
+        }), 201
+    finally:
+        conn.close()
+
+@app.route("/api/admin/library/audit-logs", methods=["GET"])
+@require_admin
+def admin_get_library_audit_logs():
+    limit = min(200, max(10, int(request.args.get("limit", 50))))
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT id, admin_username, action, target_type, target_id, details, created_at
+            FROM admin_audit_logs
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        logs = [dict(r) for r in rows]
+        return jsonify(logs)
+    finally:
+        conn.close()
+
 
 # Usage Stats Tracking Routes
 @app.route("/api/stats/ping", methods=["POST"])
@@ -2776,16 +4645,13 @@ def get_user_stats(username):
 @require_auth
 def get_track_lyrics(filepath):
     import urllib.parse
-    safe = os.path.normpath(urllib.parse.unquote(filepath))
-    if safe.startswith("..") or safe.startswith("/"):
+    safe = os.path.normpath(urllib.parse.unquote(filepath)).replace("\\", "/")
+    if safe.startswith("..") or safe.startswith("/") or os.path.isabs(safe):
         abort(403)
 
-    allowed = g.user.get("rules", {}).get("allowed_playlists", ["*"])
-    if "*" not in allowed:
-        parts = safe.split(os.sep)
-        playlist_name = parts[0] if len(parts) > 1 else "Library"
-        if playlist_name not in allowed:
-            abort(403)
+    source_name = get_track_source(safe)
+    if not user_has_source_access(g.user, source_name):
+        abort(403)
 
     full_audio = os.path.join(MUSIC_DIR, safe)
     real_music_dir = os.path.realpath(MUSIC_DIR)
@@ -2946,7 +4812,7 @@ def lyrics_model_info(model_name):
     cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
     model_dir = os.path.join(cache_dir, f"models--Systran--faster-whisper-{model_name}")
     if not os.path.isdir(model_dir):
-        return jsonify({"available": False, "model": model_name, "files": []}), 404
+        return jsonify({"available": False, "model": model_name, "files": []}), 200
 
     snapshots = glob.glob(os.path.join(model_dir, "snapshots", "*"))
     target_dir = snapshots[0] if snapshots else model_dir
