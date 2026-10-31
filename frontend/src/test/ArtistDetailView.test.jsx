@@ -308,4 +308,178 @@ describe('ArtistDetailView Component', () => {
       expect(screen.getByTestId('artist-toast')).toHaveTextContent('Added 2 tracks to Best of Arijit')
     })
   })
+
+  it('appends auth token and v=2 to /api/cover/... URL and resets imgErr on coverUrl update', async () => {
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/v2/artists/arijit')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            id: 'arijit',
+            name: 'Arijit Singh',
+            image_url: '/api/cover/Arijit%20Singh/Tum%20Hi%20Ho.mp3',
+            tracks: mockTracks
+          })
+        })
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const { rerender } = render(
+      <ArtistDetailView
+        artistId="arijit"
+        artistName="Arijit Singh"
+        artist={{
+          name: 'Arijit Singh',
+          image_url: '/api/cover/Arijit%20Singh/Tum%20Hi%20Ho.mp3',
+          tracks: mockTracks
+        }}
+        durations={mockDurations}
+        token="secret-token-123"
+      />
+    )
+
+    const img = screen.getByTestId('artist-avatar')
+    expect(img.tagName.toLowerCase()).toBe('img')
+    expect(img.src).toContain('/api/cover/Arijit%20Singh/Tum%20Hi%20Ho.mp3?token=secret-token-123&v=2')
+
+    // Simulate image error -> fallback is displayed
+    fireEvent.error(img)
+    const fallback = screen.getByTestId('artist-avatar')
+    expect(fallback.tagName.toLowerCase()).not.toBe('img')
+    expect(fallback).toHaveTextContent('A')
+
+    // When coverUrl updates via prop/fetch, imgErr resets
+    rerender(
+      <ArtistDetailView
+        artistId="arijit"
+        artistName="Arijit Singh"
+        artist={{
+          name: 'Arijit Singh',
+          image_url: '/api/cover/Arijit%20Singh/NewCover.mp3',
+          tracks: mockTracks
+        }}
+        durations={mockDurations}
+        token="secret-token-123"
+      />
+    )
+
+    const updatedImg = screen.getByTestId('artist-avatar')
+    expect(updatedImg.tagName.toLowerCase()).toBe('img')
+    expect(updatedImg.src).toContain('/api/cover/Arijit%20Singh/NewCover.mp3?token=secret-token-123&v=2')
+  })
+
+  it('renders top-right 3-dots more options dropdown menu with Add to Playlist and Save Artist to Library', async () => {
+    global.fetch = vi.fn().mockImplementation((url, opts) => {
+      if (url.includes('/api/v2/artists/arijit/save') && opts?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ status: 'saved' })
+        })
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const onToast = vi.fn()
+    const onToggleSaveArtist = vi.fn()
+
+    render(
+      <ArtistDetailView
+        artistId="arijit"
+        artistName="Arijit Singh"
+        artist={{ name: 'Arijit Singh', tracks: mockTracks }}
+        token="test-token"
+        onToast={onToast}
+        onToggleSaveArtist={onToggleSaveArtist}
+      />
+    )
+
+    const moreBtn = screen.getByTestId('artist-more-btn')
+    expect(moreBtn).toHaveAttribute('aria-expanded', 'false')
+
+    // Open dropdown
+    fireEvent.click(moreBtn)
+    expect(moreBtn).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('artist-more-menu')).toBeInTheDocument()
+
+    // Has Add to Playlist and Save Artist
+    expect(screen.getByTestId('artist-menu-add-btn')).toBeInTheDocument()
+    const menuSaveBtn = screen.getByTestId('artist-menu-save-btn')
+    expect(menuSaveBtn).toHaveTextContent('Save Artist to Library')
+
+    // Click Save Artist from menu
+    fireEvent.click(menuSaveBtn)
+
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith('Saved Arijit Singh to your library')
+    })
+    expect(onToggleSaveArtist).toHaveBeenCalledWith('arijit', true, expect.any(Object))
+
+    // Dropdown is closed
+    expect(screen.queryByTestId('artist-more-menu')).not.toBeInTheDocument()
+  })
+
+  it('renders unified Hero layout matching playlist format with action bar buttons', async () => {
+    global.fetch = vi.fn().mockImplementation((url, opts) => {
+      if (url.includes('/api/v2/artists/arijit/save')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ status: 'saved' })
+        })
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const handlePlayAll = vi.fn()
+    const handleShuffle = vi.fn()
+    const onToast = vi.fn()
+
+    render(
+      <ArtistDetailView
+        artistId="arijit"
+        artistName="Arijit Singh"
+        artist={{ name: 'Arijit Singh', tracks: mockTracks, bio: 'Popular playback singer' }}
+        durations={mockDurations}
+        token="test-token"
+        onPlayAll={handlePlayAll}
+        onShuffle={handleShuffle}
+        onToast={onToast}
+      />
+    )
+
+    // Check Hero format
+    expect(screen.getByTestId('artist-hero')).toHaveClass('hero-container')
+    expect(screen.getByText('Artist')).toHaveClass('hero-tag')
+    expect(screen.getByTestId('artist-bio')).toHaveTextContent('Popular playback singer')
+
+    // Check Action Bar
+    const actionBar = screen.getByTestId('hero-action-bar')
+    expect(actionBar).toBeInTheDocument()
+
+    // Circular Play button
+    const playBtn = screen.getByTestId('artist-play-all-btn')
+    expect(playBtn).toHaveClass('btn-hero-play')
+    fireEvent.click(playBtn)
+    expect(handlePlayAll).toHaveBeenCalledTimes(1)
+
+    // Shuffle icon button
+    const shuffleBtn = screen.getByTestId('artist-shuffle-btn')
+    expect(shuffleBtn).toHaveClass('btn-action-icon')
+    fireEvent.click(shuffleBtn)
+    expect(handleShuffle).toHaveBeenCalledTimes(1)
+
+    // Save icon button in action bar
+    const saveBtn = screen.getByTestId('artist-save-btn')
+    expect(saveBtn).toHaveClass('btn-action-icon')
+    fireEvent.click(saveBtn)
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith('Saved Arijit Singh to your library')
+    })
+
+    // Action bar more options button
+    const actionMoreBtn = screen.getByTestId('artist-action-more-btn')
+    expect(actionMoreBtn).toHaveClass('btn-action-icon')
+    fireEvent.click(actionMoreBtn)
+    expect(screen.getByTestId('artist-action-dropdown-menu')).toBeInTheDocument()
+  })
 })

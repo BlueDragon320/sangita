@@ -58,6 +58,8 @@ export default function ArtistDetailView({
 }) {
   const [v2ArtistDetails, setV2ArtistDetails] = useState(null)
   const [imgErr, setImgErr] = useState(false)
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
   const [showAddAllModal, setShowAddAllModal] = useState(false)
   const [availablePlaylists, setAvailablePlaylists] = useState([])
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
@@ -68,6 +70,36 @@ export default function ArtistDetailView({
   const [modalError, setModalError] = useState(null)
   const addAllTriggerBtnRef = useRef(null)
   const addAllModalRef = useRef(null)
+  const menuRef = useRef(null)
+  const actionMenuRef = useRef(null)
+
+  // Escape key & click-outside listeners for dropdown menus
+  useEffect(() => {
+    if (!isMenuOpen && !isActionMenuOpen) return
+
+    const handlePointerDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setIsMenuOpen(false)
+      }
+      if (actionMenuRef.current && !actionMenuRef.current.contains(e.target)) {
+        setIsActionMenuOpen(false)
+      }
+    }
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsMenuOpen(false)
+        setIsActionMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isMenuOpen, isActionMenuOpen])
 
   // Complete dialog accessibility for Add All Tracks to Playlist
   useEffect(() => {
@@ -271,30 +303,63 @@ export default function ArtistDetailView({
     return matchedTracks
   }, [v2ArtistDetails, initialArtist, displayName, playlists, trackMetadata])
 
+  const rawImageUrl = v2ArtistDetails?.image_url || initialArtist?.image_url
+  const firstTrackPath = v2ArtistDetails?.first_track_path || initialArtist?.first_track_path || tracks[0]?.path
+  const bio = v2ArtistDetails?.bio || initialArtist?.bio || ''
+
   // Artwork URL
   const coverUrl = useMemo(() => {
-    if (v2ArtistDetails?.image_url) return v2ArtistDetails.image_url
-    if (initialArtist?.image_url) return initialArtist.image_url
-    const firstTrackPath = tracks[0]?.path
-    if (firstTrackPath && token) {
-      return `/api/cover/${firstTrackPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token)}&v=2`
+    let target = rawImageUrl
+    if (!target && firstTrackPath) {
+      const encoded = firstTrackPath.split('/').map(encodeURIComponent).join('/')
+      target = `/api/cover/${encoded}`
     }
-    if (displayName && token) {
-      return `/api/cover/${encodeURIComponent(displayName)}?token=${encodeURIComponent(token)}&v=2`
+    if (!target && displayName) {
+      target = `/api/cover/${encodeURIComponent(displayName)}`
     }
-    return null
-  }, [v2ArtistDetails, initialArtist, tracks, displayName, token])
+    if (!target) return null
+
+    if (target.startsWith('http://') || target.startsWith('https://') || target.startsWith('data:')) {
+      return target
+    }
+
+    if (!target.startsWith('/')) {
+      target = `/${target}`
+    }
+
+    if (target.startsWith('/api/cover/')) {
+      if (target.includes('token=')) {
+        return target
+      }
+      const sep = target.includes('?') ? '&' : '?'
+      return `${target}${sep}token=${encodeURIComponent(token || '')}&v=2`
+    }
+
+    const clean = target.replace(/^\//, '')
+    const encoded = clean.split('/').map(encodeURIComponent).join('/')
+    return `/api/cover/${encoded}?token=${encodeURIComponent(token || '')}&v=2`
+  }, [rawImageUrl, firstTrackPath, displayName, token])
+
+  useEffect(() => {
+    setImgErr(false)
+  }, [coverUrl])
 
   const hue = strHue(displayName)
+  const isPlayingThisArtist = Boolean(isPlaying && tracks.some(t => t.path === currentTrack?.path))
+  const isEmpty = tracks.length === 0
 
   const handlePlayAllClick = useCallback(() => {
     if (tracks.length === 0) return
+    if (isPlayingThisArtist && onTogglePlay) {
+      onTogglePlay()
+      return
+    }
     if (onPlayAll) {
       onPlayAll(tracks)
     } else if (onPlayTrack) {
       onPlayTrack(tracks[0], 0, tracks)
     }
-  }, [tracks, onPlayAll, onPlayTrack])
+  }, [tracks, isPlayingThisArtist, onTogglePlay, onPlayAll, onPlayTrack])
 
   const handleShuffleClick = useCallback(() => {
     if (tracks.length === 0) return
@@ -431,137 +496,301 @@ export default function ArtistDetailView({
   return (
     <div className="artist-detail-view" data-testid="artist-detail-view">
       {/* Top Back Navigation */}
-      <div className="artist-detail-top-nav">
-        <button
-          type="button"
-          className="artist-back-btn"
-          onClick={onBack}
-          aria-label="Back to Discover"
-          data-testid="artist-back-btn"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
-          </svg>
-          <span>Back to Discover</span>
-        </button>
-      </div>
+      {onBack && (
+        <div className="artist-detail-top-nav">
+          <button
+            type="button"
+            className="artist-back-btn"
+            onClick={onBack}
+            aria-label="Back to Discover"
+            data-testid="artist-back-btn"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
+            </svg>
+            <span>Back to Discover</span>
+          </button>
+        </div>
+      )}
 
-      {/* Artist Hero Header */}
+      {/* Artist Hero Banner (Spotify playlist format) */}
       <div
-        className="artist-hero"
-        data-testid="artist-hero"
+        className="hero-container artist-hero"
         style={{ '--hero-accent-hue': `${hue}deg` }}
+        data-testid="artist-hero"
       >
-        <div className="artist-hero-avatar-wrap" data-testid="artist-hero-avatar">
-          {!imgErr && coverUrl ? (
-            <img
-              src={coverUrl}
-              alt={displayName}
-              onError={() => setImgErr(true)}
-              className="artist-hero-avatar-img"
-              data-testid="artist-avatar"
-            />
-          ) : (
+        {/* Top-Right 3-Dots / More Options Menu */}
+        <div className="hero-top-right" ref={menuRef} data-testid="artist-top-right">
+          <button
+            type="button"
+            className={`btn-action-icon hero-more-btn ${isMenuOpen ? 'active' : ''}`}
+            onClick={() => setIsMenuOpen(prev => !prev)}
+            title="More options"
+            aria-label="More options"
+            aria-haspopup="menu"
+            aria-expanded={isMenuOpen}
+            data-testid="artist-more-btn"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+            </svg>
+          </button>
+
+          {isMenuOpen && (
             <div
-              className="artist-hero-avatar-fallback"
-              style={{
-                background: `linear-gradient(135deg, hsl(${hue}, 60%, 35%), hsl(${(hue + 45) % 360}, 55%, 20%))`
-              }}
-              data-testid="artist-avatar"
+              className="hero-dropdown-menu"
+              role="menu"
+              aria-label="Artist actions"
+              data-testid="artist-more-menu"
             >
-              {displayName.slice(0, 1).toUpperCase()}
+              <button
+                type="button"
+                role="menuitem"
+                className="hero-menu-item"
+                disabled={isEmpty}
+                aria-disabled={isEmpty}
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  setShowAddAllModal(true)
+                }}
+                data-testid="artist-menu-add-btn"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+                <span>Add to Playlist</span>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                className="hero-menu-item"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  handleToggleSaveArtist()
+                }}
+                data-testid="artist-menu-save-btn"
+              >
+                {isSaved ? (
+                  <>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                      <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                    </svg>
+                    <span>Remove from Library</span>
+                  </>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                      <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                    </svg>
+                    <span>Save Artist to Library</span>
+                  </>
+                )}
+              </button>
             </div>
           )}
         </div>
 
-        <div className="artist-hero-info">
-          <span className="artist-hero-badge">Artist</span>
-          <h1 className="artist-hero-title" data-testid="artist-name">
-            {displayName}
-          </h1>
-          <div className="artist-hero-stats">
-            <span data-testid="artist-track-count">
-              {formatTotalDuration(tracks, durations)}
-            </span>
+        {/* Hero Banner Header: Left Art + Right Metadata */}
+        <div className="hero-header-content">
+          <div className="hero-art-container artist-hero-art-container">
+            <div className="hero-art artist-hero-avatar-wrap" data-testid="artist-hero-avatar">
+              {!imgErr && coverUrl ? (
+                <img
+                  src={coverUrl}
+                  alt={displayName}
+                  onError={() => setImgErr(true)}
+                  className="artist-hero-avatar-img hero-cover-single"
+                  data-testid="artist-avatar"
+                />
+              ) : (
+                <div
+                  className="artist-hero-avatar-fallback hero-art-placeholder"
+                  style={{
+                    background: `linear-gradient(135deg, hsl(${hue}, 60%, 35%), hsl(${(hue + 45) % 360}, 55%, 20%))`
+                  }}
+                  data-testid="artist-avatar"
+                >
+                  {displayName.slice(0, 1).toUpperCase()}
+                </div>
+              )}
+            </div>
           </div>
-          <div className="artist-hero-actions" style={{ marginTop: 12 }}>
+
+          <div className="hero-meta artist-hero-info">
+            <span className="hero-tag hero-tag-public">Artist</span>
+            <h1 className="hero-title artist-hero-title" data-testid="artist-name" title={displayName}>
+              {displayName}
+            </h1>
+            {bio ? (
+              <p className="hero-description-text" data-testid="artist-bio">{bio}</p>
+            ) : null}
+            <div className="hero-creator-row">
+              <span className="hero-stats artist-hero-stats" data-testid="artist-track-count">
+                {formatTotalDuration(tracks, durations)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Action Bar (Play, Shuffle, Save, Add to Playlist, More Options) */}
+        <div className="hero-action-bar" data-testid="hero-action-bar">
+          <div className="hero-action-left" data-testid="hero-action-left">
+            {/* Circular Green Play Button */}
             <button
               type="button"
-              className={`artist-save-btn ${isSaved ? 'saved' : ''}`}
+              className="btn-hero-play artist-play-btn"
+              onClick={isEmpty ? undefined : handlePlayAllClick}
+              disabled={isEmpty}
+              aria-disabled={isEmpty}
+              title={isEmpty ? "No tracks to play" : isPlayingThisArtist ? "Pause" : "Play"}
+              aria-label={isPlayingThisArtist ? "Pause" : `Play all tracks by ${displayName}`}
+              data-testid="artist-play-all-btn"
+            >
+              {isPlayingThisArtist ? (
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
+                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" style={{ marginLeft: 3 }}>
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+              )}
+            </button>
+
+            {/* Shuffle Button */}
+            <button
+              type="button"
+              className="btn-action-icon btn-action-shuffle artist-shuffle-btn"
+              onClick={isEmpty ? undefined : handleShuffleClick}
+              disabled={isEmpty}
+              aria-disabled={isEmpty}
+              title={isEmpty ? "No tracks to shuffle" : "Shuffle"}
+              aria-label={`Shuffle tracks by ${displayName}`}
+              data-testid="artist-shuffle-btn"
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zM14.83 13.41l-1.41 1.41 2.13 2.13L13.5 19H19v-5.5l-2.04 2.04z"/>
+              </svg>
+            </button>
+
+            {/* Save to Library Icon Button */}
+            <button
+              type="button"
+              className={`btn-action-icon artist-save-btn ${isSaved ? 'active glow saved' : ''}`}
               onClick={handleToggleSaveArtist}
-              aria-label={isSaved ? "Remove from Library" : "Save Artist to Library"}
               title={isSaved ? "Remove from Library" : "Save Artist to Library"}
+              aria-label={isSaved ? "Remove from Library" : "Save Artist to Library"}
               data-testid="artist-save-btn"
             >
               {isSaved ? (
-                <>
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                    <path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
-                  </svg>
-                  <span>Remove from Library</span>
-                </>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="var(--accent, #10B981)">
+                  <path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+                </svg>
               ) : (
-                <>
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-                  </svg>
-                  <span>Save Artist to Library</span>
-                </>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                </svg>
               )}
             </button>
+
+            {/* Add All to Playlist Button */}
+            <button
+              type="button"
+              ref={addAllTriggerBtnRef}
+              className="btn-action-icon artist-add-all-btn"
+              onClick={() => setShowAddAllModal(true)}
+              disabled={isEmpty}
+              aria-disabled={isEmpty}
+              title="Add all to playlist"
+              aria-label={`Add all tracks by ${displayName} to playlist`}
+              data-testid="artist-add-all-btn"
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/>
+              </svg>
+            </button>
+
+            {/* 3-Dots More Options Menu in Action Bar */}
+            <div className="hero-more-wrapper" ref={actionMenuRef}>
+              <button
+                type="button"
+                className={`btn-action-icon hero-more-btn ${isActionMenuOpen ? 'active' : ''}`}
+                onClick={() => setIsActionMenuOpen(prev => !prev)}
+                title="More options"
+                aria-label="More options"
+                aria-haspopup="menu"
+                aria-expanded={isActionMenuOpen}
+                data-testid="artist-action-more-btn"
+              >
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                  <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+                </svg>
+              </button>
+
+              {isActionMenuOpen && (
+                <div
+                  className="hero-dropdown-menu"
+                  role="menu"
+                  aria-label="Artist actions"
+                  data-testid="artist-action-dropdown-menu"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="hero-menu-item"
+                    disabled={isEmpty}
+                    aria-disabled={isEmpty}
+                    onClick={() => {
+                      setIsActionMenuOpen(false)
+                      setShowAddAllModal(true)
+                    }}
+                    data-testid="artist-action-menu-add-btn"
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                    <span>Add to Playlist</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="hero-menu-item"
+                    onClick={() => {
+                      setIsActionMenuOpen(false)
+                      handleToggleSaveArtist()
+                    }}
+                    data-testid="artist-action-menu-save-btn"
+                  >
+                    {isSaved ? (
+                      <>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                          <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                        </svg>
+                        <span>Remove from Library</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                        </svg>
+                        <span>Save Artist to Library</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
+
+          <div className="hero-action-right" />
         </div>
       </div>
 
-      {/* Transport Controls Bar */}
-      <div className="artist-transport-bar">
-        <button
-          type="button"
-          className="artist-play-all-btn"
-          onClick={handlePlayAllClick}
-          disabled={tracks.length === 0}
-          aria-label={`Play all tracks by ${displayName}`}
-          data-testid="artist-play-all-btn"
-        >
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-          <span>Play all</span>
-        </button>
-
-        <button
-          type="button"
-          className="artist-shuffle-btn"
-          onClick={handleShuffleClick}
-          disabled={tracks.length === 0}
-          aria-label={`Shuffle tracks by ${displayName}`}
-          data-testid="artist-shuffle-btn"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zM14.83 13.41l-1.41 1.41 2.13 2.13L13.5 19H19v-5.5l-2.04 2.04z" />
-          </svg>
-          <span>Shuffle</span>
-        </button>
-
-        <button
-          type="button"
-          ref={addAllTriggerBtnRef}
-          className="artist-add-all-btn"
-          onClick={() => setShowAddAllModal(true)}
-          disabled={tracks.length === 0}
-          aria-label={`Add all tracks by ${displayName} to playlist`}
-          data-testid="artist-add-all-btn"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/>
-          </svg>
-          <span>Add all to playlist</span>
-        </button>
-      </div>
-
       {/* Integrated Track List */}
-      <div className="artist-tracklist-section" data-testid="artist-tracklist">
-        {tracks.length === 0 ? (
+      <div className="spotify-tracklist-container artist-tracklist-section" data-testid="artist-tracklist">
+        {isEmpty ? (
           <div className="artist-empty-tracks empty-state" data-testid="artist-empty-tracks">
             <div className="empty-state-icon-wrapper" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -597,6 +826,10 @@ export default function ArtistDetailView({
             onToggleFavorite={onToggleFavorite}
             onAddToPlaylist={onAddToPlaylist}
             onDownloadTrack={onDownloadTrack}
+            savedArtists={savedArtists}
+            savedTracks={savedTracks}
+            onToggleSaveArtist={onToggleSaveArtist}
+            onToggleSaveTrack={onToggleSaveTrack}
           />
         )}
       </div>
