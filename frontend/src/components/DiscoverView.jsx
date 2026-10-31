@@ -1,10 +1,82 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import './DiscoverView.css'
 
 function strHue(str) {
   let h = 0
   for (const c of (str || '')) h = (h * 31 + c.charCodeAt(0)) | 0
   return Math.abs(h) % 360
+}
+
+function formatDuration(sec) {
+  if (!sec || isNaN(sec) || sec <= 0) return ''
+  const m = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+export function matchIndividualLetters(query, ...fields) {
+  if (!query || typeof query !== 'string') return true
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+
+  const targets = fields
+    .filter(f => f != null && f !== false)
+    .map(f => String(f).toLowerCase())
+  if (targets.length === 0) return false
+
+  const combined = targets.join(' ')
+
+  const checkSingle = (term, targetStr) => {
+    if (!term) return true
+    // a) Exact substring match: target.includes(q)
+    if (targetStr.includes(term)) return true
+
+    // b) Sequential subsequence match: characters in query appear in target in sequential order
+    let sIdx = 0
+    for (let i = 0; i < targetStr.length && sIdx < term.length; i++) {
+      if (targetStr[i] === term[sIdx]) {
+        sIdx++
+      }
+    }
+    if (sIdx === term.length) return true
+
+    // c) Individual letter multiset match: every non-whitespace character in the query exists in the target string(s)
+    const termCounts = {}
+    let nonWsCount = 0
+    for (let i = 0; i < term.length; i++) {
+      const ch = term[i]
+      if (ch === ' ' || ch === '\t' || ch === '\n') continue
+      termCounts[ch] = (termCounts[ch] || 0) + 1
+      nonWsCount++
+    }
+    if (nonWsCount === 0) return true
+
+    const targetCounts = {}
+    for (let i = 0; i < targetStr.length; i++) {
+      const ch = targetStr[i]
+      if (ch === ' ' || ch === '\t' || ch === '\n') continue
+      targetCounts[ch] = (targetCounts[ch] || 0) + 1
+    }
+
+    for (const ch in termCounts) {
+      if ((targetCounts[ch] || 0) < termCounts[ch]) {
+        return false
+      }
+    }
+    return true
+  }
+
+  // 1. Direct match against combined target fields
+  if (checkSingle(q, combined)) return true
+
+  // d) Token matching: if query has multiple space-separated words, each word matches either as substring, subsequence, or letter set
+  const tokens = q.split(/\s+/).filter(Boolean)
+  if (tokens.length > 1) {
+    const allTokensMatch = tokens.every(token => checkSingle(token, combined))
+    if (allTokensMatch) return true
+  }
+
+  return false
 }
 
 function isPlaylistName(name) {
@@ -107,6 +179,280 @@ function PlaylistThumb({ playlist, token }) {
   )
 }
 
+function SongThumb({ track, token }) {
+  const [imgErr, setImgErr] = useState(false)
+  const trackPath = track?.path || ''
+  const coverUrl = !imgErr && trackPath && token
+    ? `/api/cover/${trackPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token)}&v=2`
+    : null
+  const hue = strHue(track?.title || track?.name || 'Song')
+
+  if (coverUrl) {
+    return (
+      <div className="discover-song-thumb">
+        <img
+          src={coverUrl}
+          alt=""
+          onError={() => setImgErr(true)}
+          className="discover-song-thumb-img"
+          data-testid="song-thumbnail"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="discover-song-thumb discover-song-thumb-fallback"
+      style={{
+        background: `linear-gradient(135deg, hsl(${hue}, 55%, 30%), hsl(${(hue + 40) % 360}, 50%, 15%))`
+      }}
+      aria-hidden="true"
+      data-testid="song-thumbnail"
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="var(--accent, currentColor)">
+        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+      </svg>
+    </div>
+  )
+}
+
+function DiscoverSongRow({
+  song,
+  idx,
+  token,
+  onPlayTracks,
+  onToggleSaveTrack,
+  onAddToPlaylist,
+  onToggleFavorite,
+  favorites = [],
+  savedTracks = [],
+  onDownloadTrack
+}) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const menuRef = useRef(null)
+  const moreBtnRef = useRef(null)
+
+  const isFav = Array.isArray(favorites) && favorites.some(f => (typeof f === 'string' ? f : f?.path) === song.path)
+  const isSaved = Array.isArray(savedTracks) && savedTracks.some(t => (typeof t === 'string' ? t : t?.path) === song.path)
+
+  const handlePlay = (e) => {
+    if (e) e.stopPropagation()
+    if (onPlayTracks) {
+      onPlayTracks([song], 0, false)
+    }
+  }
+
+  useEffect(() => {
+    if (!isMenuOpen) return
+    const handleClickOutside = (e) => {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(e.target) &&
+        moreBtnRef.current &&
+        !moreBtnRef.current.contains(e.target)
+      ) {
+        setIsMenuOpen(false)
+      }
+    }
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsMenuOpen(false)
+        moreBtnRef.current?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isMenuOpen])
+
+  const handleDownload = (e) => {
+    e.stopPropagation()
+    setIsMenuOpen(false)
+    if (onDownloadTrack) {
+      onDownloadTrack(song)
+    } else {
+      try {
+        const a = document.createElement('a')
+        a.href = `/api/stream/${encodeURIComponent(song.path)}?token=${encodeURIComponent(token || '')}`
+        a.download = song.title || song.name || 'track'
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      } catch {}
+    }
+  }
+
+  return (
+    <div
+      className="discover-song-row"
+      role="button"
+      tabIndex={0}
+      onClick={handlePlay}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          handlePlay(e)
+        }
+      }}
+      data-testid={`discover-song-row-${song.id || song.path}`}
+      aria-label={`Play ${song.title || song.name} by ${song.artist}`}
+    >
+      <div className="discover-song-main">
+        <div className="discover-song-cover-container">
+          <SongThumb track={song} token={token} />
+          <button
+            type="button"
+            className="discover-song-play-btn"
+            onClick={handlePlay}
+            aria-label={`Play ${song.title || song.name}`}
+            title={`Play ${song.title || song.name}`}
+            data-testid="song-play-btn"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="discover-song-meta">
+          <span className="discover-song-title" title={song.title || song.name} data-testid="song-title">
+            {song.title || song.name}
+          </span>
+          <span className="discover-song-artist" title={song.artist} data-testid="song-artist">
+            {song.artist}
+          </span>
+        </div>
+      </div>
+
+      {song.album && (
+        <div className="discover-song-album" title={song.album} data-testid="song-album">
+          {song.album}
+        </div>
+      )}
+
+      {song.duration > 0 && (
+        <div className="discover-song-duration" data-testid="song-duration">
+          {formatDuration(song.duration)}
+        </div>
+      )}
+
+      <div className="discover-song-actions" onClick={(e) => e.stopPropagation()}>
+        {onToggleFavorite && (
+          <button
+            type="button"
+            className={`discover-song-action-btn ${isFav ? 'active' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleFavorite(song)
+            }}
+            aria-label={isFav ? "Remove from favorites" : "Add to favorites"}
+            title={isFav ? "Remove from favorites" : "Add to favorites"}
+            data-testid="song-fav-btn"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill={isFav ? "var(--red, #EF4444)" : "none"} stroke={isFav ? "var(--red, #EF4444)" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+            </svg>
+          </button>
+        )}
+
+        <button
+          type="button"
+          ref={moreBtnRef}
+          className="discover-song-more-btn"
+          onClick={(e) => {
+            e.stopPropagation()
+            setIsMenuOpen(prev => !prev)
+          }}
+          aria-label={`More actions for ${song.title || song.name}`}
+          aria-haspopup="menu"
+          aria-expanded={isMenuOpen}
+          data-testid="song-more-btn"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <circle cx="12" cy="5" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <circle cx="12" cy="19" r="2" />
+          </svg>
+        </button>
+
+        {isMenuOpen && (
+          <div
+            ref={menuRef}
+            className="discover-song-menu"
+            role="menu"
+            aria-label={`Actions for ${song.title || song.name}`}
+            data-testid="song-action-menu"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="discover-song-menu-item"
+              onClick={handlePlay}
+            >
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              <span>Play</span>
+            </button>
+
+            {onAddToPlaylist && (
+              <button
+                type="button"
+                role="menuitem"
+                className="discover-song-menu-item"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setIsMenuOpen(false)
+                  onAddToPlaylist(song)
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                  <path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z" />
+                </svg>
+                <span>Add to Playlist</span>
+              </button>
+            )}
+
+            {onToggleSaveTrack && (
+              <button
+                type="button"
+                role="menuitem"
+                className="discover-song-menu-item"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setIsMenuOpen(false)
+                  onToggleSaveTrack(song, !isSaved)
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
+                  <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                </svg>
+                <span>{isSaved ? "Remove from Library" : "Save to Library"}</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              role="menuitem"
+              className="discover-song-menu-item"
+              onClick={handleDownload}
+            >
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+              </svg>
+              <span>Download</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function DiscoverView({
   token,
   playlists = {},
@@ -122,7 +468,12 @@ export default function DiscoverView({
   savedArtists: propSavedArtists = [],
   savedTracks: propSavedTracks = [],
   onToggleSaveArtist,
-  onToggleSaveTrack
+  onToggleSaveTrack,
+  favorites = [],
+  onToggleFavorite,
+  onAddToPlaylist,
+  onDownloadTrack,
+  onToast
 }) {
   const [searchFilter, setSearchFilter] = useState('')
   const [v2Artists, setV2Artists] = useState([])
@@ -331,34 +682,150 @@ export default function DiscoverView({
     return list.sort((a, b) => a.name.localeCompare(b.name))
   }, [v2Playlists, playlists])
 
+  // Derive all discoverable songs from available sources
+  const discoverableSongs = useMemo(() => {
+    const songsMap = new Map()
+
+    const addOrMerge = (track, defaultPlaylist = '', defaultArtist = '') => {
+      if (!track) return
+      let path = ''
+      let id = ''
+      let title = ''
+      let artist = ''
+      let album = ''
+      let duration = undefined
+      let playlist = defaultPlaylist
+
+      if (typeof track === 'string') {
+        path = track
+        id = track
+      } else if (typeof track === 'object') {
+        path = track.path || track.track_path || track.id || ''
+        id = track.id || track.path || track.track_path || ''
+        title = track.title || track.name || ''
+        artist = track.artist || ''
+        album = track.album || ''
+        duration = track.duration ?? track.total_seconds
+        if (track.playlist) playlist = track.playlist
+      }
+
+      if (!path && !id) return
+      const key = path || id
+
+      const filename = path
+        ? path.split('/').pop().replace(/\.[^/.]+$/, '')
+        : (id || 'Unknown Track')
+
+      const meta = trackMetadata[key] || trackMetadata[path] || {}
+      const finalTitle = title || meta.title || meta.name || filename
+      const finalArtist = artist || meta.artist || defaultArtist || (isArtistName(defaultPlaylist) ? defaultPlaylist : '') || 'Unknown Artist'
+      const finalAlbum = album || meta.album || ''
+      const finalDuration = duration ?? meta.duration ?? meta.total_seconds
+
+      if (!songsMap.has(key)) {
+        songsMap.set(key, {
+          id: id || path,
+          path: path || id,
+          title: finalTitle,
+          name: finalTitle,
+          artist: finalArtist,
+          album: finalAlbum,
+          duration: finalDuration,
+          playlist: playlist || meta.playlist || ''
+        })
+      } else {
+        const existing = songsMap.get(key)
+        if ((!existing.artist || existing.artist === 'Unknown Artist') && finalArtist && finalArtist !== 'Unknown Artist') {
+          existing.artist = finalArtist
+        }
+        if (!existing.album && finalAlbum) {
+          existing.album = finalAlbum
+        }
+        if (existing.duration == null && finalDuration != null) {
+          existing.duration = finalDuration
+        }
+        if (!existing.playlist && playlist) {
+          existing.playlist = playlist
+        }
+      }
+    }
+
+    // 1. Source: trackMetadata entries
+    if (trackMetadata && typeof trackMetadata === 'object') {
+      Object.entries(trackMetadata).forEach(([path, meta]) => {
+        addOrMerge({ path, ...meta })
+      })
+    }
+
+    // 2. Source: playlists (library folders and playlists)
+    if (playlists && typeof playlists === 'object') {
+      Object.entries(playlists).forEach(([plName, tracks]) => {
+        if (Array.isArray(tracks)) {
+          tracks.forEach(track => {
+            addOrMerge(track, plName)
+          })
+        }
+      })
+    }
+
+    // 3. Source: v2Artists (if they have tracks)
+    if (Array.isArray(v2Artists)) {
+      v2Artists.forEach(artistItem => {
+        if (artistItem && Array.isArray(artistItem.tracks)) {
+          artistItem.tracks.forEach(track => {
+            addOrMerge(track, '', artistItem.name)
+          })
+        }
+      })
+    }
+
+    // 4. Source: v2Playlists (if they have tracks)
+    if (Array.isArray(v2Playlists)) {
+      v2Playlists.forEach(playlistItem => {
+        if (playlistItem && Array.isArray(playlistItem.tracks)) {
+          playlistItem.tracks.forEach(track => {
+            addOrMerge(track, playlistItem.title || playlistItem.name || '')
+          })
+        }
+      })
+    }
+
+    return Array.from(songsMap.values())
+  }, [trackMetadata, playlists, v2Artists, v2Playlists])
+
   // Search filtering
   const q = searchFilter.trim().toLowerCase()
 
+  const filteredSongs = useMemo(() => {
+    if (!q) return []
+    return discoverableSongs.filter(song =>
+      matchIndividualLetters(searchFilter, song.title, song.name, song.artist, song.album, song.path)
+    )
+  }, [discoverableSongs, searchFilter, q])
+
   const filteredArtists = useMemo(() => {
     if (!q) return discoverableArtists
-    return discoverableArtists.filter(a => a.name.toLowerCase().includes(q))
-  }, [discoverableArtists, q])
+    return discoverableArtists.filter(a => matchIndividualLetters(searchFilter, a.name))
+  }, [discoverableArtists, searchFilter, q])
 
   const filteredSharedPlaylists = useMemo(() => {
     if (!q) return sharedPlaylists
     return sharedPlaylists.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      (p.curator && p.curator.toLowerCase().includes(q))
+      matchIndividualLetters(searchFilter, p.name, p.curator, p.title, p.description)
     )
-  }, [sharedPlaylists, q])
+  }, [sharedPlaylists, searchFilter, q])
 
   const filteredPublicPlaylists = useMemo(() => {
     if (!q) return publicPlaylists
     return publicPlaylists.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      (p.curator && p.curator.toLowerCase().includes(q))
+      matchIndividualLetters(searchFilter, p.name, p.curator, p.title, p.description)
     )
-  }, [publicPlaylists, q])
+  }, [publicPlaylists, searchFilter, q])
 
   const filteredFolderPlaylists = useMemo(() => {
     if (!q) return folderPlaylists
-    return folderPlaylists.filter(p => p.name.toLowerCase().includes(q))
-  }, [folderPlaylists, q])
+    return folderPlaylists.filter(p => matchIndividualLetters(searchFilter, p.name))
+  }, [folderPlaylists, searchFilter, q])
 
   // Helper to map paths to playable track objects
   const mapTracks = useCallback((playlistName, rawTracks = []) => {
@@ -527,7 +994,7 @@ export default function DiscoverView({
       </div>
 
       {/* Empty Search Result Consolidator or Catalog Sections */}
-      {q && (filteredArtists.length + filteredSharedPlaylists.length + filteredPublicPlaylists.length + filteredFolderPlaylists.length === 0) ? (
+      {q && (filteredSongs.length + filteredArtists.length + filteredSharedPlaylists.length + filteredPublicPlaylists.length + filteredFolderPlaylists.length === 0) ? (
         <div className="discover-empty-state discover-empty-search" data-testid="discover-empty-search" data-testid-alt="discover-artists-empty">
           <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="8" />
@@ -550,6 +1017,36 @@ export default function DiscoverView({
         </div>
       ) : (
         <>
+          {/* SECTION 0: SONGS (when search query is active and songs match) */}
+          {q && filteredSongs.length > 0 && (
+            <section className="discover-section discover-songs-section" data-testid="discover-songs-section">
+              <div className="discover-section-header">
+                <h2 className="discover-section-title" data-testid="discover-songs-heading">Songs</h2>
+                <span className="discover-section-count" data-testid="discover-songs-count">
+                  {filteredSongs.length} {filteredSongs.length === 1 ? 'song' : 'songs'}
+                </span>
+              </div>
+
+              <div className="discover-songs-list" data-testid="discover-songs-list" role="list">
+                {filteredSongs.map((song, idx) => (
+                  <DiscoverSongRow
+                    key={song.id || song.path || idx}
+                    song={song}
+                    idx={idx}
+                    token={token}
+                    onPlayTracks={onPlayTracks}
+                    onToggleSaveTrack={onToggleSaveTrack}
+                    onAddToPlaylist={onAddToPlaylist}
+                    onToggleFavorite={onToggleFavorite}
+                    favorites={favorites}
+                    savedTracks={propSavedTracks}
+                    onDownloadTrack={onDownloadTrack}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* SECTION 1: ARTISTS */}
           {(!q || filteredArtists.length > 0) && (
             <section className="discover-section" data-testid="discover-artists-section">

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
-import DiscoverView from '../components/DiscoverView.jsx'
+import DiscoverView, { matchIndividualLetters } from '../components/DiscoverView.jsx'
 
 describe('DiscoverView Component', () => {
   beforeEach(() => {
@@ -594,5 +594,223 @@ describe('DiscoverView Component', () => {
 
     // Public Anthems is in the public section
     expect(screen.getByTestId('public-playlist-card-pub-1')).toBeInTheDocument()
+  })
+
+  describe('matchIndividualLetters helper algorithm', () => {
+    it('returns true for empty or blank query', () => {
+      expect(matchIndividualLetters('', 'Blinding Lights')).toBe(true)
+      expect(matchIndividualLetters('   ', 'Blinding Lights')).toBe(true)
+      expect(matchIndividualLetters(null, 'Blinding Lights')).toBe(true)
+      expect(matchIndividualLetters(undefined, 'Blinding Lights')).toBe(true)
+    })
+
+    it('matches exact substring case-insensitively', () => {
+      expect(matchIndividualLetters('blind', 'Blinding Lights')).toBe(true)
+      expect(matchIndividualLetters('LIGHTS', 'Blinding Lights')).toBe(true)
+    })
+
+    it('matches sequential subsequence', () => {
+      expect(matchIndividualLetters('bl', 'Blinding Lights')).toBe(true)
+      expect(matchIndividualLetters('bldng', 'Blinding Lights')).toBe(true)
+    })
+
+    it('matches individual letters out of order (multiset matching)', () => {
+      // "bldng lghts"
+      expect(matchIndividualLetters('bldng lghts', 'Blinding Lights')).toBe(true)
+      // "bligh"
+      expect(matchIndividualLetters('bligh', 'Blinding Lights')).toBe(true)
+      // Shuffled letters of "lights" -> "ghilt"
+      expect(matchIndividualLetters('ghilt', 'Lights')).toBe(true)
+    })
+
+    it('matches multi-word tokens across fields', () => {
+      expect(matchIndividualLetters('weeknd lights', 'Blinding Lights', 'The Weeknd')).toBe(true)
+      expect(matchIndividualLetters('blnding wknd', 'Blinding Lights', 'The Weeknd')).toBe(true)
+    })
+
+    it('rejects characters not present in target or exceeding char count', () => {
+      expect(matchIndividualLetters('xyz', 'Blinding Lights')).toBe(false)
+      // "Lights" only has one 'i', so 'ii' should fail
+      expect(matchIndividualLetters('ii', 'Lights')).toBe(false)
+    })
+  })
+
+  describe('DiscoverView Song Search and Flexible Letter Matching', () => {
+    it('searching for a song by exact title shows the song in Songs section', async () => {
+      global.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({ ok: true, json: async () => [] })
+      )
+
+      const mockTrackMetadata = {
+        'pop/Blinding Lights.mp3': {
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          album: 'After Hours',
+          duration: 200
+        },
+        'rock/Bohemian Rhapsody.mp3': {
+          title: 'Bohemian Rhapsody',
+          artist: 'Queen',
+          album: 'A Night at the Opera',
+          duration: 354
+        }
+      }
+
+      render(
+        <DiscoverView
+          token="test-token"
+          playlists={{}}
+          trackMetadata={mockTrackMetadata}
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('discover-view')).toBeInTheDocument()
+      })
+
+      // When search query is empty, Songs section is not shown
+      expect(screen.queryByTestId('discover-songs-section')).not.toBeInTheDocument()
+
+      const searchInput = screen.getByTestId('discover-search-input')
+      fireEvent.change(searchInput, { target: { value: 'Blinding Lights' } })
+
+      expect(screen.getByTestId('discover-songs-section')).toBeInTheDocument()
+      expect(screen.getByTestId('discover-songs-heading')).toHaveTextContent('Songs')
+      expect(screen.getByTestId('discover-songs-count')).toHaveTextContent('1 song')
+      expect(screen.getByText('Blinding Lights')).toBeInTheDocument()
+      expect(screen.getByText('The Weeknd')).toBeInTheDocument()
+      expect(screen.queryByText('Bohemian Rhapsody')).not.toBeInTheDocument()
+    })
+
+    it('searching with letters out of order or individual letters (e.g. "bldng lghts" or "bligh") matches and shows the song', async () => {
+      global.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({ ok: true, json: async () => [] })
+      )
+
+      const mockTrackMetadata = {
+        'pop/Blinding Lights.mp3': {
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          album: 'After Hours',
+          duration: 200
+        }
+      }
+
+      render(
+        <DiscoverView
+          token="test-token"
+          playlists={{}}
+          trackMetadata={mockTrackMetadata}
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('discover-view')).toBeInTheDocument()
+      })
+
+      const searchInput = screen.getByTestId('discover-search-input')
+
+      // Test "bldng lghts"
+      fireEvent.change(searchInput, { target: { value: 'bldng lghts' } })
+      expect(screen.getByTestId('discover-songs-section')).toBeInTheDocument()
+      expect(screen.getByText('Blinding Lights')).toBeInTheDocument()
+
+      // Test "bligh"
+      fireEvent.change(searchInput, { target: { value: 'bligh' } })
+      expect(screen.getByTestId('discover-songs-section')).toBeInTheDocument()
+      expect(screen.getByText('Blinding Lights')).toBeInTheDocument()
+    })
+
+    it('clicking the song calls onPlayTracks with [song], 0, false', async () => {
+      global.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({ ok: true, json: async () => [] })
+      )
+
+      const mockTrackMetadata = {
+        'pop/Blinding Lights.mp3': {
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          album: 'After Hours',
+          duration: 200
+        }
+      }
+
+      const handlePlayTracks = vi.fn()
+
+      render(
+        <DiscoverView
+          token="test-token"
+          playlists={{}}
+          trackMetadata={mockTrackMetadata}
+          onPlayTracks={handlePlayTracks}
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('discover-view')).toBeInTheDocument()
+      })
+
+      const searchInput = screen.getByTestId('discover-search-input')
+      fireEvent.change(searchInput, { target: { value: 'bligh' } })
+
+      const songRow = screen.getByTestId('discover-song-row-pop/Blinding Lights.mp3')
+      expect(songRow).toBeInTheDocument()
+
+      // Clicking the row invokes onPlayTracks
+      fireEvent.click(songRow)
+      expect(handlePlayTracks).toHaveBeenCalledTimes(1)
+      expect(handlePlayTracks).toHaveBeenCalledWith(
+        [expect.objectContaining({
+          path: 'pop/Blinding Lights.mp3',
+          title: 'Blinding Lights',
+          artist: 'The Weeknd'
+        })],
+        0,
+        false
+      )
+
+      // Clicking the play button also invokes onPlayTracks
+      const playBtn = screen.getByTestId('song-play-btn')
+      fireEvent.click(playBtn)
+      expect(handlePlayTracks).toHaveBeenCalledTimes(2)
+    })
+
+    it('empty state only appears when neither songs, artists, nor playlists match', async () => {
+      global.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({ ok: true, json: async () => [] })
+      )
+
+      const mockTrackMetadata = {
+        'pop/Blinding Lights.mp3': {
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          duration: 200
+        }
+      }
+
+      render(
+        <DiscoverView
+          token="test-token"
+          playlists={{}}
+          trackMetadata={mockTrackMetadata}
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('discover-view')).toBeInTheDocument()
+      })
+
+      const searchInput = screen.getByTestId('discover-search-input')
+
+      // Query that matches the song: empty state should NOT be rendered
+      fireEvent.change(searchInput, { target: { value: 'bligh' } })
+      expect(screen.queryByTestId('discover-empty-search')).not.toBeInTheDocument()
+      expect(screen.getByTestId('discover-songs-section')).toBeInTheDocument()
+
+      // Query that matches neither songs, artists, nor playlists: empty state should appear
+      fireEvent.change(searchInput, { target: { value: 'ZZZZNonExistent999' } })
+      expect(screen.getByTestId('discover-empty-search')).toBeInTheDocument()
+      expect(screen.queryByTestId('discover-songs-section')).not.toBeInTheDocument()
+    })
   })
 })

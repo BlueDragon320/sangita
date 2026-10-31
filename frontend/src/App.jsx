@@ -2448,6 +2448,11 @@ export default function App() {
                 savedTracks={savedTracks}
                 onToggleSaveArtist={handleToggleSaveArtist}
                 onToggleSaveTrack={handleToggleSaveTrack}
+                favorites={favorites}
+                onToggleFavorite={toggleFavorite}
+                onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
+                onDownloadTrack={downloadTrack}
+                onToast={(msg) => setToastNotification(msg)}
               />
             ) : view === 'artist' ? (
               <ArtistDetailView
