@@ -322,6 +322,60 @@ export default function App() {
     return results;
   }, [searchQuery, playlists, trackMetadata, savedTracks]);
 
+  const searchArtists = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.trim().toLowerCase();
+    const map = new Map();
+
+    (savedArtists || []).forEach(a => {
+      const name = typeof a === 'object' ? (a.name || a.id) : a;
+      if (name && name.toLowerCase().includes(q)) {
+        map.set(name, { id: typeof a === 'object' ? (a.id || name) : name, name, track_count: a.track_count || 0, image_url: a.image_url });
+      }
+    });
+
+    Object.values(trackMetadata || {}).forEach(meta => {
+      if (meta?.artist && meta.artist.toLowerCase().includes(q)) {
+        const art = meta.artist.trim();
+        if (!map.has(art)) {
+          map.set(art, { id: art, name: art, track_count: 1 });
+        } else {
+          map.get(art).track_count += 1;
+        }
+      }
+    });
+
+    Object.keys(playlists || {}).forEach(plName => {
+      if (plName !== 'Favorites' && plName !== 'Library' && plName.toLowerCase().includes(q)) {
+        if (!map.has(plName)) {
+          map.set(plName, { id: plName, name: plName, track_count: (playlists[plName] || []).length });
+        }
+      }
+    });
+
+    return Array.from(map.values()).slice(0, 8);
+  }, [searchQuery, savedArtists, trackMetadata, playlists]);
+
+  const searchPlaylists = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.trim().toLowerCase();
+    const list = [];
+    Object.entries(playlists || {}).forEach(([name, paths]) => {
+      if (name !== 'Favorites' && name.toLowerCase().includes(q)) {
+        const meta = playlistMetadata[name] || {};
+        list.push({
+          id: meta.id || name,
+          name: name,
+          title: name,
+          track_count: (paths || []).length,
+          first_track_path: paths?.[0],
+          ...meta
+        });
+      }
+    });
+    return list.slice(0, 8);
+  }, [searchQuery, playlists, playlistMetadata]);
+
   useEffect(() => { queueRef.current     = queue        }, [queue])
   useEffect(() => { indexRef.current     = currentIndex }, [currentIndex])
   useEffect(() => {
@@ -2543,7 +2597,7 @@ export default function App() {
                   <h1 style={{ fontSize: 'clamp(2.5rem, 8vw, 4rem)', fontWeight: 800 }}>Search Results</h1>
                   <p className="hero-subtitle" style={{ marginTop: 4 }}>Showing matches for "{searchQuery}"</p>
                 </div>
-                {searchResults.length === 0 ? (
+                {searchResults.length === 0 && searchArtists.length === 0 && searchPlaylists.length === 0 ? (
                   <div className="empty-state" style={{ marginTop: 40 }}>
                     <svg viewBox="0 0 24 24" width="48" height="48" fill="var(--text-dim)" style={{ opacity: 0.3 }}>
                       <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
@@ -2570,7 +2624,74 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <TrackList
+                  <>
+                    {searchArtists.length > 0 && (
+                      <div style={{ padding: '0 48px 24px' }} data-testid="search-artists-section">
+                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 14 }}>Artists</h2>
+                        <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 8 }}>
+                          {searchArtists.map(artist => (
+                            <div
+                              key={artist.id || artist.name}
+                              onClick={() => handleSelectArtist(artist.id, artist.name, artist)}
+                              style={{
+                                background: 'var(--card-bg, rgba(255,255,255,0.05))',
+                                borderRadius: 12,
+                                padding: 16,
+                                textAlign: 'center',
+                                cursor: 'pointer',
+                                minWidth: 140,
+                                border: '1px solid var(--border, rgba(255,255,255,0.08))',
+                                transition: 'transform 0.15s ease, background 0.15s ease'
+                              }}
+                            >
+                              <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent, #10b981), #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px', fontSize: '1.5rem', fontWeight: 700, color: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>
+                                {artist.name.slice(0, 1).toUpperCase()}
+                              </div>
+                              <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text, #fff)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{artist.name}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-dim, #94a3b8)', marginTop: 4 }}>Artist</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {searchPlaylists.length > 0 && (
+                      <div style={{ padding: '0 48px 24px' }} data-testid="search-playlists-section">
+                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 14 }}>Playlists</h2>
+                        <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 8 }}>
+                          {searchPlaylists.map(pl => (
+                            <div
+                              key={pl.id || pl.name}
+                              onClick={() => handleSidebarSelect(pl.name, pl)}
+                              style={{
+                                background: 'var(--card-bg, rgba(255,255,255,0.05))',
+                                borderRadius: 12,
+                                padding: 16,
+                                cursor: 'pointer',
+                                minWidth: 160,
+                                border: '1px solid var(--border, rgba(255,255,255,0.08))'
+                              }}
+                            >
+                              <div style={{ width: '100%', height: 90, borderRadius: 8, background: 'linear-gradient(135deg, rgba(16,185,129,0.25), rgba(6,78,59,0.35))', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+                                <svg viewBox="0 0 24 24" width="30" height="30" fill="var(--accent, #10b981)">
+                                  <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                                </svg>
+                              </div>
+                              <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text, #fff)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pl.title || pl.name}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-dim, #94a3b8)', marginTop: 4 }}>{pl.track_count} tracks</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {searchResults.length > 0 && (
+                      <div style={{ padding: '0 48px 12px' }}>
+                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Songs</h2>
+                      </div>
+                    )}
+
+                    <TrackList
                     tracks={searchResults}
                     currentIndex={searchResults.findIndex(t => t.path === currentTrack?.path)}
                     isPlaying={isPlaying}
@@ -2591,9 +2712,10 @@ export default function App() {
                     onToggleSaveArtist={handleToggleSaveArtist}
                     onToggleSaveTrack={handleToggleSaveTrack}
                   />
-                )}
-              </>
-            ) : ((Object.keys(playlists).length === 0 || !currentPlaylist) && !activePlaylistMeta) ? (
+                </>
+              )}
+            </>
+          ) : ((Object.keys(playlists).length === 0 || !currentPlaylist) && !activePlaylistMeta) ? (
               <div className="empty-state" data-testid="empty-library-state" style={{ marginTop: 80 }}>
                 <svg viewBox="0 0 24 24" width="64" height="64" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
                 <h3>Your library is empty</h3>

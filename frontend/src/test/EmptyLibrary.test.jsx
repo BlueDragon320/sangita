@@ -186,7 +186,7 @@ describe('Empty Personal Library UX & Functionality', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Morning Sun')).toBeInTheDocument()
-        expect(screen.getByText('Acoustic Dreams')).toBeInTheDocument()
+        expect(screen.getAllByText('Acoustic Dreams')[0]).toBeInTheDocument()
       })
     })
   })

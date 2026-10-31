@@ -66,20 +66,26 @@ export function matchIndividualLetters(query, ...fields) {
     return true
   }
 
-  // 1. Direct match against combined target fields
-  if (checkSingle(q, combined)) return true
+  // 1. Direct exact substring match against combined target fields
+  if (combined.includes(q)) return true
 
-  // d) Token matching: if query has multiple space-separated words, each word matches either as substring, subsequence, or letter set
-  const tokens = q.split(/\s+/).filter(Boolean)
-  if (tokens.length > 1) {
+  // 2. Token-based word match: all query tokens must match either as substring or word prefix or individual letters in the combined targets
+  const rawTokens = q.split(/\s+/).filter(Boolean)
+  const alphaTokens = rawTokens.filter(t => /[a-z0-9]/i.test(t))
+  const tokens = alphaTokens.length > 0 ? alphaTokens : rawTokens
+
+  if (tokens.length > 0) {
     const allTokensMatch = tokens.every(token => checkSingle(token, combined))
     if (allTokensMatch) return true
   }
 
+  // 3. Fallback check for single full query string against combined (subsequence or multiset)
+  if (checkSingle(q, combined)) return true
+
   return false
 }
 
-function isPlaylistName(name) {
+export function isPlaylistName(name) {
   if (name === 'Favorites' || name === 'Library') return true
   const lower = (name || '').toLowerCase()
   return (
@@ -96,11 +102,11 @@ function isPlaylistName(name) {
   )
 }
 
-function isArtistName(name) {
+export function isArtistName(name) {
   return !isPlaylistName(name)
 }
 
-function ArtistAvatar({ artist, token }) {
+export function ArtistAvatar({ artist, token }) {
   const [imgErr, setImgErr] = useState(false)
   const coverUrl = artist?.image_url || (artist?.first_track_path
     ? `/api/cover/${artist.first_track_path.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token || '')}&v=2`
@@ -139,7 +145,7 @@ function ArtistAvatar({ artist, token }) {
   )
 }
 
-function PlaylistThumb({ playlist, token }) {
+export function PlaylistThumb({ playlist, token }) {
   const [imgErr, setImgErr] = useState(false)
   const firstTrack = playlist?.first_track_path || (Array.isArray(playlist?.tracks) ? (typeof playlist.tracks[0] === 'string' ? playlist.tracks[0] : playlist.tracks[0]?.path) : null)
   const coverUrl = playlist?.image_url || (firstTrack
@@ -796,36 +802,45 @@ export default function DiscoverView({
   // Search filtering
   const q = searchFilter.trim().toLowerCase()
 
-  const filteredSongs = useMemo(() => {
-    if (!q) return []
-    return discoverableSongs.filter(song =>
-      matchIndividualLetters(searchFilter, song.title, song.name, song.artist, song.album, song.path)
-    )
-  }, [discoverableSongs, searchFilter, q])
-
   const filteredArtists = useMemo(() => {
     if (!q) return discoverableArtists
-    return discoverableArtists.filter(a => matchIndividualLetters(searchFilter, a.name))
+    const hasArtistKeyword = /\b(artist|artists|singer|band)\b/i.test(searchFilter)
+    return discoverableArtists.filter(a =>
+      matchIndividualLetters(searchFilter, a.name, hasArtistKeyword ? 'artist' : null)
+    )
   }, [discoverableArtists, searchFilter, q])
 
   const filteredSharedPlaylists = useMemo(() => {
     if (!q) return sharedPlaylists
+    const hasPlaylistKeyword = /\b(playlist|playlists)\b/i.test(searchFilter)
     return sharedPlaylists.filter(p =>
-      matchIndividualLetters(searchFilter, p.name, p.curator, p.title, p.description)
+      matchIndividualLetters(searchFilter, p.name, p.curator, p.title, p.description, hasPlaylistKeyword ? 'playlist' : null)
     )
   }, [sharedPlaylists, searchFilter, q])
 
   const filteredPublicPlaylists = useMemo(() => {
     if (!q) return publicPlaylists
+    const hasPlaylistKeyword = /\b(playlist|playlists)\b/i.test(searchFilter)
     return publicPlaylists.filter(p =>
-      matchIndividualLetters(searchFilter, p.name, p.curator, p.title, p.description)
+      matchIndividualLetters(searchFilter, p.name, p.curator, p.title, p.description, hasPlaylistKeyword ? 'playlist' : null)
     )
   }, [publicPlaylists, searchFilter, q])
 
   const filteredFolderPlaylists = useMemo(() => {
     if (!q) return folderPlaylists
-    return folderPlaylists.filter(p => matchIndividualLetters(searchFilter, p.name))
+    const hasPlaylistKeyword = /\b(playlist|playlists)\b/i.test(searchFilter)
+    return folderPlaylists.filter(p =>
+      matchIndividualLetters(searchFilter, p.name, hasPlaylistKeyword ? 'playlist' : null)
+    )
   }, [folderPlaylists, searchFilter, q])
+
+  const filteredSongs = useMemo(() => {
+    if (!q) return []
+    const hasSongKeyword = /\b(song|songs|track|tracks)\b/i.test(searchFilter)
+    return discoverableSongs.filter(song =>
+      matchIndividualLetters(searchFilter, song.title, song.name, song.artist, song.album, song.path, hasSongKeyword ? 'song' : null)
+    )
+  }, [discoverableSongs, searchFilter, q])
 
   // Helper to map paths to playable track objects
   const mapTracks = useCallback((playlistName, rawTracks = []) => {
@@ -994,7 +1009,7 @@ export default function DiscoverView({
       </div>
 
       {/* Empty Search Result Consolidator or Catalog Sections */}
-      {q && (filteredSongs.length + filteredArtists.length + filteredSharedPlaylists.length + filteredPublicPlaylists.length + filteredFolderPlaylists.length === 0) ? (
+      {q && (filteredArtists.length + filteredSharedPlaylists.length + filteredPublicPlaylists.length + filteredFolderPlaylists.length + filteredSongs.length === 0) ? (
         <div className="discover-empty-state discover-empty-search" data-testid="discover-empty-search" data-testid-alt="discover-artists-empty">
           <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="8" />
@@ -1017,36 +1032,6 @@ export default function DiscoverView({
         </div>
       ) : (
         <>
-          {/* SECTION 0: SONGS (when search query is active and songs match) */}
-          {q && filteredSongs.length > 0 && (
-            <section className="discover-section discover-songs-section" data-testid="discover-songs-section">
-              <div className="discover-section-header">
-                <h2 className="discover-section-title" data-testid="discover-songs-heading">Songs</h2>
-                <span className="discover-section-count" data-testid="discover-songs-count">
-                  {filteredSongs.length} {filteredSongs.length === 1 ? 'song' : 'songs'}
-                </span>
-              </div>
-
-              <div className="discover-songs-list" data-testid="discover-songs-list" role="list">
-                {filteredSongs.map((song, idx) => (
-                  <DiscoverSongRow
-                    key={song.id || song.path || idx}
-                    song={song}
-                    idx={idx}
-                    token={token}
-                    onPlayTracks={onPlayTracks}
-                    onToggleSaveTrack={onToggleSaveTrack}
-                    onAddToPlaylist={onAddToPlaylist}
-                    onToggleFavorite={onToggleFavorite}
-                    favorites={favorites}
-                    savedTracks={propSavedTracks}
-                    onDownloadTrack={onDownloadTrack}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
           {/* SECTION 1: ARTISTS */}
           {(!q || filteredArtists.length > 0) && (
             <section className="discover-section" data-testid="discover-artists-section">
@@ -1424,6 +1409,36 @@ export default function DiscoverView({
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {/* SECTION: SONGS (when search query is active and songs match - displayed AFTER artists & playlists) */}
+      {q && filteredSongs.length > 0 && (
+        <section className="discover-section discover-songs-section" data-testid="discover-songs-section">
+          <div className="discover-section-header">
+            <h2 className="discover-section-title" data-testid="discover-songs-heading">Songs</h2>
+            <span className="discover-section-count" data-testid="discover-songs-count">
+              {filteredSongs.length} {filteredSongs.length === 1 ? 'song' : 'songs'}
+            </span>
+          </div>
+
+          <div className="discover-songs-list" data-testid="discover-songs-list" role="list">
+            {filteredSongs.map((song, idx) => (
+              <DiscoverSongRow
+                key={song.id || song.path || idx}
+                song={song}
+                idx={idx}
+                token={token}
+                onPlayTracks={onPlayTracks}
+                onToggleSaveTrack={onToggleSaveTrack}
+                onAddToPlaylist={onAddToPlaylist}
+                onToggleFavorite={onToggleFavorite}
+                favorites={favorites}
+                savedTracks={propSavedTracks}
+                onDownloadTrack={onDownloadTrack}
+              />
+            ))}
+          </div>
         </section>
       )}
         </>

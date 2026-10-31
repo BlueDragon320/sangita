@@ -812,5 +812,64 @@ describe('DiscoverView Component', () => {
       expect(screen.getByTestId('discover-empty-search')).toBeInTheDocument()
       expect(screen.queryByTestId('discover-songs-section')).not.toBeInTheDocument()
     })
+
+    it('displays matching artists and playlists before songs section when query matches both', async () => {
+      global.fetch = vi.fn().mockImplementation((url) => {
+        if (url.includes('/api/v2/artists')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              { id: 'weeknd', name: 'The Weeknd', track_count: 5, tracks: [] }
+            ]
+          })
+        }
+        if (url.includes('/api/v2/playlists')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              { id: 'weeknd-hits', title: 'The Weeknd Hits', is_public: true, track_count: 10, tracks: [] }
+            ]
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      })
+
+      const mockTrackMetadata = {
+        'pop/Blinding Lights.mp3': {
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          album: 'After Hours',
+          duration: 200
+        }
+      }
+
+      render(
+        <DiscoverView
+          token="test-token"
+          playlists={{}}
+          trackMetadata={mockTrackMetadata}
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByTestId('discover-view')).toBeInTheDocument()
+      })
+
+      const searchInput = screen.getByTestId('discover-search-input')
+      fireEvent.change(searchInput, { target: { value: 'Weeknd' } })
+
+      // Artists section and Playlists section appear
+      const artistsSection = screen.getByTestId('discover-artists-section')
+      const publicPlaylistsSection = screen.getByTestId('discover-public-playlists-section')
+      const songsSection = screen.getByTestId('discover-songs-section')
+
+      expect(artistsSection).toBeInTheDocument()
+      expect(publicPlaylistsSection).toBeInTheDocument()
+      expect(songsSection).toBeInTheDocument()
+
+      // Node order in DOM: artists before songs, and playlists before songs
+      expect(artistsSection.compareDocumentPosition(songsSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(publicPlaylistsSection.compareDocumentPosition(songsSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
   })
 })
