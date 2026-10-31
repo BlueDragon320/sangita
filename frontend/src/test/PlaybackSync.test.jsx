@@ -14,7 +14,15 @@ const sync = vi.hoisted(() => ({
 vi.mock('../hooks/useDeviceSync.js', () => ({
   useDeviceSync: ({ onRemoteCommand }) => {
     sync.command = onRemoteCommand
-    return { ...sync, devices: [], isActiveDevice: sync.active, syncState: sync.state }
+    return {
+      ...sync,
+      devices: [
+        { deviceId: 'web', deviceName: 'Browser', deviceType: 'desktop' },
+        { deviceId: 'phone', deviceName: 'Phone', deviceType: 'mobile' },
+      ],
+      isActiveDevice: sync.active,
+      syncState: sync.state
+    }
   },
 }))
 vi.mock('../components/Login.jsx', () => ({
@@ -92,7 +100,7 @@ describe('authoritative browser playback updates', () => {
     expect(player).toHaveTextContent('Playing on')
   })
 
-  it('passes explicit trackId when claiming device while passive (F1)', async () => {
+  it('passes explicit trackId when transferring playback to this device while passive (F1)', async () => {
     localStorage.setItem('sangita_token', 'test-token')
     sync.active = false
     sync.state = {
@@ -103,13 +111,16 @@ describe('authoritative browser playback updates', () => {
       durationMs: 120000,
       isPlaying: true
     }
-    sync.claimActiveDevice.mockClear()
+    sync.transferPlayback.mockClear()
     sync.broadcastState.mockClear()
 
     render(<App />)
-    const claimBtn = await screen.findByRole('button', { name: 'Play on this device' })
-    fireEvent.click(claimBtn)
+    const devicesBtn = await screen.findByTestId('player-devices-btn')
+    fireEvent.click(devicesBtn)
 
-    expect(sync.claimActiveDevice).toHaveBeenCalledWith('Old/song.mp3')
+    const switchBtn = await screen.findByTestId('transfer-btn-web')
+    fireEvent.click(switchBtn)
+
+    expect(sync.transferPlayback).toHaveBeenCalledWith('web')
   })
 })

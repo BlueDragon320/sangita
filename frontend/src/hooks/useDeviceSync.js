@@ -135,7 +135,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
       // Ordinary echoes can be ignored, but skipping this one loses the song
       // or leaves the sender displaying stale playback information.
       if (state?.originDeviceId === deviceId.current && !state?.isTransferHandoff) return;
-      setSyncState(state);
+      setSyncState(prev => (prev && state) ? { ...prev, ...state, trackId: state.trackId || prev.trackId } : state);
       const amActive = !state?.activeDeviceId || state.activeDeviceId === deviceId.current;
       setIsActiveDevice(amActive);
       isActiveRef.current = amActive;
@@ -146,7 +146,12 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
     socket.on('POSITION_SYNC', (state) => {
       if (state.originDeviceId === deviceId.current) return;
       if (!isActiveRef.current) {
-        setSyncState(prev => prev ? { ...prev, ...state, isTransferHandoff: false } : state);
+        setSyncState(prev => prev ? {
+          ...prev,
+          ...state,
+          trackId: state.trackId || prev.trackId,
+          isTransferHandoff: false
+        } : state);
       }
     });
     const handleCmd = (command) => {

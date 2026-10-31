@@ -549,7 +549,9 @@ export default function App() {
   useEffect(() => { sendRemoteRef.current = sendRemoteControl }, [sendRemoteControl])
 
   const currentTrack = useMemo(() => {
-    const curPath = loadedTrackIdRef.current || syncState?.trackId;
+    const curPath = !isActiveDevice
+      ? (syncState?.trackId || loadedTrackIdRef.current)
+      : (loadedTrackIdRef.current || syncState?.trackId);
     if (!curPath) return null;
     if (currentIndex >= 0 && queue[currentIndex]?.path === curPath) return queue[currentIndex];
     const inQueue = queue.find(t => t.path === curPath);
@@ -579,7 +581,7 @@ export default function App() {
       playlist: plName,
       artist: artistName,
     };
-  }, [loadedTrackIdRef.current, syncState?.trackId, currentIndex, queue, playlists]);
+  }, [isActiveDevice, loadedTrackIdRef.current, syncState?.trackId, currentIndex, queue, playlists]);
 
   useEffect(() => {
     if (!currentTrack?.path || !token) {
@@ -830,6 +832,9 @@ export default function App() {
       }
     } else {
       wasActiveRef.current = false;
+      if (syncState?.trackId) {
+        loadedTrackIdRef.current = syncState.trackId;
+      }
       if (audioRef.current && !audioRef.current.paused) {
         audioRef.current.pause(); setIsLocalPlaying(false)
       }

@@ -377,12 +377,16 @@ function Player({
       ? Math.round(syncState.volume > 1 ? syncState.volume : syncState.volume * 100)
       : 80
 
-    const activeTrack = track || (syncState?.trackId ? {
-      id: syncState.trackId,
-      path: syncState.trackId,
-      name: syncState.trackId.split('/').pop().replace(/\.[^/.]+$/, ''),
-      playlist: 'Remote Track',
-    } : null)
+    const remoteTrackId = syncState?.trackId;
+    const activeTrack = (remoteTrackId && track?.path === remoteTrackId)
+      ? track
+      : (remoteTrackId ? {
+          id: remoteTrackId,
+          path: remoteTrackId,
+          name: remoteTrackId.split('/').pop().replace(/\.[^/.]+$/, ''),
+          title: remoteTrackId.split('/').pop().replace(/\.[^/.]+$/, ''),
+          playlist: 'Remote Track',
+        } : track);
 
     const remoteTitle = activeTrack ? (activeTrack.title || activeTrack.name || '') : ''
     const remoteArtist = activeTrack ? (activeTrack.artist || activeTrack.playlist || playlist || 'Unknown Artist') : ''
@@ -438,14 +442,6 @@ function Player({
               </button>
             </div>
           )}
-          <button
-            className="player-claim-btn"
-            onClick={onClaimDevice}
-            aria-label="Play on this device"
-            title="Play on this device"
-          >
-            Play on this device
-          </button>
         </div>
         <div className="player-center">
           {requiresUserGesture ? (
@@ -542,9 +538,6 @@ function Player({
             >
               <DevicesIcon />
             </button>
-            <span className="player-device-status-badge" title="Active playback device">
-              {activeDeviceName ? `Playing on ${activeDeviceName}` : 'Remote device'}
-            </span>
           </div>
           {syncState?.volume !== undefined && (
             <>
@@ -741,9 +734,6 @@ function Player({
           >
             <DevicesIcon />
           </button>
-          <span className="player-device-status-badge" title="Active playback device">
-            This device
-          </span>
         </div>
         <button
           className="btn-icon"

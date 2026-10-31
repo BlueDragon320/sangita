@@ -214,6 +214,7 @@ describe('Player Component & Controls', () => {
   it('renders synchronized timestamp and active device name when playing on a remote device', () => {
     const handleSendRemote = vi.fn()
     const handleClaimDevice = vi.fn()
+    const handleOpenDevices = vi.fn()
 
     render(
       <Player
@@ -247,7 +248,7 @@ describe('Player Component & Controls', () => {
         onSendRemote={handleSendRemote}
         devices={[{ deviceId: 'dev-2', deviceName: 'Chrome on Living Room TV' }]}
         myDeviceId="dev-1"
-        onOpenDevices={vi.fn()}
+        onOpenDevices={handleOpenDevices}
       />
     )
 
@@ -256,10 +257,10 @@ describe('Player Component & Controls', () => {
     expect(screen.getByText('2:05')).toBeInTheDocument()
     expect(screen.getByText('5:54')).toBeInTheDocument()
 
-    // Clicking "Play on this device" triggers onClaimDevice
-    const claimBtn = screen.getByText('Play on this device')
-    fireEvent.click(claimBtn)
-    expect(handleClaimDevice).toHaveBeenCalledTimes(1)
+    // Clicking devices button triggers onOpenDevices
+    const devicesBtn = screen.getByTestId('player-devices-btn')
+    fireEvent.click(devicesBtn)
+    expect(handleOpenDevices).toHaveBeenCalledTimes(1)
   })
 
   it('renders full-width top progress bar matching mobile miniplayer', () => {
