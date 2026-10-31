@@ -131,7 +131,10 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
         setTransferStatus('idle');
       }
 
-      if (state?.originDeviceId && state.originDeviceId === deviceId.current) return;
+      // The server also sends the authoritative handoff to the requester.
+      // Ordinary echoes can be ignored, but skipping this one loses the song
+      // or leaves the sender displaying stale playback information.
+      if (state?.originDeviceId === deviceId.current && !state?.isTransferHandoff) return;
       setSyncState(state);
       const amActive = !state?.activeDeviceId || state.activeDeviceId === deviceId.current;
       setIsActiveDevice(amActive);
@@ -247,7 +250,12 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
           isShuffle: false,
         };
         const updatedPos = currentPosMs !== undefined ? currentPosMs : base.positionMs;
-        return { ...base, activeDeviceId: targetDeviceId, positionMs: updatedPos, updatedAt: Date.now() };
+        const currentTrackId = wasActive ? getTrackIdRef.current?.() : null;
+        return { ...base, activeDeviceId: targetDeviceId,
+          trackId: currentTrackId || base.trackId,
+          positionMs: updatedPos, durationMs: currentDurMs ?? base.durationMs,
+          isPlaying: wasActive && audioRef.current ? !audioRef.current.paused && !audioRef.current.ended : base.isPlaying,
+          updatedAt: Date.now() };
       });
     }
 

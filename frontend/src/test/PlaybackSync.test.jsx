@@ -9,11 +9,12 @@ const sync = vi.hoisted(() => ({
   command: null,
   setSyncState: vi.fn(), setIsActiveDevice: vi.fn(),
   transferPlayback: vi.fn(), sendRemoteControl: vi.fn(), claimActiveDevice: vi.fn(),
+  active: true, state: null,
 }))
 vi.mock('../hooks/useDeviceSync.js', () => ({
   useDeviceSync: ({ onRemoteCommand }) => {
     sync.command = onRemoteCommand
-    return { ...sync, devices: [], isActiveDevice: true, syncState: null }
+    return { ...sync, devices: [], isActiveDevice: sync.active, syncState: sync.state }
   },
 }))
 vi.mock('../components/Login.jsx', () => ({
@@ -40,6 +41,8 @@ describe('authoritative browser playback updates', () => {
     localStorage.clear()
     window.history.replaceState({}, '', '/')
     sync.broadcastState.mockClear()
+    sync.active = true
+    sync.state = null
     vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
@@ -76,5 +79,16 @@ describe('authoritative browser playback updates', () => {
     expect(sync.broadcastState).toHaveBeenLastCalledWith(expect.objectContaining({
       trackId: 'Second/new.mp3', isPlaying: false, isBuffering: false,
     }))
+  })
+
+  it('keeps the remote player visible for a phone song outside the saved library', async () => {
+    localStorage.setItem('sangita_token', 'test-token')
+    sync.active = false
+    sync.state = { activeDeviceId: 'phone', originDeviceId: 'phone',
+      trackId: 'Unadded/Phone song.mp3', positionMs: 12000, durationMs: 180000, isPlaying: true }
+    render(<App />)
+    const player = await screen.findByTestId('player-bar')
+    expect(player).toHaveTextContent('Phone song')
+    expect(player).toHaveTextContent('Playing on')
   })
 })

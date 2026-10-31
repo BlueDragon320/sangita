@@ -573,6 +573,17 @@ export default function App() {
         };
       }
     }
+    // A remote song need not be in this user's saved playlists or current queue.
+    // Keep the player visible using the identity supplied by the sync server.
+    if (!isActiveDevice && syncState?.trackId === curPath) {
+      const filename = curPath.split('/').pop() || curPath;
+      return {
+        id: curPath,
+        path: curPath,
+        name: filename.replace(/\.[^/.]+$/, ''),
+        playlist: curPath.includes('/') ? curPath.substring(0, curPath.lastIndexOf('/')) : 'Library',
+      };
+    }
     return null;
   })();
 

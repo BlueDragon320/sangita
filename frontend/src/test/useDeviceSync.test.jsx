@@ -60,6 +60,23 @@ describe('device sync session snapshots', () => {
     })
   })
 
+  it('keeps the current browser song visible while transferring and accepts the server handoff', () => {
+    const { result } = renderHook(() => useDeviceSync({ token: 'test', audioRef: audioRef(), isPlaying: true,
+      getTrackId: () => 'Playlist/current.mp3' }))
+    act(() => result.current.transferPlayback('phone'))
+    expect(result.current.syncState).toEqual(expect.objectContaining({
+      activeDeviceId: 'phone', trackId: 'Playlist/current.mp3', positionMs: 10000, isPlaying: true,
+    }))
+    act(() => wire.handlers.PLAYBACK_STATE_CHANGED({
+      activeDeviceId: 'phone', originDeviceId: 'web', isTransferHandoff: true,
+      trackId: 'Playlist/authoritative.mp3', positionMs: 11000, isPlaying: true,
+    }))
+    expect(result.current.transferStatus).toBe('idle')
+    expect(result.current.syncState).toEqual(expect.objectContaining({
+      activeDeviceId: 'phone', trackId: 'Playlist/authoritative.mp3', positionMs: 11000,
+    }))
+  })
+
   it('tracks connection lifecycle: isConnecting, isConnected, and connectError', () => {
     const { result } = renderHook(() => useDeviceSync({ token: 'test', audioRef: audioRef(), isPlaying: false }))
     expect(result.current.isConnecting).toBe(true)
