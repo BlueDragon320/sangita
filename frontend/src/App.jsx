@@ -166,7 +166,7 @@ import HomeDashboard from './components/HomeDashboard.jsx'
 import CreatePlaylistModal from './components/CreatePlaylistModal.jsx'
 import LyricsView from './components/LyricsView.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
-import DiscoverView from './components/DiscoverView.jsx'
+import DiscoverView, { matchIndividualLetters, ArtistAvatar, PlaylistThumb, isArtistName, isPlaylistName } from './components/DiscoverView.jsx'
 import ArtistDetailView from './components/ArtistDetailView.jsx'
 
 export default function App() {
@@ -258,15 +258,16 @@ export default function App() {
 
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
-    const q = searchQuery.trim().toLowerCase();
     const results = [];
     const seenPaths = new Set();
+    const hasSongKeyword = /\b(song|songs|track|tracks)\b/i.test(searchQuery);
+
     for (const [plName, paths] of Object.entries(playlists || {})) {
       (paths || []).forEach((p, i) => {
         seenPaths.add(p);
         const trackName = p.split('/').pop().replace(/\.[^/.]+$/, '');
-        const metadata = trackMetadata[p] || {}
-        if ([trackName, plName, metadata.title, metadata.artist, metadata.album].some(value => value?.toLowerCase().includes(q))) {
+        const metadata = trackMetadata[p] || {};
+        if (matchIndividualLetters(searchQuery, trackName, plName, metadata.title, metadata.artist, metadata.album, p, hasSongKeyword ? 'song' : null)) {
           results.push({
             id: `search-${plName}-${i}`,
             path: p,
@@ -285,7 +286,7 @@ export default function App() {
           const trackName = p.split('/').pop().replace(/\.[^/.]+$/, '');
           const meta = metadata || {};
           const folderName = p.includes('/') ? p.split('/')[0] : '';
-          if ([trackName, folderName, meta.title, meta.artist, meta.album].some(value => value?.toLowerCase().includes(q))) {
+          if (matchIndividualLetters(searchQuery, trackName, folderName, meta.title, meta.artist, meta.album, p, hasSongKeyword ? 'song' : null)) {
             results.push({
               id: `search-meta-${i}`,
               path: p,
@@ -306,7 +307,7 @@ export default function App() {
           const trackName = p.split('/').pop().replace(/\.[^/.]+$/, '');
           const meta = (typeof t === 'object' ? t : null) || trackMetadata[p] || {};
           const folderName = p.includes('/') ? p.split('/')[0] : '';
-          if ([trackName, folderName, meta.title, meta.artist, meta.album].some(value => value?.toLowerCase().includes(q))) {
+          if (matchIndividualLetters(searchQuery, trackName, folderName, meta.title, meta.artist, meta.album, p, hasSongKeyword ? 'song' : null)) {
             results.push({
               id: `search-saved-${i}`,
               path: p,
@@ -324,56 +325,100 @@ export default function App() {
 
   const searchArtists = useMemo(() => {
     if (!searchQuery.trim()) return [];
-    const q = searchQuery.trim().toLowerCase();
+    const hasArtistKeyword = /\b(artist|artists|singer|band)\b/i.test(searchQuery);
     const map = new Map();
 
     (savedArtists || []).forEach(a => {
       const name = typeof a === 'object' ? (a.name || a.id) : a;
-      if (name && name.toLowerCase().includes(q)) {
-        map.set(name, { id: typeof a === 'object' ? (a.id || name) : name, name, track_count: a.track_count || 0, image_url: a.image_url });
+      if (name && matchIndividualLetters(searchQuery, name, hasArtistKeyword ? 'artist' : null)) {
+        map.set(name.toLowerCase(), {
+          id: typeof a === 'object' ? (a.id || name) : name,
+          name,
+          track_count: typeof a === 'object' ? (a.track_count ?? 0) : 0,
+          image_url: typeof a === 'object' ? (a.image_url || a.artwork) : null,
+          first_track_path: typeof a === 'object' ? a.first_track_path : null
+        });
       }
     });
 
-    Object.values(trackMetadata || {}).forEach(meta => {
-      if (meta?.artist && meta.artist.toLowerCase().includes(q)) {
+    Object.entries(trackMetadata || {}).forEach(([p, meta]) => {
+      if (meta?.artist && meta.artist.trim()) {
         const art = meta.artist.trim();
-        if (!map.has(art)) {
-          map.set(art, { id: art, name: art, track_count: 1 });
-        } else {
-          map.get(art).track_count += 1;
+        const key = art.toLowerCase();
+        if (matchIndividualLetters(searchQuery, art, hasArtistKeyword ? 'artist' : null)) {
+          if (!map.has(key)) {
+            map.set(key, { id: encodeURIComponent(art), name: art, track_count: 1, first_track_path: p });
+          } else {
+            const entry = map.get(key);
+            entry.track_count = (entry.track_count || 0) + 1;
+            if (!entry.first_track_path) entry.first_track_path = p;
+          }
         }
       }
     });
 
-    Object.keys(playlists || {}).forEach(plName => {
-      if (plName !== 'Favorites' && plName !== 'Library' && plName.toLowerCase().includes(q)) {
-        if (!map.has(plName)) {
-          map.set(plName, { id: plName, name: plName, track_count: (playlists[plName] || []).length });
+    Object.entries(playlists || {}).forEach(([folderName, paths]) => {
+      if (folderName === 'Favorites' || folderName === 'Library' || playlistMetadata[folderName]) return;
+      if (isArtistName(folderName)) {
+        const key = folderName.toLowerCase();
+        if (matchIndividualLetters(searchQuery, folderName, hasArtistKeyword ? 'artist' : null)) {
+          if (!map.has(key)) {
+            map.set(key, {
+              id: encodeURIComponent(folderName),
+              name: folderName,
+              track_count: Array.isArray(paths) ? paths.length : 0,
+              first_track_path: Array.isArray(paths) ? paths[0] : null
+            });
+          }
         }
       }
     });
 
-    return Array.from(map.values()).slice(0, 8);
-  }, [searchQuery, savedArtists, trackMetadata, playlists]);
+    return Array.from(map.values()).slice(0, 12);
+  }, [searchQuery, savedArtists, trackMetadata, playlists, playlistMetadata]);
 
   const searchPlaylists = useMemo(() => {
     if (!searchQuery.trim()) return [];
-    const q = searchQuery.trim().toLowerCase();
+    const hasPlaylistKeyword = /\b(playlist|playlists)\b/i.test(searchQuery);
     const list = [];
+    const seenNames = new Set();
+
+    if (playlistMetadata && typeof playlistMetadata === 'object') {
+      Object.entries(playlistMetadata).forEach(([title, meta]) => {
+        if (!title || seenNames.has(title.toLowerCase())) return;
+        if (matchIndividualLetters(searchQuery, title, meta.description, meta.curator, meta.owner, hasPlaylistKeyword ? 'playlist' : null)) {
+          seenNames.add(title.toLowerCase());
+          const paths = playlists?.[title];
+          list.push({
+            id: meta.id || encodeURIComponent(title),
+            name: title,
+            title: title,
+            track_count: Array.isArray(paths) ? paths.length : (meta.track_count || 0),
+            first_track_path: Array.isArray(paths) && paths[0] ? (typeof paths[0] === 'string' ? paths[0] : (paths[0]?.path || paths[0]?.track_path)) : null,
+            ...meta
+          });
+        }
+      });
+    }
+
     Object.entries(playlists || {}).forEach(([name, paths]) => {
-      if (name !== 'Favorites' && name.toLowerCase().includes(q)) {
-        const meta = playlistMetadata[name] || {};
+      if (name === 'Favorites') return;
+      if (seenNames.has(name.toLowerCase())) return;
+      const meta = playlistMetadata[name] || {};
+      if (matchIndividualLetters(searchQuery, name, meta.description, meta.curator, meta.owner, hasPlaylistKeyword ? 'playlist' : null)) {
+        seenNames.add(name.toLowerCase());
         list.push({
-          id: meta.id || name,
+          id: meta.id || encodeURIComponent(name),
           name: name,
           title: name,
-          track_count: (paths || []).length,
-          first_track_path: paths?.[0],
+          track_count: Array.isArray(paths) ? paths.length : 0,
+          first_track_path: Array.isArray(paths) && paths[0] ? (typeof paths[0] === 'string' ? paths[0] : (paths[0]?.path || paths[0]?.track_path)) : null,
           ...meta
         });
       }
     });
-    return list.slice(0, 8);
+
+    return list.slice(0, 12);
   }, [searchQuery, playlists, playlistMetadata]);
 
   useEffect(() => { queueRef.current     = queue        }, [queue])
