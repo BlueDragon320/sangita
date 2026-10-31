@@ -2306,6 +2306,7 @@ def v2_get_playlists():
         result = []
         for pl in pl_rows:
             is_folder = bool(pl["is_folder_playlist"])
+            cover_tracks = []
             if is_folder:
                 sf_name = pl["source_folder_name"] or pl["title"]
                 if not (is_admin or user_has_source_access(g.user, sf_name)):
@@ -2313,16 +2314,21 @@ def v2_get_playlists():
                 track_cnt = 0
                 folder_path = os.path.join(MUSIC_DIR, sf_name)
                 if os.path.isdir(folder_path):
-                    track_cnt = sum(1 for f in os.listdir(folder_path) if f.lower().endswith(AUDIO_EXTS))
+                    files = [f for f in sorted(os.listdir(folder_path)) if f.lower().endswith(AUDIO_EXTS)]
+                    track_cnt = len(files)
+                    cover_tracks = [f"{sf_name}/{f}" for f in files[:4]]
                 elif sf_name == "Library" and os.path.exists(MUSIC_DIR):
-                    track_cnt = sum(1 for f in os.listdir(MUSIC_DIR) if os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS))
+                    files = [f for f in sorted(os.listdir(MUSIC_DIR)) if os.path.isfile(os.path.join(MUSIC_DIR, f)) and f.lower().endswith(AUDIO_EXTS)]
+                    track_cnt = len(files)
+                    cover_tracks = files[:4]
             else:
                 # If non-admin and not owner, check if private playlist is still accessible via grants
                 if not is_admin and pl["owner"] != username and pl["visibility"] == "private":
                     if pl["id"] not in granted_ids:
                         continue
 
-                trks = conn.execute("SELECT track_path FROM playlist_tracks_v2 WHERE playlist_id = ?", (pl["id"],)).fetchall()
+                trks = conn.execute("SELECT track_path FROM playlist_tracks_v2 WHERE playlist_id = ? ORDER BY position ASC", (pl["id"],)).fetchall()
+                cover_tracks = [t["track_path"] for t in trks if user_can_access_track(g.user, t["track_path"])][:4]
                 if is_admin or pl["owner"] == username:
                     track_cnt = len(trks)
                 else:
@@ -2344,6 +2350,7 @@ def v2_get_playlists():
                 "is_granted": is_granted,
                 "is_shared": is_granted,
                 "track_count": track_cnt,
+                "cover_track_path": ",".join(cover_tracks) if cover_tracks else None,
                 "created_at": pl["created_at"],
                 "updated_at": pl["updated_at"]
             })
