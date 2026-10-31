@@ -745,6 +745,7 @@ export default function LyricsView({
                 className="btn-sync-nudge"
                 onClick={() => handleAdjustOffset(-0.5)}
                 title="Shift lyrics earlier (-0.5s)"
+                aria-label="Shift lyrics earlier by 0.5 seconds"
                 data-testid="lyrics-nudge-earlier"
               >
                 -0.5s
@@ -753,6 +754,7 @@ export default function LyricsView({
                 className={`btn-sync-offset-pill ${safeOffset !== 0 ? 'calibrated' : ''}`}
                 onClick={handleResetOffset}
                 title="Click to reset sync calibration to 0.0s"
+                aria-label="Reset sync calibration to 0.0 seconds"
                 data-testid="lyrics-offset-reset"
               >
                 {safeOffset === 0 ? 'Sync: 0.0s' : `${safeOffset > 0 ? '+' : ''}${safeOffset.toFixed(1)}s`}
@@ -761,6 +763,7 @@ export default function LyricsView({
                 className="btn-sync-nudge"
                 onClick={() => handleAdjustOffset(+0.5)}
                 title="Shift lyrics later (+0.5s)"
+                aria-label="Shift lyrics later by 0.5 seconds"
                 data-testid="lyrics-nudge-later"
               >
                 +0.5s
@@ -768,15 +771,19 @@ export default function LyricsView({
             </div>
           )}
 
-          {/* Dynamic Moving Gradient Background Toggle */}
+          {/* Clean Ambient Backdrop Line Icon Toggle */}
           <button
             className={`btn-icon lyrics-action-icon-btn lyrics-ambient-btn ${theme !== 'default' ? 'active' : ''} ${isPendingClick ? 'pending-click' : ''}`}
             onClick={handleAmbientClick}
             title={theme === 'default' ? "Turn on moving background" : "Turn off moving background"}
+            aria-label="Toggle ambient background"
+            aria-pressed={theme !== 'default'}
             data-testid="lyrics-ambient-bg-btn"
           >
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
-              <path d="M12 2L9.5 8.5 3 11l6.5 2.5L12 20l2.5-6.5L21 11l-6.5-2.5L12 2zm7 13l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15zM5 3L3.75 5.75 1 7l2.75 1.25L5 11l1.25-2.75L9 7 6.25 5.75 5 3z"/>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="9" cy="9" r="2" />
+              <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
             </svg>
           </button>
 
@@ -785,15 +792,23 @@ export default function LyricsView({
             className={`btn-icon lyrics-action-icon-btn lyrics-maximize-btn ${isFullscreen ? 'active' : ''}`}
             onClick={toggleFullscreen}
             title={isFullscreen ? "Minimize to normal view (Esc)" : "Maximize (Full screen)"}
+            aria-label={isFullscreen ? "Exit full screen" : "Enter full screen"}
+            aria-pressed={isFullscreen}
             data-testid="lyrics-maximize-btn"
           >
             {isFullscreen ? (
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
-                <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 14 10 14 10 20" />
+                <polyline points="20 10 14 10 14 4" />
+                <line x1="14" y1="10" x2="21" y2="3" />
+                <line x1="3" y1="21" x2="10" y2="14" />
               </svg>
             ) : (
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
-                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 3 21 3 21 9" />
+                <polyline points="9 21 3 21 3 15" />
+                <line x1="21" y1="3" x2="14" y2="10" />
+                <line x1="3" y1="21" x2="10" y2="14" />
               </svg>
             )}
           </button>
@@ -802,11 +817,13 @@ export default function LyricsView({
           <button
             className="btn-icon lyrics-close-btn"
             onClick={handleClose}
-            title="Close Lyrics (Return to Playlist)"
+            title="Close lyrics"
+            aria-label="Close lyrics"
             data-testid="lyrics-close-btn"
           >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
         </div>
@@ -847,7 +864,7 @@ export default function LyricsView({
             <h3>No lyrics available</h3>
             <p>Lyrics haven't been synchronized or added for this song yet.</p>
             <button className="btn-modal-primary" onClick={onClose} style={{ marginTop: 16 }}>
-              Return to Library
+              Return to library
             </button>
           </div>
         ) : (
@@ -900,20 +917,21 @@ export default function LyricsView({
         )}
       </div>
 
-      {/* Floating "Return to Current Line" Pill when user has scrolled away */}
+      {/* Floating "Return to current line" Pill when user has scrolled away */}
       {userIsScrolling && isSynced && (
         <div className="lyrics-floating-return-container">
           <button
             className="btn-sync-scroll btn-floating-return"
             onClick={resumeAutoScroll}
-            title="Return to currently playing line"
+            title="Return to current line"
             data-testid="lyrics-sync-scroll-btn"
-            aria-label="Return to currently playing line"
+            aria-label="Return to current line"
           >
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
-              <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
             </svg>
-            <span>Return to Current Line</span>
+            <span>Return to current line</span>
           </button>
         </div>
       )}
@@ -928,15 +946,18 @@ export default function LyricsView({
             className="lyrics-fs-play-btn"
             onClick={onTogglePlay}
             title={isPlaying ? "Pause" : "Play"}
+            aria-label={isPlaying ? "Pause" : "Play"}
+            aria-pressed={isPlaying}
             data-testid="lyrics-fs-play-btn"
           >
             {isPlaying ? (
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="7" y1="5" x2="7" y2="19" />
+                <line x1="17" y1="5" x2="17" y2="19" />
               </svg>
             ) : (
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                <path d="M8 5v14l11-7z"/>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 2 }}>
+                <polygon points="6 4 20 12 6 20 6 4" />
               </svg>
             )}
           </button>
@@ -950,6 +971,7 @@ export default function LyricsView({
             onChange={(e) => onSeek && onSeek(parseFloat(e.target.value))}
             className="lyrics-fs-slider"
             title="Seek position"
+            aria-label="Seek position"
             data-testid="lyrics-fs-slider"
           />
           <span className="lyrics-fs-time">{formatLyricsTime(duration)}</span>

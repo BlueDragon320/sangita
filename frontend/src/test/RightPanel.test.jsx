@@ -27,7 +27,7 @@ describe('RightPanel Component & Cover Art', () => {
     )
 
     expect(screen.getByText('Faded')).toBeInTheDocument()
-    expect(screen.getByText('NOW PLAYING')).toBeInTheDocument()
+    expect(screen.getByText('Now playing')).toBeInTheDocument()
     expect(screen.getAllByText('MP3')[0]).toBeInTheDocument()
     expect(screen.getByText('3:32')).toBeInTheDocument()
   })
@@ -113,7 +113,7 @@ describe('RightPanel Component & Cover Art', () => {
     )
 
     expect(screen.getByTestId('right-panel-data-usage')).toBeInTheDocument()
-    expect(screen.getByText('DATA USAGE')).toBeInTheDocument()
+    expect(screen.getByText('Data usage')).toBeInTheDocument()
     expect(screen.getByText('consumed today')).toBeInTheDocument()
   })
 
@@ -187,12 +187,12 @@ describe('RightPanel Component & Cover Art', () => {
     expect(drawer).toHaveClass('expanded')
 
     // Technical metrics
-    expect(screen.getByText('FORMAT')).toBeInTheDocument()
-    expect(screen.getByText('LENGTH')).toBeInTheDocument()
-    expect(screen.getByText('BITRATE')).toBeInTheDocument()
+    expect(screen.getByText('Format')).toBeInTheDocument()
+    expect(screen.getByText('Length')).toBeInTheDocument()
+    expect(screen.getByText('Bitrate')).toBeInTheDocument()
     expect(screen.getByText('320 kbps')).toBeInTheDocument()
-    expect(screen.getByText('SAMPLE RATE')).toBeInTheDocument()
+    expect(screen.getByText('Sample rate')).toBeInTheDocument()
     expect(screen.getByText('48.0 kHz')).toBeInTheDocument()
-    expect(screen.getByText('BUFFER')).toBeInTheDocument()
+    expect(screen.getByText('Buffer')).toBeInTheDocument()
   })
 })

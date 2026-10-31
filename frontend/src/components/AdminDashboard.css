@@ -226,13 +226,13 @@
 }
 
 .timeframe-pill {
-  min-height: 34px;
+  min-height: 36px;
   padding: 6px 14px;
   border: none;
   background: transparent;
   color: var(--text-sub);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
@@ -432,9 +432,10 @@
 
 .kpi-label {
   font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-dim);
 }
 
 .kpi-value {
@@ -497,6 +498,7 @@
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   border-radius: var(--radius-sm);
+  contain: paint;
 }
 
 .admin-table {
@@ -510,10 +512,10 @@
   padding: 12px 14px;
   background: var(--surface);
   color: var(--text-dim);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 10px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -1039,15 +1041,16 @@
 
 :where(.admin-layout) .user-action-btn {
   flex: 1;
-  padding: 7px 10px;
+  min-height: 36px;
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -1246,5 +1249,60 @@
 [data-theme="light"] .playlist-type-pill {
   background: #f8fafc;
   color: #334155;
+}
+
+/* =========================================================================
+   Status Dots & Refined Touch Targets
+   ========================================================================= */
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+.status-dot.green,
+.status-dot.success,
+.status-dot.online {
+  background: var(--emerald, #10B981);
+}
+.status-dot.red,
+.status-dot.error,
+.status-dot.offline {
+  background: var(--red, #EF4444);
+}
+.status-dot.yellow,
+.status-dot.warning,
+.status-dot.unclassified {
+  background: #F59E0B;
+}
+.status-dot.blue,
+.status-dot.info,
+.status-dot.playlist {
+  background: #3B82F6;
+}
+.status-dot.purple,
+.status-dot.artist {
+  background: #8B5CF6;
+}
+.status-dot.folder {
+  background: var(--accent);
+}
+.status-dot.user {
+  background: #06B6D4;
+}
+
+/* Ensure accessible touch target heights 36-40px across admin tables and action bars */
+.admin-nav-btn,
+.admin-tab-btn,
+.timeframe-pill,
+.admin-select-input,
+.admin-input-search,
+.lyrics-quick-actions-bar button,
+.lyrics-scope-option,
+.modal-btn-row button {
+  min-height: 36px;
 }
 

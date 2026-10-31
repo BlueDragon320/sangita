@@ -653,6 +653,10 @@ describe('AdminDashboard Component', () => {
     fireEvent.change(tzSelect, { target: { value: 'America/New_York' } })
     expect(tzSelect.value).toBe('America/New_York')
     expect(localStorage.getItem('sangita_timezone')).toBe('America/New_York')
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('analytics-loading')).not.toBeInTheDocument()
+    })
   })
 
   it('renders distinct loading state and avoids showing zero KPI cards while analytics are loading', async () => {
@@ -686,6 +690,10 @@ describe('AdminDashboard Component', () => {
     // Ensure zero-value KPI cards are NOT displayed while loading
     expect(screen.queryByTestId('kpi-total-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('kpi-total-plays')).not.toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('analytics-loading')).toBeInTheDocument()
+    })
   })
 
   it('renders distinct failure state with specific retry when analytics request fails', async () => {
@@ -990,6 +998,11 @@ describe('AdminDashboard Component', () => {
 
     expect(screen.getByTestId('music-analytics-loading')).toBeInTheDocument()
     expect(screen.getByText(/loading catalog metrics\.\.\./i)).toBeInTheDocument()
+
+    // Await async handlers settling
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-tab-music')).toHaveAttribute('aria-selected', 'true')
+    })
   })
 
   it('renders distinct failure state in Music tab when analytics request fails', async () => {

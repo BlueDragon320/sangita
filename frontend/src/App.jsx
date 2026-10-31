@@ -185,6 +185,8 @@ export default function App() {
   const [folderClassifications, setFolderClassifications] = useState({})
   const [userPlaylists, setUserPlaylists] = useState([])
   const [playlistMetadata, setPlaylistMetadata] = useState({})
+  const [savedArtists, setSavedArtists] = useState([])
+  const [savedTracks, setSavedTracks] = useState([])
   const [view,            setView]            = useState(() => {
     const isAdminPath = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')
     const savedRole = typeof window !== 'undefined' ? localStorage.getItem('sangita_role') : ''
@@ -258,8 +260,10 @@ export default function App() {
     if (!searchQuery.trim()) return [];
     const q = searchQuery.trim().toLowerCase();
     const results = [];
-    for (const [plName, paths] of Object.entries(playlists)) {
-      paths.forEach((p, i) => {
+    const seenPaths = new Set();
+    for (const [plName, paths] of Object.entries(playlists || {})) {
+      (paths || []).forEach((p, i) => {
+        seenPaths.add(p);
         const trackName = p.split('/').pop().replace(/\.[^/.]+$/, '');
         const metadata = trackMetadata[p] || {}
         if ([trackName, plName, metadata.title, metadata.artist, metadata.album].some(value => value?.toLowerCase().includes(q))) {
@@ -273,8 +277,50 @@ export default function App() {
         }
       });
     }
+
+    if (trackMetadata && typeof trackMetadata === 'object') {
+      Object.entries(trackMetadata).forEach(([p, metadata], i) => {
+        if (!seenPaths.has(p)) {
+          seenPaths.add(p);
+          const trackName = p.split('/').pop().replace(/\.[^/.]+$/, '');
+          const meta = metadata || {};
+          const folderName = p.includes('/') ? p.split('/')[0] : '';
+          if ([trackName, folderName, meta.title, meta.artist, meta.album].some(value => value?.toLowerCase().includes(q))) {
+            results.push({
+              id: `search-meta-${i}`,
+              path: p,
+              name: meta.title || trackName,
+              artist: meta.artist || folderName,
+              playlist: folderName || 'Catalog'
+            });
+          }
+        }
+      });
+    }
+
+    if (Array.isArray(savedTracks)) {
+      savedTracks.forEach((t, i) => {
+        const p = typeof t === 'object' ? t?.path : t;
+        if (p && !seenPaths.has(p)) {
+          seenPaths.add(p);
+          const trackName = p.split('/').pop().replace(/\.[^/.]+$/, '');
+          const meta = (typeof t === 'object' ? t : null) || trackMetadata[p] || {};
+          const folderName = p.includes('/') ? p.split('/')[0] : '';
+          if ([trackName, folderName, meta.title, meta.artist, meta.album].some(value => value?.toLowerCase().includes(q))) {
+            results.push({
+              id: `search-saved-${i}`,
+              path: p,
+              name: meta.title || trackName,
+              artist: meta.artist || folderName,
+              playlist: folderName || 'Saved'
+            });
+          }
+        }
+      });
+    }
+
     return results;
-  }, [searchQuery, playlists, trackMetadata]);
+  }, [searchQuery, playlists, trackMetadata, savedTracks]);
 
   useEffect(() => { queueRef.current     = queue        }, [queue])
   useEffect(() => { indexRef.current     = currentIndex }, [currentIndex])
@@ -347,6 +393,7 @@ export default function App() {
     localStorage.removeItem('sangita_role')
     setToken(''); setUsername(''); setRole(''); setPlaylists({})
     setActivePlaylistMeta(null); setFolderClassifications({}); setUserPlaylists([]); setPlaylistMetadata({})
+    setSavedArtists([]); setSavedTracks([])
     setQueue([]); setCurrentIndex(-1); setIsLocalPlaying(false)
     setCurrentTime(0); setDuration(0); setView('music')
     window.history.replaceState({}, '', '/');
@@ -892,12 +939,13 @@ export default function App() {
       .then(data => {
         setPlaylists(data);
         const keys = Object.keys(data);
-        // Default to first playlist or Library
-        if (keys.length > 0 && !currentPlaylist) {
+        const hasSubstantivePlaylists = keys.some(k => k !== 'Favorites' || (data[k] && data[k].length > 0));
+        if (hasSubstantivePlaylists && keys.length > 0 && !currentPlaylist) {
           const defaultPl = keys.includes('Library') ? 'Library' : keys[0];
           setCurrentPlaylist(defaultPl);
         }
         fetchSourceClassifications();
+        fetchLibraryArtistsAndTracks();
       })
       .catch(err => { if (err.status === 401 || err.status === 403) handleLogout(); else setLibraryError(true) })
       .finally(() => setDataLoading(false))
@@ -925,6 +973,118 @@ export default function App() {
       console.warn('Failed to fetch source classifications:', err)
     }
   }, [token])
+
+  const fetchLibraryArtistsAndTracks = useCallback(async () => {
+    if (!token) return
+    try {
+      const [artRes, trkRes] = await Promise.allSettled([
+        fetch('/api/v2/library/artists', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/v2/library/tracks', { headers: { Authorization: `Bearer ${token}` } })
+      ])
+      if (artRes.status === 'fulfilled' && artRes.value.ok) {
+        const data = await artRes.value.json()
+        const list = Array.isArray(data) ? data : (data?.artists || [])
+        setSavedArtists(list)
+      }
+      if (trkRes.status === 'fulfilled' && trkRes.value.ok) {
+        const data = await trkRes.value.json()
+        const list = Array.isArray(data) ? data : (data?.tracks || [])
+        // The API returns track_path; the player and library controls use path.
+        setSavedTracks(list.map(track => typeof track === 'string' ? track : {
+          ...track,
+          path: track.path || track.track_path
+        }))
+      }
+    } catch (err) {
+      console.warn('[Library] Failed to fetch saved artists or tracks:', err)
+    }
+  }, [token])
+
+  const handleToggleSaveArtist = useCallback(async (artistOrId, nextSavedOpt, artistDataOpt) => {
+    if (!artistOrId) return
+    const artistId = typeof artistOrId === 'object' ? (artistOrId?.id || artistOrId?.name) : artistOrId
+    const artistData = typeof artistOrId === 'object' ? artistOrId : (artistDataOpt || { id: artistId, name: artistId })
+    if (!artistId) return
+
+    const isCurrentlySaved = savedArtists.some(a => {
+      const aId = typeof a === 'object' ? (a?.id || a?.name) : a
+      return String(aId) === String(artistId)
+    })
+    const nextSaved = nextSavedOpt !== undefined ? nextSavedOpt : !isCurrentlySaved
+
+    setSavedArtists(prev => {
+      if (nextSaved) {
+        if (prev.some(a => String(typeof a === 'object' ? (a?.id || a?.name) : a) === String(artistId))) {
+          return prev
+        }
+        return [...prev, artistData]
+      } else {
+        return prev.filter(a => String(typeof a === 'object' ? (a?.id || a?.name) : a) !== String(artistId))
+      }
+    })
+
+    const alreadyFetched = (typeof artistOrId === 'object') || Boolean(artistDataOpt)
+
+    if (token && !alreadyFetched) {
+      try {
+        const method = nextSaved ? 'POST' : 'DELETE'
+        const res = await fetch(`/api/v2/artists/${encodeURIComponent(artistId)}/save`, {
+          method,
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (!res.ok) {
+          console.warn('Failed to toggle artist save:', res.status)
+          fetchLibraryArtistsAndTracks()
+          return
+        }
+      } catch (err) {
+        console.warn('Error toggling artist save:', err)
+        fetchLibraryArtistsAndTracks()
+      }
+    }
+    setToastNotification(nextSaved ? 'Saved artist to your library' : 'Removed artist from your library')
+  }, [token, savedArtists, fetchLibraryArtistsAndTracks])
+
+  const handleToggleSaveTrack = useCallback(async (trackPath, nextSavedOpt) => {
+    if (!trackPath || !token) return
+    const isCurrentlySaved = savedTracks.some(t => {
+      const p = typeof t === 'object' ? t?.path : t
+      return p === trackPath
+    })
+    const nextSaved = nextSavedOpt !== undefined ? nextSavedOpt : !isCurrentlySaved
+
+    setSavedTracks(prev => {
+      if (nextSaved) {
+        if (prev.some(t => (typeof t === 'object' ? t?.path : t) === trackPath)) {
+          return prev
+        }
+        return [...prev, trackPath]
+      } else {
+        return prev.filter(t => (typeof t === 'object' ? t?.path : t) !== trackPath)
+      }
+    })
+
+    try {
+      const method = nextSaved ? 'POST' : 'DELETE'
+      const res = await fetch(`/api/v2/library/tracks?track_path=${encodeURIComponent(trackPath)}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ track_path: trackPath })
+      })
+      if (!res.ok) {
+        console.warn('Failed to toggle track save:', res.status)
+        fetchLibraryArtistsAndTracks()
+        return
+      }
+      setToastNotification(nextSaved ? 'Saved track to your library' : 'Removed track from your library')
+    } catch (err) {
+      console.warn('Error toggling track save:', err)
+      fetchLibraryArtistsAndTracks()
+    }
+  }, [token, savedTracks, fetchLibraryArtistsAndTracks])
 
   const fetchPlaylists = useCallback(() => {
     if (!token) return
@@ -973,19 +1133,24 @@ export default function App() {
           }
         })
         setPlaylistMetadata(metaMap)
-        if (Object.keys(savedMap).length > 0) {
-          setPlaylists(prev => {
-            const next = { ...prev }
-            let changed = false
-            for (const [t, trks] of Object.entries(savedMap)) {
-              if (!next[t]) {
-                next[t] = trks
-                changed = true
-              }
+        setPlaylists(prev => {
+          const next = { ...prev }
+          let changed = false
+          for (const [t, trks] of Object.entries(savedMap)) {
+            if (!next[t]) {
+              next[t] = trks
+              changed = true
             }
-            return changed ? next : prev
+          }
+          list.forEach(p => {
+            const title = p.title || p.name
+            if (title && !p.is_saved && !p.is_owner && !userPlaylists.includes(title) && next[title]) {
+              delete next[title]
+              changed = true
+            }
           })
-        }
+          return changed ? next : prev
+        })
       })
       .catch(() => {})
   }, [token, username])
@@ -994,8 +1159,9 @@ export default function App() {
     if (token) {
       fetchSourceClassifications();
       fetchPlaylists();
+      fetchLibraryArtistsAndTracks();
     }
-  }, [token, fetchSourceClassifications, fetchPlaylists])
+  }, [token, fetchSourceClassifications, fetchPlaylists, fetchLibraryArtistsAndTracks])
 
   const fetchUserStats = useCallback(async () => {
     if (!token) return
@@ -1061,8 +1227,10 @@ export default function App() {
       currentTracks = activePlaylistMeta.tracks
     } else if (playlists[currentPlaylist]) {
       currentTracks = buildTracks(currentPlaylist, playlists[currentPlaylist])
+    } else if (currentPlaylist === 'Favorites') {
+      currentTracks = buildTracks('Favorites', favorites || [])
     } else {
-      return
+      currentTracks = []
     }
     setQueue(currentTracks)
     
@@ -1786,14 +1954,30 @@ export default function App() {
     }
   }, [activePlaylistMeta, token, fetchPlaylists]);
 
-  const handleDeletePlaylist = useCallback(async (plName, plId) => {
-    const targetId = plId || activePlaylistMeta?.id;
+  const handleDeletePlaylist = useCallback(async (plName, plId, isOwnerParam) => {
+    const meta = (plId && Object.values(playlistMetadata).find(p => p.id === plId)) || playlistMetadata[plName] || activePlaylistMeta;
+    const targetId = plId || meta?.id;
+    const isOwner = isOwnerParam !== undefined ? isOwnerParam : (
+      meta?.is_owner !== undefined
+        ? meta.is_owner
+        : (meta?.isOwner !== undefined
+          ? meta.isOwner
+          : (meta?.owner && username ? meta.owner === username : true))
+    );
+
     try {
-      if (targetId) {
+      if (targetId && !isOwner) {
+        await fetch(`/api/v2/playlists/${encodeURIComponent(targetId)}/save`, {
+          method: 'DELETE',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+        setToastNotification('Removed playlist from your library');
+      } else if (targetId) {
         await fetch(`/api/v2/playlists/${targetId}`, {
           method: 'DELETE',
           headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         });
+        setToastNotification('Deleted playlist');
       } else {
         await fetch(`/api/user-playlists/${encodeURIComponent(plName)}`, {
           method: 'DELETE',
@@ -1802,12 +1986,14 @@ export default function App() {
       }
       setActivePlaylistMeta(null);
       fetchPlaylists();
-      setCurrentPlaylist('Library');
+      if (currentPlaylist === plName) {
+        setCurrentPlaylist('Favorites');
+      }
       setView('music');
     } catch (err) {
-      console.error('Failed to delete playlist:', err);
+      console.error('Failed to delete/unsave playlist:', err);
     }
-  }, [activePlaylistMeta, token, fetchPlaylists]);
+  }, [activePlaylistMeta, playlistMetadata, token, username, currentPlaylist, fetchPlaylists]);
 
   const handleSaveEntirePlaylist = useCallback(async (sourcePlaylist) => {
     if (!sourcePlaylist) return;
@@ -2169,6 +2355,12 @@ export default function App() {
           playlistMetadata={playlistMetadata}
           folderClassifications={folderClassifications}
           username={username}
+          savedArtists={savedArtists}
+          savedTracks={savedTracks}
+          onToggleSaveArtist={handleToggleSaveArtist}
+          onToggleSaveTrack={handleToggleSaveTrack}
+          onDeletePlaylist={handleDeletePlaylist}
+          onSelectArtist={handleSelectArtist}
         />
         <div className="main-area">
           <Header
@@ -2221,6 +2413,11 @@ export default function App() {
                 onPlayTracks={handlePlayDiscoveredTracks}
                 username={username}
                 onSavePlaylist={handleToggleSavePlaylist}
+                onSaveArtist={handleToggleSaveArtist}
+                savedArtists={savedArtists}
+                savedTracks={savedTracks}
+                onToggleSaveArtist={handleToggleSaveArtist}
+                onToggleSaveTrack={handleToggleSaveTrack}
               />
             ) : view === 'artist' ? (
               <ArtistDetailView
@@ -2247,6 +2444,10 @@ export default function App() {
                 onRefreshPlaylists={fetchPlaylists}
                 userPlaylists={userPlaylists}
                 playlistMetadata={playlistMetadata}
+                savedArtists={savedArtists}
+                savedTracks={savedTracks}
+                onToggleSaveArtist={handleToggleSaveArtist}
+                onToggleSaveTrack={handleToggleSaveTrack}
               />
             ) : view === 'home' ? (
               <HomeDashboard
@@ -2348,13 +2549,27 @@ export default function App() {
                     onToggleFavorite={toggleFavorite}
                     onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
                     onDownloadTrack={downloadTrack}
+                    savedArtists={savedArtists}
+                    savedTracks={savedTracks}
+                    onToggleSaveArtist={handleToggleSaveArtist}
+                    onToggleSaveTrack={handleToggleSaveTrack}
                   />
                 )}
               </>
-            ) : (Object.keys(playlists).length === 0 && !activePlaylistMeta) ? (
-              <div className="empty-state" style={{ marginTop: 80 }}>
+            ) : ((Object.keys(playlists).length === 0 || !currentPlaylist) && !activePlaylistMeta) ? (
+              <div className="empty-state" data-testid="empty-library-state" style={{ marginTop: 80 }}>
                 <svg viewBox="0 0 24 24" width="64" height="64" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-                <h3>No music found</h3><p>Add audio files to your music/ folder and restart.</p>
+                <h3>Your library is empty</h3>
+                <p>Explore Discover to find songs, artists, and playlists to add to your library.</p>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{ marginTop: 16 }}
+                  onClick={handleDiscover}
+                  data-testid="empty-library-discover-btn"
+                >
+                  Explore Discover
+                </button>
               </div>
             ) : (
               <>
@@ -2388,6 +2603,10 @@ export default function App() {
                   onEditPlaylist={handleEditPlaylist}
                   onDeletePlaylist={handleDeletePlaylist}
                   onSaveToMyPlaylists={handleSaveEntirePlaylist}
+                  savedArtists={savedArtists}
+                  savedTracks={savedTracks}
+                  onToggleSaveArtist={handleToggleSaveArtist}
+                  onToggleSaveTrack={handleToggleSaveTrack}
                 />
 
                 {/* Track List */}
@@ -2403,6 +2622,10 @@ export default function App() {
                   onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
                   onDownloadTrack={downloadTrack}
                   onEmptyAction={() => handleSidebarSelect('Discover')}
+                  savedArtists={savedArtists}
+                  savedTracks={savedTracks}
+                  onToggleSaveArtist={handleToggleSaveArtist}
+                  onToggleSaveTrack={handleToggleSaveTrack}
                 />
               </>
             )}
@@ -2484,7 +2707,7 @@ export default function App() {
       )}
 
       {toastNotification && (
-        <div className="toast-notification" role="status" data-testid="toast-notification">
+        <div className="toast-notification" role="status" aria-live="polite" data-testid="toast-notification">
           <span>{toastNotification}</span>
           <button
             type="button"

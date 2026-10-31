@@ -106,7 +106,7 @@ describe('TrackList Component & Duration Rendering', () => {
 
     const favAction = screen.getByTestId('track-action-fav')
     expect(favAction).toBeInTheDocument()
-    expect(favAction).toHaveTextContent('Add to Favorites')
+    expect(favAction).toHaveTextContent(/add to favorites/i)
 
     // Click favorite toggle
     fireEvent.click(favAction)
@@ -162,7 +162,7 @@ describe('TrackList Component & Duration Rendering', () => {
     expect(document.querySelector('.playing-bars')).not.toBeInTheDocument()
     const pausedIndicator = screen.getByLabelText('Paused')
     expect(pausedIndicator).toBeInTheDocument()
-    expect(pausedIndicator).toHaveTextContent('⏸')
+    expect(pausedIndicator.querySelector('svg')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Resume Faded' })).toBeInTheDocument()
 
     // Inactive track: track number and hover play icon
@@ -202,29 +202,29 @@ describe('TrackList Component & Duration Rendering', () => {
     expect(menu).toBeInTheDocument()
 
     // Verify all required actions are present
-    expect(screen.getByText('Play Track')).toBeInTheDocument()
-    expect(screen.getByText('Remove from Favorites')).toBeInTheDocument()
-    expect(screen.getByText('Add to Playlist...')).toBeInTheDocument()
-    expect(screen.getByText('Download Track')).toBeInTheDocument()
+    expect(screen.getByText('Play track')).toBeInTheDocument()
+    expect(screen.getByText('Remove from favorites')).toBeInTheDocument()
+    expect(screen.getByText('Add to playlist')).toBeInTheDocument()
+    expect(screen.getByText('Download track')).toBeInTheDocument()
 
-    // Test "Add to Playlist..." click
+    // Test "Add to playlist" click
     fireEvent.click(screen.getByTestId('track-action-playlist'))
     expect(handleAddToPlaylist).toHaveBeenCalledWith(mockTracks[0])
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 
-    // Reopen menu and test "Download Track"
+    // Reopen menu and test "Download track"
     fireEvent.click(moreBtns[0])
     fireEvent.click(screen.getByTestId('track-action-download'))
     expect(handleDownload).toHaveBeenCalledWith(mockTracks[0])
 
-    // Reopen menu and test "Remove from Favorites"
+    // Reopen menu and test "Remove from favorites"
     fireEvent.click(moreBtns[0])
     fireEvent.click(screen.getByTestId('track-action-fav'))
     expect(handleToggleFav).toHaveBeenCalledWith(mockTracks[0].path)
 
-    // Open menu for second track (not in favorites) -> should say "Add to Favorites"
+    // Open menu for second track (not in favorites) -> should say "Add to favorites"
     fireEvent.click(moreBtns[1])
-    expect(screen.getByText('Add to Favorites')).toBeInTheDocument()
+    expect(screen.getByText('Add to favorites')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('track-action-play'))
     expect(handlePlay).toHaveBeenCalledWith(mockTracks[1], 1)
   })
@@ -265,7 +265,7 @@ describe('TrackList Component & Duration Rendering', () => {
 
     const favBtn = screen.getByTestId('track-row-like-0')
     expect(favBtn).toBeInTheDocument()
-    expect(favBtn).toHaveAttribute('aria-label', 'Add Faded to Favorites')
+    expect(favBtn).toHaveAttribute('aria-label', 'Add Faded to favorites')
 
     fireEvent.click(favBtn)
     expect(handleToggleFav).toHaveBeenCalledWith(mockTracks[0].path)

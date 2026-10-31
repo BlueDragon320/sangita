@@ -149,7 +149,11 @@ function Hero({
   token,
   isSaved = false,
   is_saved = false,
-  onToggleSave
+  onToggleSave,
+  savedArtists = [],
+  savedTracks = [],
+  onToggleSaveArtist,
+  onToggleSaveTrack
 }) {
   const [showEditModal, setShowEditModal] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)

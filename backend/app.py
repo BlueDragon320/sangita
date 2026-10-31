@@ -260,6 +260,25 @@ def migrate_v2_schema(conn):
         """)
 
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_saved_artists (
+                username TEXT NOT NULL,
+                artist_id INTEGER NOT NULL,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (username, artist_id),
+                FOREIGN KEY (artist_id) REFERENCES artists (id) ON DELETE CASCADE
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_saved_tracks (
+                username TEXT NOT NULL,
+                track_path TEXT NOT NULL,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (username, track_path)
+            )
+        """)
+
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS playlist_access_grants (
                 playlist_id TEXT NOT NULL,
                 username TEXT NOT NULL,
@@ -278,6 +297,8 @@ def migrate_v2_schema(conn):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_tracks_v2_pl_pos ON playlist_tracks_v2 (playlist_id, position)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_saved_playlists_user ON user_saved_playlists (username)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_saved_playlists_pl ON user_saved_playlists (playlist_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_saved_artists_user ON user_saved_artists (username)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_saved_tracks_user ON user_saved_tracks (username)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pag_pl ON playlist_access_grants (playlist_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pag_user ON playlist_access_grants (username)")
 
@@ -387,6 +408,22 @@ def migrate_v2_schema(conn):
                         """, (pl_id, trk["track_path"], t_pos, trk["added_at"]))
         except Exception as e:
             print(f"[Migration orphan playlists warning] {e}")
+
+        # Import existing favorites once. Repeating this on every startup would
+        # undo a user's later choice to remove a song from their library.
+        try:
+            conn.execute("CREATE TABLE IF NOT EXISTS library_migrations (name TEXT PRIMARY KEY)")
+            migrated = conn.execute("SELECT 1 FROM library_migrations WHERE name = 'favorites_to_saved_tracks_v1'").fetchone()
+            if not migrated:
+                conn.execute("""
+                INSERT OR IGNORE INTO user_saved_tracks (username, track_path, added_at)
+                SELECT username, track_path, COALESCE(added_at, CURRENT_TIMESTAMP)
+                FROM playlist_tracks
+                WHERE playlist_name = 'Favorites'
+                """)
+                conn.execute("INSERT INTO library_migrations (name) VALUES ('favorites_to_saved_tracks_v1')")
+        except Exception as e:
+            print(f"[Migration user_saved_tracks warning] {e}")
 
 def init_db():
     conn = get_db()
@@ -1220,33 +1257,59 @@ _track_metadata_cache = {}
 @app.route("/api/track-metadata")
 @require_auth
 def get_track_metadata():
-    playlists = get_playlists().get_json()
-    allowed = g.user.get("rules", {}).get("allowed_playlists", ["*"])
     root = os.path.realpath(MUSIC_DIR)
     result = {}
-    for paths in playlists.values():
-        for track_path in paths:
-            safe = os.path.normpath(track_path)
-            parts = safe.split(os.sep)
-            folder = parts[0] if len(parts) > 1 else "Library"
-            if safe.startswith("..") or os.path.isabs(safe) or ("*" not in allowed and folder not in allowed):
-                continue
-            full_path = os.path.realpath(os.path.join(root, safe))
-            if not full_path.startswith(root + os.sep) or not os.path.isfile(full_path):
-                continue
-            try:
-                stamp = os.stat(full_path).st_mtime_ns
-                cached = _track_metadata_cache.get(full_path)
-                if not cached or cached[0] != stamp:
-                    tags = mutagen.File(full_path, easy=True) if mutagen else None
-                    metadata = {key: str(tags.get(key, [""])[0]) for key in ("title", "artist", "album") if tags and tags.get(key)}
-                    cached = (stamp, metadata)
-                    _track_metadata_cache[full_path] = cached
-                result[track_path] = cached[1]
-            except (OSError, ValueError, TypeError):
-                continue
-            except Exception:
-                continue
+    if not os.path.exists(root):
+        return jsonify(result)
+
+    candidate_tracks = []
+    # 1. Direct root songs (classified as 'Library')
+    if user_has_source_access(g.user, "Library"):
+        try:
+            for f in sorted(os.listdir(root)):
+                if os.path.isfile(os.path.join(root, f)) and f.lower().endswith(AUDIO_EXTS):
+                    candidate_tracks.append(f)
+        except Exception:
+            pass
+
+    # 2. Tracks in authorized source subdirectories
+    try:
+        for folder in sorted(os.listdir(root)):
+            folder_path = os.path.join(root, folder)
+            if os.path.isdir(folder_path) and not folder.startswith("."):
+                if user_has_source_access(g.user, folder):
+                    for f in sorted(os.listdir(folder_path)):
+                        if f.lower().endswith(AUDIO_EXTS):
+                            candidate_tracks.append(f"{folder}/{f}")
+    except Exception:
+        pass
+
+    for track_path in candidate_tracks:
+        safe = os.path.normpath(track_path).replace("\\", "/")
+        if safe.startswith("..") or os.path.isabs(safe) or not user_can_access_track(g.user, safe):
+            continue
+        full_path = os.path.realpath(os.path.join(root, safe))
+        if not full_path.startswith(root + os.sep) or not os.path.isfile(full_path):
+            continue
+        try:
+            stamp = os.stat(full_path).st_mtime_ns
+            cached = _track_metadata_cache.get(full_path)
+            if not cached or cached[0] != stamp:
+                metadata = {}
+                if mutagen:
+                    try:
+                        tags = mutagen.File(full_path, easy=True)
+                        if tags:
+                            metadata = {key: str(tags.get(key, [""])[0]) for key in ("title", "artist", "album") if tags.get(key)}
+                    except Exception:
+                        metadata = {}
+                cached = (stamp, metadata)
+                _track_metadata_cache[full_path] = cached
+            result[track_path] = cached[1]
+        except (OSError, ValueError, TypeError):
+            continue
+        except Exception:
+            continue
     return jsonify(result)
 
 @app.route("/api/favorites", methods=["GET"])
@@ -1291,6 +1354,13 @@ def toggle_favorite():
                 "INSERT INTO playlist_tracks (username, playlist_name, track_path) VALUES (?, 'Favorites', ?)",
                 (username, track_path)
             )
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO user_saved_tracks (username, track_path) VALUES (?, ?)",
+                    (username, track_path)
+                )
+            except Exception:
+                pass
             conn.commit()
             is_fav = True
 
@@ -1322,6 +1392,10 @@ def set_favorite():
     try:
         if desired:
             conn.execute("INSERT OR IGNORE INTO playlist_tracks (username, playlist_name, track_path) VALUES (?, 'Favorites', ?)", (username, track_path))
+            try:
+                conn.execute("INSERT OR IGNORE INTO user_saved_tracks (username, track_path) VALUES (?, ?)", (username, track_path))
+            except Exception:
+                pass
         else:
             conn.execute("DELETE FROM playlist_tracks WHERE username = ? AND playlist_name = 'Favorites' AND track_path = ?", (username, track_path))
         conn.commit()
@@ -1775,6 +1849,111 @@ def v2_update_source(source_id):
     finally:
         conn.close()
 
+@app.route("/api/v2/library/artists", methods=["GET"])
+@require_auth
+def v2_get_library_artists():
+    """Returns only artists saved by the authenticated user (user_saved_artists).
+    Validates user has source access to at least 1 track.
+    """
+    username = g.user.get("username", "admin")
+    is_admin = g.user.get("role") == "admin"
+    conn = get_db()
+    try:
+        artists = conn.execute("""
+            SELECT a.id, a.name, a.bio, a.image_url
+            FROM artists a
+            JOIN user_saved_artists usa ON a.id = usa.artist_id
+            WHERE usa.username = ?
+            ORDER BY a.name COLLATE NOCASE ASC
+        """, (username,)).fetchall()
+
+        result = []
+        for art in artists:
+            art_id = str(art["id"])
+            art_name = art["name"]
+            sf_rows = conn.execute("""
+                SELECT folder_name, classification
+                FROM source_folders
+                WHERE classification = 'artist'
+                  AND (mapped_artist_id = ? OR mapped_artist_name = ? OR artist_id = ? OR display_name = ?)
+            """, (art["id"], art_name, art_id, art_name)).fetchall()
+
+            accessible_tracks = []
+            for sf in sf_rows:
+                s_name = sf["folder_name"]
+                if is_admin or user_has_source_access(g.user, s_name):
+                    folder_path = os.path.join(MUSIC_DIR, s_name)
+                    if os.path.isdir(folder_path):
+                        for f in sorted(os.listdir(folder_path)):
+                            if f.lower().endswith(AUDIO_EXTS):
+                                accessible_tracks.append(f"{s_name}/{f}")
+
+            track_count = len(accessible_tracks)
+            # Validates user has source access to at least 1 track
+            if track_count == 0:
+                continue
+
+            img = art["image_url"]
+            if not img and accessible_tracks:
+                img = f"/api/cover/{urllib.parse.quote(accessible_tracks[0])}"
+
+            result.append({
+                "id": art_id,
+                "name": art_name,
+                "bio": art["bio"] or "",
+                "image_url": img,
+                "track_count": track_count,
+                "is_saved": True
+            })
+        return jsonify({"artists": result})
+    finally:
+        conn.close()
+
+@app.route("/api/v2/artists/<id>/save", methods=["POST"])
+@require_auth
+def v2_save_artist(id):
+    """User adds artist to their saved library."""
+    username = g.user.get("username", "admin")
+    conn = get_db()
+    try:
+        art = conn.execute("SELECT id, name FROM artists WHERE id = ? OR name = ?", (id, id)).fetchone()
+        if not art:
+            return jsonify({"error": "Artist not found"}), 404
+
+        # An artist is discoverable only when this user can access its tracks.
+        detail = v2_get_artist(str(art["id"]))
+        if isinstance(detail, tuple):
+            return detail
+
+        art_id = int(art["id"])
+        conn.execute("""
+            INSERT OR IGNORE INTO user_saved_artists (username, artist_id)
+            VALUES (?, ?)
+        """, (username, art_id))
+        conn.commit()
+
+        return jsonify({"status": "saved", "artist_id": id}), 200
+    finally:
+        conn.close()
+
+@app.route("/api/v2/artists/<id>/save", methods=["DELETE"])
+@require_auth
+def v2_unsave_artist(id):
+    """User removes artist from their saved library."""
+    username = g.user.get("username", "admin")
+    conn = get_db()
+    try:
+        art = conn.execute("SELECT id FROM artists WHERE id = ? OR name = ?", (id, id)).fetchone()
+        if art:
+            conn.execute("DELETE FROM user_saved_artists WHERE username = ? AND artist_id = ?", (username, art["id"]))
+            conn.commit()
+        elif str(id).isdigit():
+            conn.execute("DELETE FROM user_saved_artists WHERE username = ? AND artist_id = ?", (username, int(id)))
+            conn.commit()
+        return jsonify({"status": "removed", "artist_id": id}), 200
+    finally:
+        conn.close()
+
 @app.route("/api/v2/artists", methods=["GET"])
 @require_auth
 def v2_get_artists():
@@ -1784,6 +1963,10 @@ def v2_get_artists():
         artists = conn.execute("SELECT id, name, bio, image_url FROM artists ORDER BY name COLLATE NOCASE ASC").fetchall()
         result = []
         is_admin = g.user.get("role") == "admin"
+        username = g.user.get("username", "admin")
+
+        saved_rows = conn.execute("SELECT artist_id FROM user_saved_artists WHERE username = ?", (username,)).fetchall()
+        saved_artist_ids = set(r["artist_id"] for r in saved_rows)
 
         for art in artists:
             art_id = str(art["id"])
@@ -1814,12 +1997,15 @@ def v2_get_artists():
             if not img and accessible_tracks:
                 img = f"/api/cover/{urllib.parse.quote(accessible_tracks[0])}"
 
+            is_saved = (art["id"] in saved_artist_ids or str(art["id"]) in saved_artist_ids)
+
             result.append({
                 "id": art_id,
                 "name": art_name,
                 "bio": art["bio"] or "",
                 "image_url": img,
-                "track_count": track_count
+                "track_count": track_count,
+                "is_saved": is_saved
             })
         return jsonify({"artists": result})
     finally:
@@ -2056,10 +2242,9 @@ def v2_artist_add_to_playlist(artist_id):
 def v2_get_playlists():
     """List playlists visible to user.
     In library mode (default, when discover!='true'):
-      For non-admin: owner = username OR id in user_saved_playlists OR (is_folder_playlist = 1 AND accessible).
-      For admin: all playlists.
+      Return ONLY playlists where p.owner = ? OR p.id IN (SELECT playlist_id FROM user_saved_playlists WHERE username = ?).
     In discover mode (discover='true'):
-      Return accessible public playlists from other users, plus folder playlists.
+      Return accessible public playlists from other users, plus granted private playlists and all folder playlists.
     """
     conn = get_db()
     username = g.user.get("username", "admin")
@@ -2108,24 +2293,15 @@ def v2_get_playlists():
                 ORDER BY p.title COLLATE NOCASE ASC
             """, (username, username, username)).fetchall()
         else:
-            # Library mode:
-            if is_admin:
-                pl_rows = conn.execute("""
-                    SELECT p.*, sf.folder_name as source_folder_name
-                    FROM playlists p
-                    LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
-                    ORDER BY p.title COLLATE NOCASE ASC
-                """).fetchall()
-            else:
-                pl_rows = conn.execute("""
-                    SELECT p.*, sf.folder_name as source_folder_name
-                    FROM playlists p
-                    LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
-                    WHERE p.owner = ?
-                       OR p.id IN (SELECT playlist_id FROM user_saved_playlists WHERE username = ?)
-                       OR p.is_folder_playlist = 1
-                    ORDER BY p.title COLLATE NOCASE ASC
-                """, (username, username)).fetchall()
+            # Library mode: return ONLY playlists where p.owner = ? OR p.id IN (SELECT playlist_id FROM user_saved_playlists WHERE username = ?)
+            pl_rows = conn.execute("""
+                SELECT p.*, sf.folder_name as source_folder_name
+                FROM playlists p
+                LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
+                WHERE p.owner = ?
+                   OR p.id IN (SELECT playlist_id FROM user_saved_playlists WHERE username = ?)
+                ORDER BY p.title COLLATE NOCASE ASC
+            """, (username, username)).fetchall()
 
         result = []
         for pl in pl_rows:
@@ -2514,6 +2690,18 @@ def v2_get_playlist_detail(playlist_id):
         if not user_has_playlist_access(conn, g.user, pl):
             return jsonify({"error": "Playlist not found"}), 404
 
+        saved_row = conn.execute(
+            "SELECT 1 FROM user_saved_playlists WHERE username = ? AND playlist_id = ?",
+            (username, pl["id"])
+        ).fetchone()
+        is_saved = bool(saved_row)
+
+        grant_row = conn.execute(
+            "SELECT 1 FROM playlist_access_grants WHERE username = ? AND playlist_id = ?",
+            (username, pl["id"])
+        ).fetchone()
+        is_granted = bool(grant_row)
+
         tracks = []
         unavailable_count = 0
 
@@ -2561,7 +2749,7 @@ def v2_get_playlist_detail(playlist_id):
                 full_p = os.path.join(MUSIC_DIR, tp)
                 file_exists = os.path.isfile(full_p)
 
-                if is_owner or is_admin:
+                if is_owner or is_admin or is_saved:
                     available = accessible and file_exists
                     if not available:
                         unavailable_count += 1
@@ -2589,18 +2777,6 @@ def v2_get_playlist_detail(playlist_id):
                         })
                     else:
                         unavailable_count += 1
-
-        saved_row = conn.execute(
-            "SELECT 1 FROM user_saved_playlists WHERE username = ? AND playlist_id = ?",
-            (username, pl["id"])
-        ).fetchone()
-        is_saved = bool(saved_row)
-
-        grant_row = conn.execute(
-            "SELECT 1 FROM playlist_access_grants WHERE username = ? AND playlist_id = ?",
-            (username, pl["id"])
-        ).fetchone()
-        is_granted = bool(grant_row)
 
         return jsonify({
             "id": pl["id"],
@@ -2896,6 +3072,136 @@ def v2_unsave_playlist(playlist_id):
         """, (username, playlist_id))
         conn.commit()
         return jsonify({"status": "unsaved", "playlist_id": playlist_id}), 200
+    finally:
+        conn.close()
+
+@app.route("/api/v2/library/tracks", methods=["GET"])
+@require_auth
+def v2_get_library_tracks():
+    """Returns list of track objects for tracks in user_saved_tracks where user_can_access_track is true.
+    Returns is_favorite: True/False and metadata.
+    """
+    username = g.user.get("username", "admin")
+    conn = get_db()
+    try:
+        fav_rows = conn.execute(
+            "SELECT track_path FROM playlist_tracks WHERE username = ? AND playlist_name = 'Favorites'",
+            (username,)
+        ).fetchall()
+        fav_paths = set(r["track_path"] for r in fav_rows)
+
+        rows = conn.execute(
+            "SELECT track_path, added_at FROM user_saved_tracks WHERE username = ? ORDER BY added_at DESC",
+            (username,)
+        ).fetchall()
+
+        result = []
+        for r in rows:
+            tp = r["track_path"]
+            if not user_can_access_track(g.user, tp):
+                continue
+
+            info = get_track_info(tp)
+            result.append({
+                "track_path": tp,
+                "title": info["title"],
+                "artist": info["artist"],
+                "duration": info["duration"],
+                "is_favorite": (tp in fav_paths),
+                "added_at": r["added_at"]
+            })
+
+        return jsonify({"tracks": result}), 200
+    finally:
+        conn.close()
+
+@app.route("/api/v2/library/tracks", methods=["POST"])
+@require_auth
+def v2_save_library_track():
+    """Saves track to user_saved_tracks (and sets favorite if appropriate).
+    Idempotent 200.
+    """
+    username = g.user.get("username", "admin")
+    data = request.get_json(force=True, silent=True) or {}
+    track_path = data.get("track_path")
+    if not track_path or not isinstance(track_path, str) or not track_path.strip():
+        return jsonify({"error": "track_path is required"}), 400
+
+    track_path = track_path.strip()
+    safe = os.path.normpath(track_path).replace("\\", "/")
+    if safe.startswith("..") or os.path.isabs(safe):
+        return jsonify({"error": "Invalid track path"}), 400
+
+    if not user_can_access_track(g.user, safe):
+        return jsonify({"error": "Access denied to track source"}), 403
+
+    full_path = os.path.realpath(os.path.join(MUSIC_DIR, safe))
+    music_root = os.path.realpath(MUSIC_DIR)
+    if not full_path.startswith(music_root + os.sep) or not os.path.isfile(full_path) or not full_path.lower().endswith(AUDIO_EXTS):
+        return jsonify({"error": "Audio file not found"}), 404
+
+    conn = get_db()
+    try:
+        conn.execute("""
+            INSERT OR IGNORE INTO user_saved_tracks (username, track_path)
+            VALUES (?, ?)
+        """, (username, safe))
+
+        is_favorite = data.get("is_favorite")
+        if is_favorite is True or data.get("favorite") is True:
+            conn.execute("""
+                INSERT OR IGNORE INTO playlist_tracks (username, playlist_name, track_path)
+                VALUES (?, 'Favorites', ?)
+            """, (username, safe))
+        elif is_favorite is False or data.get("favorite") is False:
+            conn.execute("""
+                DELETE FROM playlist_tracks
+                WHERE username = ? AND playlist_name = 'Favorites' AND track_path = ?
+            """, (username, safe))
+
+        conn.commit()
+
+        fav_check = conn.execute(
+            "SELECT 1 FROM playlist_tracks WHERE username = ? AND playlist_name = 'Favorites' AND track_path = ?",
+            (username, safe)
+        ).fetchone()
+
+        return jsonify({
+            "status": "saved",
+            "track_path": safe,
+            "is_favorite": bool(fav_check)
+        }), 200
+    finally:
+        conn.close()
+
+@app.route("/api/v2/library/tracks", methods=["DELETE"])
+@require_auth
+def v2_remove_library_track():
+    """Removes track from user_saved_tracks. Safe repeat behavior (idempotent 200)."""
+    username = g.user.get("username", "admin")
+    track_path = request.args.get("track_path")
+    if not track_path:
+        data = request.get_json(force=True, silent=True) or {}
+        track_path = data.get("track_path")
+
+    if not track_path or not isinstance(track_path, str) or not track_path.strip():
+        return jsonify({"error": "track_path is required"}), 400
+
+    track_path = track_path.strip()
+    safe = os.path.normpath(track_path).replace("\\", "/")
+
+    conn = get_db()
+    try:
+        conn.execute("""
+            DELETE FROM user_saved_tracks
+            WHERE username = ? AND (track_path = ? OR track_path = ?)
+        """, (username, safe, track_path))
+        conn.commit()
+
+        return jsonify({
+            "status": "removed",
+            "track_path": safe
+        }), 200
     finally:
         conn.close()
 

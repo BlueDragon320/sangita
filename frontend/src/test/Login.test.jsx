@@ -30,7 +30,7 @@ describe('Login Component', () => {
     expect(passwordInput).toHaveAttribute('aria-invalid', 'false')
 
     expect(submitBtn).toBeInTheDocument()
-    expect(submitBtn).toHaveTextContent('Sign In')
+    expect(submitBtn).toHaveTextContent(/sign in/i)
 
     // ThemeSelector is present in the top corner
     expect(screen.getByTestId('login-theme-selector')).toBeInTheDocument()
@@ -151,5 +151,19 @@ describe('Login Component', () => {
     fireEvent.click(lightOption)
 
     expect(handleSelectTheme).toHaveBeenCalledWith('light')
+  })
+
+  it('toggles password visibility when the show/hide password button is clicked', () => {
+    render(<Login onLogin={vi.fn()} />)
+    const passwordInput = screen.getByTestId('login-password-input')
+    const toggleBtn = screen.getByRole('button', { name: /show password/i })
+    expect(passwordInput).toHaveAttribute('type', 'password')
+
+    fireEvent.click(toggleBtn)
+    expect(passwordInput).toHaveAttribute('type', 'text')
+    expect(screen.getByRole('button', { name: /hide password/i })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /hide password/i }))
+    expect(passwordInput).toHaveAttribute('type', 'password')
   })
 })

@@ -164,6 +164,36 @@ const GlobeIcon = ({ width = 12, height = 12 }) => (
   </svg>
 )
 
+const AlertCircleIcon = ({ size = 28, color = 'var(--red)' }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8 }}>
+    <circle cx="12" cy="12" r="10" />
+    <line x1="12" y1="8" x2="12" y2="12" />
+    <line x1="12" y1="16" x2="12.01" y2="16" />
+  </svg>
+)
+
+const EmptyChartIcon = ({ size = 32, color = 'var(--text-dim)' }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8, opacity: 0.6 }}>
+    <line x1="18" y1="20" x2="18" y2="10" />
+    <line x1="12" y1="20" x2="12" y2="4" />
+    <line x1="6" y1="20" x2="6" y2="14" />
+  </svg>
+)
+
+const EmptyArtistIcon = ({ size = 32, color = 'var(--text-dim)' }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8, opacity: 0.6 }}>
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </svg>
+)
+
+const IdleIcon = ({ size = 28, color = 'var(--text-dim)' }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8, opacity: 0.6 }}>
+    <circle cx="12" cy="12" r="10" />
+    <polyline points="12 6 12 12 16 14" />
+  </svg>
+)
+
 const TABS = [
   { id: 'analytics', label: 'Overview', icon: <ActivityIcon />, testId: 'admin-tab-analytics' },
   { id: 'music', label: 'Music', icon: <MusicIcon />, testId: 'admin-tab-music' },
@@ -188,6 +218,14 @@ export default function AdminDashboard({
   // Navigation Tabs: 'analytics', 'music', 'live', 'users', 'system'
   const [activeTab, setActiveTab] = useState('analytics')
   const tabRefs = useRef({})
+  const isMountedRef = useRef(true)
+
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
 
   const handleTabKeyDown = useCallback((e) => {
     const tabIds = TABS.map(t => t.id)
@@ -375,11 +413,15 @@ export default function AdminDashboard({
       })
       if (!res.ok) throw new Error('Failed to load folders')
       const data = await res.json()
+      if (!isMountedRef.current) return
       setFolders(Array.isArray(data) ? data : (data.folders || []))
     } catch (err) {
+      if (!isMountedRef.current) return
       setFoldersError(err.message)
     } finally {
-      setFoldersLoading(false)
+      if (isMountedRef.current) {
+        setFoldersLoading(false)
+      }
     }
   }, [token])
 
@@ -392,11 +434,15 @@ export default function AdminDashboard({
       })
       if (!res.ok) throw new Error('Failed to load playlists')
       const data = await res.json()
+      if (!isMountedRef.current) return
       setAdminPlaylists(Array.isArray(data) ? data : (data.playlists || []))
     } catch (err) {
+      if (!isMountedRef.current) return
       setPlaylistsError(err.message)
     } finally {
-      setPlaylistsLoading(false)
+      if (isMountedRef.current) {
+        setPlaylistsLoading(false)
+      }
     }
   }, [token])
 
@@ -409,11 +455,15 @@ export default function AdminDashboard({
       })
       if (!res.ok) throw new Error('Failed to load artists')
       const data = await res.json()
+      if (!isMountedRef.current) return
       setArtists(Array.isArray(data) ? data : (data.artists || []))
     } catch (err) {
+      if (!isMountedRef.current) return
       setArtistsError(err.message)
     } finally {
-      setArtistsLoading(false)
+      if (isMountedRef.current) {
+        setArtistsLoading(false)
+      }
     }
   }, [token])
 
@@ -643,6 +693,87 @@ export default function AdminDashboard({
     }
   }
 
+  // Escape key listener to dismiss open modals
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (showUserModal) {
+          e.stopPropagation()
+          setShowUserModal(false)
+        } else if (lyricsEditModal.open) {
+          e.stopPropagation()
+          setLyricsEditModal(m => ({ ...m, open: false }))
+        } else if (remoteModelModalOpen) {
+          e.stopPropagation()
+          setRemoteModelModalOpen(false)
+        } else if (classifyModal.open) {
+          e.stopPropagation()
+          setClassifyModal(m => ({ ...m, open: false }))
+        } else if (artistModal.open) {
+          e.stopPropagation()
+          setArtistModal(m => ({ ...m, open: false }))
+        } else if (deletePlaylistDialog.open) {
+          e.stopPropagation()
+          setDeletePlaylistDialog({ open: false, playlist: null, deleting: false, error: null })
+        } else if (accessModal.open) {
+          e.stopPropagation()
+          setAccessModal(m => ({ ...m, open: false }))
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showUserModal, lyricsEditModal.open, remoteModelModalOpen, classifyModal.open, artistModal.open, deletePlaylistDialog.open, accessModal.open])
+
+  // Focus trap for active modal dialogs
+  const hasOpenModal = showUserModal || lyricsEditModal.open || remoteModelModalOpen || classifyModal.open || artistModal.open || deletePlaylistDialog.open || accessModal.open
+  useEffect(() => {
+    if (!hasOpenModal) return
+    const prevFocus = document.activeElement
+    const timer = setTimeout(() => {
+      const activeModal = document.querySelector('.admin-modal-backdrop[role="dialog"]')
+      if (!activeModal) return
+      const focusable = activeModal.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusable.length > 0) {
+        focusable[0].focus()
+      }
+    }, 0)
+
+    const handleModalTab = (e) => {
+      if (e.key !== 'Tab') return
+      const activeModal = document.querySelector('.admin-modal-backdrop[role="dialog"]')
+      if (!activeModal) return
+      const focusable = Array.from(activeModal.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ))
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleModalTab)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('keydown', handleModalTab)
+      if (prevFocus && typeof prevFocus.focus === 'function') {
+        prevFocus.focus()
+      }
+    }
+  }, [hasOpenModal])
+
   const filteredPlaylists = useMemo(() => {
     return adminPlaylists.filter(pl => {
       if (playlistVisibilityFilter !== 'all' && pl.visibility !== playlistVisibilityFilter) {
@@ -865,13 +996,13 @@ export default function AdminDashboard({
       })
       const data = await res.json()
       if (res.ok && data.success !== false) {
-        setNodeOpStatus({ type: 'success', msg: `⚡ Model '${lyricsConfig.model}' primed successfully in remote PC RAM/GPU!` })
+        setNodeOpStatus({ type: 'success', msg: `Model '${lyricsConfig.model}' primed successfully in remote PC RAM/GPU.` })
         fetchLyricsStatus()
       } else {
-        setNodeOpStatus({ type: 'error', msg: `❌ Failed to prime model: ${data.error || res.statusText}` })
+        setNodeOpStatus({ type: 'error', msg: `Failed to prime model: ${data.error || res.statusText}` })
       }
     } catch (err) {
-      setNodeOpStatus({ type: 'error', msg: `❌ Error priming node: ${err.message}` })
+      setNodeOpStatus({ type: 'error', msg: `Error priming node: ${err.message}` })
     } finally {
       setLyricsActionLoading(false)
       setTimeout(() => setNodeOpStatus(null), 8000)
@@ -894,13 +1025,13 @@ export default function AdminDashboard({
       })
       const data = await res.json()
       if (res.ok && data.success !== false) {
-        setNodeOpStatus({ type: 'success', msg: '🗑️ Remote memory purged: GPU VRAM freed and RAM files wiped clean.' })
+        setNodeOpStatus({ type: 'success', msg: 'Remote memory purged: GPU VRAM freed and RAM files wiped clean.' })
         fetchLyricsStatus()
       } else {
-        setNodeOpStatus({ type: 'error', msg: `❌ Failed to purge node: ${data.error || res.statusText}` })
+        setNodeOpStatus({ type: 'error', msg: `Failed to purge node: ${data.error || res.statusText}` })
       }
     } catch (err) {
-      setNodeOpStatus({ type: 'error', msg: `❌ Error purging node: ${err.message}` })
+      setNodeOpStatus({ type: 'error', msg: `Error purging node: ${err.message}` })
     } finally {
       setLyricsActionLoading(false)
       setTimeout(() => setNodeOpStatus(null), 8000)
@@ -928,12 +1059,12 @@ export default function AdminDashboard({
       })
       const data = await res.json()
       if (res.ok && data.success !== false) {
-        setNodeOpStatus({ type: 'success', msg: '💾 Hardware safeguards synchronized and applied to remote PC.' })
+        setNodeOpStatus({ type: 'success', msg: 'Hardware safeguards synchronized and applied to remote PC.' })
       } else {
-        setNodeOpStatus({ type: 'error', msg: `❌ Failed to sync settings: ${data.error || res.statusText}` })
+        setNodeOpStatus({ type: 'error', msg: `Failed to sync settings: ${data.error || res.statusText}` })
       }
     } catch (err) {
-      setNodeOpStatus({ type: 'error', msg: `❌ Error saving settings: ${err.message}` })
+      setNodeOpStatus({ type: 'error', msg: `Error saving settings: ${err.message}` })
     } finally {
       setLyricsActionLoading(false)
       setTimeout(() => setNodeOpStatus(null), 6000)
@@ -1137,14 +1268,14 @@ export default function AdminDashboard({
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       if (!res.ok) throw new Error('Failed to load analytics')
       const data = await res.json()
-      if (requestId !== analyticsRequestIdRef.current) return
+      if (!isMountedRef.current || requestId !== analyticsRequestIdRef.current) return
       setAnalytics(data)
     } catch (err) {
-      if (requestId !== analyticsRequestIdRef.current) return
+      if (!isMountedRef.current || requestId !== analyticsRequestIdRef.current) return
       const errMsg = err.message || 'Failed to fetch analytics data'
       setAnalyticsError(errMsg)
     } finally {
-      if (requestId === analyticsRequestIdRef.current) {
+      if (isMountedRef.current && requestId === analyticsRequestIdRef.current) {
         setAnalyticsLoading(false)
       }
     }
@@ -1159,13 +1290,17 @@ export default function AdminDashboard({
       const res = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${token}` } })
       if (!res.ok) throw new Error('Failed to load users')
       const data = await res.json()
+      if (!isMountedRef.current) return
       setUsers(Array.isArray(data) ? data : [])
       setUsersError(null)
     } catch (err) {
+      if (!isMountedRef.current) return
       const errMsg = err.message || 'Failed to load user accounts'
       setUsersError(errMsg)
     } finally {
-      setUsersLoading(false)
+      if (isMountedRef.current) {
+        setUsersLoading(false)
+      }
     }
   }, [token])
 
@@ -1181,16 +1316,20 @@ export default function AdminDashboard({
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       if (!res.ok) throw new Error('Failed to load audit logs')
       const data = await res.json()
+      if (!isMountedRef.current) return
       setLogs(data.events || [])
       setLogsPage(data.page || 1)
       setLogsTotalPages(data.total_pages || 1)
       setLogsTotalCount(data.total || 0)
       setLogsError(null)
     } catch (err) {
+      if (!isMountedRef.current) return
       const errMsg = err.message || 'Failed to load audit logs'
       setLogsError(errMsg)
     } finally {
-      setLogsLoading(false)
+      if (isMountedRef.current) {
+        setLogsLoading(false)
+      }
     }
   }, [token, logsSearch, logsUserFilter])
 
@@ -1206,12 +1345,16 @@ export default function AdminDashboard({
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       if (!res.ok) throw new Error('Failed to load user profile stats')
       const data = await res.json()
+      if (!isMountedRef.current) return
       setUserDetailStats(data)
     } catch (err) {
+      if (!isMountedRef.current) return
       setError(err.message || 'Failed to load user details')
       setRetryAction({ run: () => fetchUserDetailStats(username, tf, start, end) })
     } finally {
-      setAnalyticsLoading(false)
+      if (isMountedRef.current) {
+        setAnalyticsLoading(false)
+      }
     }
   }, [token, effectiveTz])
 
@@ -1971,7 +2114,7 @@ export default function AdminDashboard({
               </div>
             ) : analyticsError ? (
               <div className="admin-empty-state admin-error-state" data-testid="analytics-error" style={{ borderColor: 'var(--red)' }}>
-                <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                <AlertCircleIcon size={28} />
                 <h3 style={{ color: 'var(--red)' }}>Failed to Load Analytics</h3>
                 <p>{analyticsError}</p>
                 <button
@@ -1985,7 +2128,7 @@ export default function AdminDashboard({
               </div>
             ) : (!analytics?.timeline || analytics.timeline.length === 0) ? (
               <div className="admin-empty-state" data-testid="analytics-empty">
-                <div style={{ fontSize: '32px', marginBottom: 8 }}>📊</div>
+                <EmptyChartIcon size={32} />
                 <h3>No listening activity recorded in this period.</h3>
                 <p>Try switching to a broader timeframe like "30 Days" or "All Time".</p>
               </div>
@@ -2112,7 +2255,7 @@ export default function AdminDashboard({
                     </div>
                     <DiurnalHeatmapChart data={analytics?.hourly_distribution} />
                     <div style={{ marginTop: 14, fontSize: '11px', color: 'var(--text-sub)' }}>
-                      🔥 Peak listening traffic occurs around <strong>{analytics?.kpis?.peak_hour?.label}</strong>.
+                      Peak listening traffic occurs around <strong>{analytics?.kpis?.peak_hour?.label}</strong>.
                     </div>
                   </div>
 
@@ -2271,7 +2414,7 @@ export default function AdminDashboard({
                 </div>
               ) : foldersError ? (
                 <div className="admin-empty-state admin-error-state" style={{ borderColor: 'var(--red)', margin: '16px 0' }}>
-                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <AlertCircleIcon size={28} />
                   <h3 style={{ color: 'var(--red)' }}>Failed to Load Folders</h3>
                   <p>{foldersError}</p>
                   <button className="admin-nav-btn" onClick={fetchFolders} style={{ marginTop: 12 }}>
@@ -2314,7 +2457,7 @@ export default function AdminDashboard({
                           </td>
                           <td>
                             <span className={`classification-pill ${f.classification}`}>
-                              {f.classification === 'artist' ? '🎨 Artist' : f.classification === 'playlist' ? '📋 Playlist' : '⚠️ Unclassified'}
+                              {f.classification === 'artist' ? (<><span className="status-dot artist" />Artist</>) : f.classification === 'playlist' ? (<><span className="status-dot playlist" />Playlist</>) : (<><span className="status-dot unclassified" />Unclassified</>)}
                             </span>
                           </td>
                           <td>
@@ -2423,7 +2566,7 @@ export default function AdminDashboard({
                 </div>
               ) : playlistsError ? (
                 <div className="admin-empty-state admin-error-state" style={{ borderColor: 'var(--red)', margin: '16px 0' }}>
-                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <AlertCircleIcon size={28} />
                   <h3 style={{ color: 'var(--red)' }}>Failed to Load Playlists</h3>
                   <p>{playlistsError}</p>
                   <button className="admin-nav-btn" onClick={fetchAdminPlaylists} style={{ marginTop: 12 }}>
@@ -2493,7 +2636,7 @@ export default function AdminDashboard({
                           </td>
                           <td>
                             <span className={`playlist-type-pill ${pl.is_folder_playlist ? 'folder' : 'user'}`}>
-                              {pl.is_folder_playlist ? '📁 Folder Playlist' : '👤 User Playlist'}
+                              {pl.is_folder_playlist ? (<><span className="status-dot folder" />Folder playlist</>) : (<><span className="status-dot user" />User playlist</>)}
                             </span>
                           </td>
                           <td>
@@ -2529,7 +2672,6 @@ export default function AdminDashboard({
               <div className="admin-panel-header">
                 <div>
                   <div className="admin-panel-title">
-                    <span>🎨</span>
                     <span>Artists Management</span>
                   </div>
                   <div className="admin-panel-subtitle">
@@ -2567,7 +2709,7 @@ export default function AdminDashboard({
                 </div>
               ) : artistsError ? (
                 <div className="admin-empty-state admin-error-state" style={{ borderColor: 'var(--red)', margin: '16px 0' }}>
-                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <AlertCircleIcon size={28} />
                   <h3 style={{ color: 'var(--red)' }}>Failed to Load Artists</h3>
                   <p>{artistsError}</p>
                   <button className="admin-nav-btn" onClick={fetchArtists} style={{ marginTop: 12 }}>
@@ -2577,7 +2719,7 @@ export default function AdminDashboard({
                 </div>
               ) : artists.length === 0 ? (
                 <div className="empty-state" style={{ padding: 36 }}>
-                  <div style={{ fontSize: '32px', marginBottom: 8 }}>🎨</div>
+                  <EmptyArtistIcon size={32} />
                   <h3 style={{ marginTop: 6, fontSize: '14px' }}>No Catalog Artists Configured</h3>
                   <p style={{ fontSize: '12px' }}>
                     Click "Add New Artist" to register an artist profile or classify a source folder to automatically register one.
@@ -2638,7 +2780,7 @@ export default function AdminDashboard({
               </div>
             ) : analyticsError ? (
               <div className="admin-empty-state admin-error-state" data-testid="music-analytics-error" style={{ borderColor: 'var(--red)' }}>
-                <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                <AlertCircleIcon size={28} />
                 <h3 style={{ color: 'var(--red)' }}>Failed to Load Music Analytics</h3>
                 <p>{analyticsError}</p>
                 <button
@@ -2814,7 +2956,7 @@ export default function AdminDashboard({
                   </div>
                 ) : playlistsError ? (
                   <div className="admin-empty-state admin-error-state" style={{ borderColor: 'var(--red)', margin: '16px 0' }}>
-                    <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                    <AlertCircleIcon size={28} />
                     <h3 style={{ color: 'var(--red)' }}>Failed to Load Playlists</h3>
                     <p>{playlistsError}</p>
                     <button className="admin-nav-btn" onClick={fetchAdminPlaylists} style={{ marginTop: 12 }}>
@@ -2923,7 +3065,7 @@ export default function AdminDashboard({
                 </div>
               ) : analyticsError && !analytics?.live_sessions ? (
                 <div className="admin-empty-state admin-error-state" data-testid="live-sessions-error" style={{ borderColor: 'var(--red)', margin: '20px 0' }}>
-                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <AlertCircleIcon size={28} />
                   <h3 style={{ color: 'var(--red)' }}>Failed to Load Live Sessions</h3>
                   <p>{analyticsError}</p>
                   <button className="admin-nav-btn" onClick={fetchAnalytics} style={{ marginTop: 16 }}>
@@ -3015,7 +3157,7 @@ export default function AdminDashboard({
                 </div>
               ) : logsError ? (
                 <div className="admin-empty-state admin-error-state" data-testid="logs-error" style={{ borderColor: 'var(--red)', margin: '20px 0' }}>
-                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <AlertCircleIcon size={28} />
                   <h3 style={{ color: 'var(--red)' }}>Failed to Load Audit Logs</h3>
                   <p>{logsError}</p>
                   <button className="admin-nav-btn" onClick={() => fetchLogs(logsPage)} style={{ marginTop: 16 }}>
@@ -3153,7 +3295,7 @@ export default function AdminDashboard({
                 </div>
               ) : usersError ? (
                 <div className="admin-empty-state admin-error-state" data-testid="users-error" style={{ borderColor: 'var(--red)', margin: '20px 0' }}>
-                  <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                  <AlertCircleIcon size={28} />
                   <h3 style={{ color: 'var(--red)' }}>Failed to Load Users</h3>
                   <p>{usersError}</p>
                   <button className="admin-nav-btn" onClick={fetchUsers} style={{ marginTop: 16 }}>
@@ -3241,7 +3383,7 @@ export default function AdminDashboard({
             <div className="lyrics-hero-header">
               <div className="lyrics-hero-title-group">
                 <div className="lyrics-hero-title-row">
-                  <div className="lyrics-hero-title">🎵 Lyrics Caption & Sync Engine</div>
+                  <div className="lyrics-hero-title">Lyrics Caption & Sync Engine</div>
                   {lyricsStatus?.job?.state === 'running' ? (
                     <span className="lyrics-hero-badge running">
                       <span className="live-dot-pulse" />
@@ -3249,21 +3391,21 @@ export default function AdminDashboard({
                     </span>
                   ) : lyricsStatus?.job?.state === 'stopped' ? (
                     <span className="lyrics-hero-badge idle" style={{ borderColor: 'rgba(239, 68, 68, 0.4)', color: 'var(--red)' }}>
-                      🛑 Stopped
+                      <><span className="status-dot red" />Stopped</>
                     </span>
                   ) : (
                     <span className="lyrics-hero-badge idle">
-                      🟢 Engine Idle & Ready
+                      <><span className="status-dot green" />Engine idle & ready</>
                     </span>
                   )}
                   {lyricsConfig.remote_whisper_enabled && (
                     <span className="source-pill" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--emerald)', border: '1px solid rgba(16, 185, 129, 0.35)', fontSize: '10.5px' }}>
-                      ⚡ GPU Offload Active
+                      <><span className="status-dot green" />GPU offload active</>
                     </span>
                   )}
                   {lyricsConfig.only_remote_gpu && (
                     <span className="source-pill" style={{ background: 'rgba(99, 102, 241, 0.18)', color: '#A5B4FC', border: '1px solid rgba(99, 102, 241, 0.4)', fontSize: '10.5px' }}>
-                      🛡️ 0% Server CPU
+                      <><span className="status-dot blue" />0% Server CPU</>
                     </span>
                   )}
                 </div>
@@ -3314,26 +3456,26 @@ export default function AdminDashboard({
                       <span>Active Lyrics Caption Generation</span>
                       {lyricsStatus.job.config?.api === false && (
                         <span className="source-pill whisper" style={{ fontSize: '10px' }}>
-                          ⚡ API OFF (Direct Local)
+                          Direct local (API off)
                         </span>
                       )}
                       {lyricsStatus.job.config?.only_remote_gpu && (
                         <span className="source-pill" style={{ fontSize: '10px', background: 'rgba(99, 102, 241, 0.2)', color: '#A5B4FC', border: '1px solid rgba(99, 102, 241, 0.4)' }}>
-                          🛡️ Exclusive GPU (0% Server CPU)
+                          Exclusive GPU (0% server CPU)
                         </span>
                       )}
                       {lyricsStatus.job.current_source_type === 'remote_gpu' ? (
-                        <span className="engine-badge" style={{ background: 'rgba(16, 185, 129, 0.2)', color: '#34D399', border: '1px solid rgba(16, 185, 129, 0.4)' }}>⚡ Remote PC GPU</span>
+                        <span className="engine-badge" style={{ background: 'rgba(16, 185, 129, 0.2)', color: '#34D399', border: '1px solid rgba(16, 185, 129, 0.4)' }}>Remote PC GPU</span>
                       ) : lyricsStatus.job.current_source_type === 'api' ? (
-                        <span className="engine-badge api">🌐 Online API (LRCLIB)</span>
+                        <span className="engine-badge api">Online API (LRCLIB)</span>
                       ) : lyricsStatus.job.current_source_type === 'local_machine' ? (
-                        <span className="engine-badge local">⚡ Local Machine (Whisper 500MB Model)</span>
+                        <span className="engine-badge local">Local machine (Whisper 500MB model)</span>
                       ) : lyricsStatus.job.current_source_type === 'local_demucs' ? (
-                        <span className="engine-badge demucs">🎙️ Local Demucs Isolation</span>
+                        <span className="engine-badge demucs">Local Demucs isolation</span>
                       ) : lyricsStatus.job.current_source_type === 'embedded' ? (
-                        <span className="engine-badge embedded">🏷️ Embedded Tags</span>
+                        <span className="engine-badge embedded">Embedded tags</span>
                       ) : (
-                        <span className="engine-badge checking">🔍 Checking Cache</span>
+                        <span className="engine-badge checking">Checking cache</span>
                       )}
                     </div>
                   </div>
@@ -3362,7 +3504,7 @@ export default function AdminDashboard({
                   </div>
 
                   <div className="currently-processing-title-row">
-                    <span style={{ fontSize: '16px' }}>🎧</span>
+                    <MusicIcon />
                     <span className="currently-processing-title">
                       {lyricsStatus.job.current_title || lyricsStatus.job.current_song?.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Processing Song...'}
                     </span>
@@ -3375,7 +3517,7 @@ export default function AdminDashboard({
 
                   {lyricsStatus.job.current_song && (
                     <div className="currently-processing-path">
-                      📁 {lyricsStatus.job.current_song}
+                      {lyricsStatus.job.current_song}
                     </div>
                   )}
 
@@ -3415,17 +3557,17 @@ export default function AdminDashboard({
                     <span className="counter-val">{lyricsStatus.job.counts?.embedded || 0}</span>
                   </div>
                   <div className="counter-pill">
-                    <span className="counter-name">🌐 Online API:</span>
+                    <span className="counter-name">Online API:</span>
                     <span className="counter-val" style={{ color: '#60A5FA' }}>{lyricsStatus.job.counts?.lrclib || 0}</span>
                   </div>
                   {lyricsStatus.job.counts?.remote_gpu > 0 && (
                     <div className="counter-pill" style={{ borderColor: 'rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.1)' }}>
-                      <span className="counter-name">⚡ Remote GPU:</span>
+                      <span className="counter-name">Remote GPU:</span>
                       <span className="counter-val" style={{ color: '#34D399' }}>{lyricsStatus.job.counts?.remote_gpu || 0}</span>
                     </div>
                   )}
                   <div className="counter-pill">
-                    <span className="counter-name">⚡ Local Whisper:</span>
+                    <span className="counter-name">Local Whisper:</span>
                     <span className="counter-val" style={{ color: '#C084FC' }}>{lyricsStatus.job.counts?.whisper || 0}</span>
                   </div>
                   <div className="counter-pill danger">
@@ -3462,13 +3604,12 @@ export default function AdminDashboard({
 
             {/* Primary Lyrics Engine Controls: Generation Scope & Library Targets */}
             <div className="lyrics-scope-primary-panel" style={{ marginBottom: 18 }}>
-              {/* CARD 1: 🎯 Generation Scope & Library Targets */}
+              {/* CARD 1: Generation Scope & Library Targets */}
               <div className="lyrics-card">
                 <div className="lyrics-card-header">
                   <div>
                     <div className="lyrics-card-title">
-                      <span>🎯</span>
-                      <span>1. Generation Scope & Targets</span>
+                      <span>1. Generation scope & targets</span>
                     </div>
                     <div className="lyrics-card-desc">
                       Select which tracks to transcribe and whether to query online LRCLIB first.
@@ -3566,7 +3707,7 @@ export default function AdminDashboard({
                   >
                     <div className="lyrics-api-btn-content">
                       <div className="lyrics-api-btn-left">
-                        <span className="lyrics-api-btn-icon">{lyricsConfig.api ? '🌐' : '⚡'}</span>
+                        <span className="lyrics-api-btn-icon"><GlobeIcon /></span>
                         <div className="lyrics-api-btn-titles">
                           <span className="lyrics-api-btn-main">LRCLIB API: {lyricsConfig.api ? 'ON' : 'OFF'}</span>
                           <span className="lyrics-api-btn-sub">
@@ -3702,7 +3843,7 @@ export default function AdminDashboard({
               <div className="kpi-card">
                 <div className="kpi-header">
                   <span className="kpi-label">Remote PC GPU Node</span>
-                  <span style={{ fontSize: '16px' }}>⚡</span>
+                  <ActivityIcon />
                 </div>
                 <div className="kpi-value" style={{ fontSize: '1.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {lyricsConfig.remote_whisper_enabled
@@ -3738,8 +3879,7 @@ export default function AdminDashboard({
             {/* Connected PC Node Telemetry (Aligned directly below each corresponding Host card) */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 8 }}>
               <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--emerald)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>⚡</span>
-                <span>Connected PC Node Telemetry {lyricsConfig.remote_whisper_url ? `(${lyricsConfig.remote_whisper_url})` : '(Local IP Not Connected)'}</span>
+                <span>Connected PC node telemetry {lyricsConfig.remote_whisper_url ? `(${lyricsConfig.remote_whisper_url})` : '(Local IP Not Connected)'}</span>
                 {connectedPcStats?.online ? (
                   <span className="badge-pill online" style={{ fontSize: '9px', padding: '1px 6px', background: 'rgba(16, 185, 129, 0.15)', color: 'var(--emerald)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 10 }}>
                     LIVE SYNC
@@ -3759,7 +3899,7 @@ export default function AdminDashboard({
                   title="Click to refresh connected PC specs and live telemetry"
                   style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}
                 >
-                  <span style={{ display: 'inline-block', transform: connectedPcLoading ? 'rotate(180deg)' : 'none', transition: 'transform 0.4s ease' }}>🔄</span>
+                  <span style={{ display: 'inline-block', transform: connectedPcLoading ? 'rotate(180deg)' : 'none', transition: 'transform 0.4s ease' }}><RefreshIcon /></span>
                   <span>{connectedPcLoading ? 'Refreshing…' : 'Refresh Specs'}</span>
                 </button>
               )}
@@ -3820,7 +3960,7 @@ export default function AdminDashboard({
               <div className="kpi-card" data-testid="connected-pc-gpu-card">
                 <div className="kpi-header">
                   <span className="kpi-label">Connected PC GPU & VRAM</span>
-                  <span style={{ fontSize: '16px' }}>⚡</span>
+                  <DeviceIcon />
                 </div>
                 <div className="kpi-value" style={{ fontSize: '1.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {detectedGpuName}
@@ -3884,13 +4024,12 @@ export default function AdminDashboard({
               </summary>
               <div className="admin-disclosure-content">
                 <div className="lyrics-workstation-layout" style={{ marginTop: 18 }}>
-              {/* CARD 2: ⚡ Remote GPU Acceleration & Zero-Trace Node (All Local PC Options Here!) */}
+              {/* CARD 2: Remote GPU Acceleration & Zero-Trace Node (All Local PC Options Here!) */}
               <div className="lyrics-card">
                 <div className="lyrics-card-header">
                   <div>
                     <div className="lyrics-card-title">
-                      <span>⚡</span>
-                      <span>2. Remote PC GPU Node (NVIDIA CUDA)</span>
+                      <span>2. Remote PC GPU node (NVIDIA CUDA)</span>
                     </div>
                     <div className="lyrics-card-desc">
                       Offload AI to your laptop/PC GPU in RAM. Manage model delivery, hardware caps, and purge remotely.
@@ -3929,7 +4068,7 @@ export default function AdminDashboard({
                           disabled={remoteGpuTestLoading || !lyricsConfig.remote_whisper_url}
                           style={{ padding: '6px 12px', fontSize: '11.5px', whiteSpace: 'nowrap' }}
                         >
-                          {remoteGpuTestLoading ? 'Pinging…' : '🔌 Ping Node'}
+                          {remoteGpuTestLoading ? 'Pinging…' : 'Ping node'}
                         </button>
                       </div>
                     </div>
@@ -3947,7 +4086,7 @@ export default function AdminDashboard({
                         border: remoteGpuTestResult.online ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
                         color: remoteGpuTestResult.online ? '#34D399' : '#FCA5A5'
                       }}>
-                        <span>{remoteGpuTestResult.online ? '🟢' : '🔴'}</span>
+                        <span className={`status-dot ${remoteGpuTestResult.online ? 'online' : 'offline'}`} />
                         {remoteGpuTestResult.online ? (
                           <div style={{ flex: 1 }}>
                             <strong>Online & Ready:</strong> {remoteGpuTestResult.gpu_name} ({remoteGpuTestResult.has_cuda ? 'CUDA' : 'CPU'}, {remoteGpuTestResult.total_vram_mb} MB VRAM, Latency: {remoteGpuTestResult.latency_ms}ms)
@@ -3973,7 +4112,7 @@ export default function AdminDashboard({
                         border: `1px solid ${nodeOpStatus.type === 'success' ? 'rgba(16, 185, 129, 0.4)' : nodeOpStatus.type === 'error' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(59, 130, 246, 0.4)'}`,
                         color: nodeOpStatus.type === 'success' ? '#34D399' : nodeOpStatus.type === 'error' ? '#FCA5A5' : '#93C5FD'
                       }}>
-                        <span>{nodeOpStatus.type === 'success' ? '✓' : nodeOpStatus.type === 'error' ? '❌' : 'ℹ️'}</span>
+                        <span className={`status-dot ${nodeOpStatus.type === 'success' ? 'success' : nodeOpStatus.type === 'error' ? 'error' : 'info'}`} />
                         <span>{nodeOpStatus.msg}</span>
                       </div>
                     )}
@@ -3987,7 +4126,7 @@ export default function AdminDashboard({
                           onClick={() => setLyricsConfig(c => ({ ...c, model_source: 'online' }))}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '12px', color: 'var(--text)' }}>
-                            <span>🌐</span>
+                            <span><GlobeIcon /></span>
                             <span>Online (HuggingFace)</span>
                           </div>
                           <div style={{ fontSize: '10.5px', color: 'var(--text-dim)', lineHeight: 1.3 }}>
@@ -4000,7 +4139,7 @@ export default function AdminDashboard({
                           onClick={() => setLyricsConfig(c => ({ ...c, model_source: 'server' }))}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '12px', color: 'var(--text)' }}>
-                            <span>🖥️</span>
+                            <span><DeviceIcon /></span>
                             <span>Sangita Server (LAN)</span>
                           </div>
                           <div style={{ fontSize: '10.5px', color: 'var(--text-dim)', lineHeight: 1.3 }}>
@@ -4023,7 +4162,7 @@ export default function AdminDashboard({
                     }}>
                       <div>
                         <div style={{ fontWeight: 700, fontSize: '11.5px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span>🛡️ Volatile RAM-Disk Mode (/dev/shm)</span>
+                          <span>Volatile RAM-disk mode (/dev/shm)</span>
                           <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.2)', color: 'var(--emerald)', fontWeight: 800 }}>
                             ZERO DISK TRACE
                           </span>
@@ -4062,7 +4201,7 @@ export default function AdminDashboard({
                     {/* Remote PC Safeguards Controls */}
                     <div>
                       <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-sub)', textTransform: 'uppercase', marginBottom: 6 }}>
-                        ⚙️ Remote PC Hardware Safeguards & Throttling
+                        Remote PC hardware safeguards & throttling
                       </div>
 
                       {/* Detected Connected PC Specs Profile Banner */}
@@ -4139,7 +4278,7 @@ export default function AdminDashboard({
                           title="Uses ~25% of PC specs with 1.0s cooldown so PC stays quiet"
                           style={{ fontSize: '10.5px', padding: '3px 8px', borderRadius: 6, background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--text)', cursor: 'pointer' }}
                         >
-                          🌿 Quiet (25% Specs)
+                          Quiet (25% Specs)
                         </button>
                         <button
                           type="button"
@@ -4153,7 +4292,7 @@ export default function AdminDashboard({
                           title="Balanced ~50% specs allocation"
                           style={{ fontSize: '10.5px', padding: '3px 8px', borderRadius: 6, background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', color: 'var(--emerald)', cursor: 'pointer' }}
                         >
-                          ⚖️ Balanced (50% Specs)
+                          Balanced (50% Specs)
                         </button>
                         <button
                           type="button"
@@ -4167,7 +4306,7 @@ export default function AdminDashboard({
                           title="Turbo throughput ~85% core allocation"
                           style={{ fontSize: '10.5px', padding: '3px 8px', borderRadius: 6, background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.35)', color: '#C084FC', cursor: 'pointer' }}
                         >
-                          ⚡ Turbo (85% Specs)
+                          Turbo (85% Specs)
                         </button>
                       </div>
 
@@ -4236,7 +4375,7 @@ export default function AdminDashboard({
                     {/* Quick Remote Operations Action Bar */}
                     <div>
                       <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-sub)', textTransform: 'uppercase', marginBottom: 6 }}>
-                        🕹️ Remote Node Operations (Control Local PC from Server)
+                        Remote node operations (control local PC from server)
                       </div>
                       <div className="lyrics-quick-actions-bar">
                         <button
@@ -4246,7 +4385,7 @@ export default function AdminDashboard({
                           disabled={lyricsActionLoading || !lyricsConfig.remote_whisper_url}
                           title="Pre-warms and streams model into remote PC RAM/GPU so songs transcribe instantly"
                         >
-                          ⚡ Prime Model to RAM
+                          Prime model to RAM
                         </button>
                         <button
                           type="button"
@@ -4255,7 +4394,7 @@ export default function AdminDashboard({
                           disabled={lyricsActionLoading || !lyricsConfig.remote_whisper_url}
                           title="Frees PC GPU VRAM and deletes all ephemeral RAM directories (zero trace)"
                         >
-                          🗑️ Purge Remote RAM
+                          Purge remote RAM
                         </button>
                         <button
                           type="button"
@@ -4264,7 +4403,7 @@ export default function AdminDashboard({
                           disabled={lyricsActionLoading || !lyricsConfig.remote_whisper_url}
                           title="Applies the hardware safeguards directly to your PC without visiting localhost:8000"
                         >
-                          💾 Save PC Safeguards
+                          Save PC safeguards
                         </button>
                       </div>
                     </div>
@@ -4282,7 +4421,7 @@ export default function AdminDashboard({
                     }}>
                       <div>
                         <div style={{ fontWeight: 700, fontSize: '11.5px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span>🛡️ Exclusive GPU Mode (0% Server CPU Fallback)</span>
+                          <span>Exclusive GPU mode (0% server CPU fallback)</span>
                         </div>
                         <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: 2 }}>
                           Never runs heavy AI models on this server. If PC GPU is offline, skips AI to protect server.
@@ -4301,7 +4440,7 @@ export default function AdminDashboard({
                   </>
                 ) : (
                   <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '12px' }}>
-                    <div style={{ fontSize: '28px', marginBottom: 8 }}>💤</div>
+                    <IdleIcon size={28} />
                     <div>Remote GPU Offload is currently disabled.</div>
                     <div style={{ fontSize: '11px', marginTop: 4 }}>
                       Enable offload to accelerate transcription 5x–15x on your NVIDIA PC and keep server CPU at 0%.
@@ -4310,13 +4449,12 @@ export default function AdminDashboard({
                 )}
               </div>
 
-              {/* CARD 3: 💻 Server Fallback & Language Governance */}
+              {/* CARD 3: Server Fallback & Language Governance */}
               <div className="lyrics-card">
                 <div className="lyrics-card-header">
                   <div>
                     <div className="lyrics-card-title">
-                      <span>💻</span>
-                      <span>3. Server Fallback Governance</span>
+                      <span>3. Server fallback governance</span>
                     </div>
                     <div className="lyrics-card-desc">
                       Resource pinning and language rules if running locally on server CPU.
@@ -4399,8 +4537,7 @@ export default function AdminDashboard({
             <details className="admin-disclosure lyrics-logs-disclosure">
               <summary className="admin-disclosure-summary" data-testid="disclosure-lyrics-logs">
                 <div className="admin-disclosure-title">
-                  <span>📋</span>
-                  <span>Lyrics Audit & History Logs</span>
+                  <span>Lyrics audit & history logs</span>
                 </div>
                 <span className="admin-disclosure-badge">Waterfall Results & History ▾</span>
               </summary>
@@ -4524,7 +4661,7 @@ export default function AdminDashboard({
                               <td className="lyrics-track-col">
                                 <div className="lyrics-track-main">
                                   <div className="lyrics-track-title-row">
-                                    <span className="lyrics-audio-icon">🎧</span>
+                                    <span className="lyrics-audio-icon"><MusicIcon /></span>
                                     <span className="lyrics-track-title-text" title={songTitle}>
                                       {songTitle}
                                     </span>
@@ -4533,11 +4670,11 @@ export default function AdminDashboard({
                                     )}
                                   </div>
                                   <div className="lyrics-track-path-text" title={row.filepath}>
-                                    📁 {row.filepath}
+                                    {row.filepath}
                                   </div>
                                   {row.error && (
                                     <div className="lyrics-track-error-text" title={row.error}>
-                                      ⚠️ {row.error}
+                                      <span className="status-dot error" />{row.error}
                                     </div>
                                   )}
                                 </div>
@@ -4545,23 +4682,23 @@ export default function AdminDashboard({
                               <td>
                                 {row.source === 'lrclib' ? (
                                   <span className="source-pill lrclib" title="Retrieved from LRCLIB online synchronized lyrics database">
-                                    🌐 Online API
+                                    Online API
                                   </span>
                                 ) : row.source === 'remote_gpu' ? (
                                   <span className="source-pill" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34D399', border: '1px solid rgba(16, 185, 129, 0.35)' }} title="Transcribed via Remote PC GPU Whisper node">
-                                    ⚡ Remote PC GPU
+                                    Remote PC GPU
                                   </span>
                                 ) : row.source?.startsWith('whisper') ? (
                                   <span className="source-pill whisper" title="Transcribed on Local Machine using 500MB Whisper AI model">
-                                    ⚡ Local Machine (Whisper)
+                                    Local machine (Whisper)
                                   </span>
                                 ) : row.source === 'embedded' ? (
                                   <span className="source-pill embedded" title="Extracted from audio file embedded tags">
-                                    🏷️ Embedded Tag
+                                    Embedded tag
                                   </span>
                                 ) : row.source === 'skipped_existing' ? (
                                   <span className="source-pill default" title="Already exists (.lrc file)">
-                                    ⏭️ Cached
+                                    Cached
                                   </span>
                                 ) : (
                                   <span className={`source-pill ${srcClass}`}>
@@ -4682,9 +4819,16 @@ export default function AdminDashboard({
 
       {/* Add/Edit User Modal */}
       {showUserModal && (
-        <div className="admin-modal-backdrop" onClick={() => setShowUserModal(false)} data-testid="user-modal">
+        <div
+          className="admin-modal-backdrop"
+          onClick={() => setShowUserModal(false)}
+          data-testid="user-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="user-modal-title"
+        >
           <div className="admin-modal" onClick={e => e.stopPropagation()}>
-            <h3 className="modal-title">{isEditingUser ? `Edit User: ${formUsername}` : 'Create New User Account'}</h3>
+            <h3 id="user-modal-title" className="modal-title">{isEditingUser ? `Edit User: ${formUsername}` : 'Create New User Account'}</h3>
 
             <form onSubmit={handleSaveUser}>
               <div className="form-row">
@@ -4784,10 +4928,17 @@ export default function AdminDashboard({
 
       {/* Manual LRC Editor Modal */}
       {lyricsEditModal.open && (
-        <div className="admin-modal-backdrop" onClick={() => setLyricsEditModal(m => ({ ...m, open: false }))} data-testid="lyrics-edit-modal">
+        <div
+          className="admin-modal-backdrop"
+          onClick={() => setLyricsEditModal(m => ({ ...m, open: false }))}
+          data-testid="lyrics-edit-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lyrics-edit-modal-title"
+        >
           <div className="admin-modal" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Edit Synced Lyrics (.lrc)</h3>
+              <h3 id="lyrics-edit-modal-title" className="modal-title">Edit Synced Lyrics (.lrc)</h3>
               <p style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 4, wordBreak: 'break-all' }}>
                 {lyricsEditModal.filepath}
               </p>
@@ -4846,11 +4997,18 @@ export default function AdminDashboard({
 
       {/* Remote GPU Whisper Model Delivery Modal */}
       {remoteModelModalOpen && (
-        <div className="admin-modal-backdrop" onClick={() => setRemoteModelModalOpen(false)}>
+        <div
+          className="admin-modal-backdrop"
+          onClick={() => setRemoteModelModalOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="remote-model-modal-title"
+          data-testid="remote-model-modal"
+        >
           <div className="admin-modal" style={{ maxWidth: 620 }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>⚡ Whisper Model Delivery & Zero-Trace GPU Flow</span>
+              <h3 id="remote-model-modal-title" className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>Whisper model delivery & zero-trace GPU flow</span>
               </h3>
               <p style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 4 }}>
                 Audio is offloaded to your PC ({lyricsConfig.remote_whisper_url || 'Remote Node'}), transcribed in GPU memory, and discarded. Choose how the AI model is streamed into RAM.
@@ -4876,7 +5034,7 @@ export default function AdminDashboard({
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>
-                    <span style={{ fontSize: '18px' }}>🌐</span>
+                    <GlobeIcon width={18} height={18} />
                     <span>Online (HuggingFace)</span>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.4 }}>
@@ -4902,7 +5060,7 @@ export default function AdminDashboard({
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>
-                    <span style={{ fontSize: '18px' }}>🖥️</span>
+                    <DeviceIcon />
                     <span>From Sangita Server</span>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.4 }}>
@@ -4929,7 +5087,7 @@ export default function AdminDashboard({
               }}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>🛡️ Direct Ephemeral RAM Storage (/dev/shm)</span>
+                    <span>Direct ephemeral RAM storage (/dev/shm)</span>
                     <span style={{ fontSize: '10px', padding: '1px 5px', borderRadius: 4, background: 'var(--border)', color: 'var(--text-dim)', fontWeight: 700 }}>
                       ZERO LOCAL DISK FOOTPRINT
                     </span>
@@ -4976,7 +5134,7 @@ export default function AdminDashboard({
                 }}
                 disabled={lyricsActionLoading}
               >
-                🚀 Start Processing (Zero-Trace GPU)
+                Start processing (zero-trace GPU)
               </button>
             </div>
           </div>
@@ -5201,7 +5359,7 @@ export default function AdminDashboard({
             </div>
 
             <div style={{ fontSize: '12px', color: 'var(--text-sub)', lineHeight: 1.5, marginBottom: 16 }}>
-              ⚠️ <strong>Impact Warning:</strong> This will permanently remove this playlist from the user's account and clear track associations. Physical audio files on the server are never touched or deleted. This action will be recorded in the security audit log with your admin identity.
+              <strong>Impact Warning:</strong> This will permanently remove this playlist from the user's account and clear track associations. Physical audio files on the server are never touched or deleted. This action will be recorded in the security audit log with your admin identity.
             </div>
 
             <div className="modal-btn-row">

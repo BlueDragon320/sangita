@@ -49,7 +49,11 @@ export default function ArtistDetailView({
   onToast,
   onRefreshPlaylists,
   userPlaylists = [],
-  playlistMetadata = {}
+  playlistMetadata = {},
+  savedArtists = [],
+  savedTracks = [],
+  onToggleSaveArtist,
+  onToggleSaveTrack
 }) {
   const [v2ArtistDetails, setV2ArtistDetails] = useState(null)
   const [imgErr, setImgErr] = useState(false)
@@ -61,8 +65,115 @@ export default function ArtistDetailView({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [toastMessage, setToastMessage] = useState(null)
   const [modalError, setModalError] = useState(null)
+  const addAllTriggerBtnRef = useRef(null)
+  const addAllModalRef = useRef(null)
+
+  // Complete dialog accessibility for Add All Tracks to Playlist
+  useEffect(() => {
+    if (!showAddAllModal) return
+
+    const previousFocus = document.activeElement
+
+    const timer = setTimeout(() => {
+      if (!addAllModalRef.current) return
+      const focusable = addAllModalRef.current.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusable.length > 0) {
+        focusable[0].focus()
+      }
+    }, 0)
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        setShowAddAllModal(false)
+        return
+      }
+
+      if (e.key === 'Tab') {
+        if (!addAllModalRef.current) return
+        const focusable = Array.from(addAllModalRef.current.querySelectorAll(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ))
+        if (focusable.length === 0) return
+
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault()
+            last.focus()
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault()
+            first.focus()
+          }
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('keydown', handleKeyDown)
+      if (addAllTriggerBtnRef.current && typeof addAllTriggerBtnRef.current.focus === 'function') {
+        addAllTriggerBtnRef.current.focus()
+      } else if (previousFocus && typeof previousFocus.focus === 'function') {
+        previousFocus.focus()
+      }
+    }
+  }, [showAddAllModal])
 
   const displayName = v2ArtistDetails?.name || initialArtist?.name || artistName || 'Unknown Artist'
+  const effectiveArtistId = artistId || v2ArtistDetails?.id || initialArtist?.id || encodeURIComponent(displayName)
+
+  const [isSavedLocal, setIsSavedLocal] = useState(null)
+
+  const isSavedProp = useMemo(() => {
+    if (v2ArtistDetails?.is_saved !== undefined) return Boolean(v2ArtistDetails.is_saved)
+    if (initialArtist?.is_saved !== undefined) return Boolean(initialArtist.is_saved)
+    if (Array.isArray(savedArtists)) {
+      return savedArtists.some(a => {
+        const aId = typeof a === 'object' ? (a?.id || a?.name) : a
+        return String(aId) === String(effectiveArtistId) || String(aId) === String(displayName) || String(aId) === String(artistId)
+      })
+    }
+    return false
+  }, [v2ArtistDetails, initialArtist, savedArtists, effectiveArtistId, displayName, artistId])
+
+  const isSaved = isSavedLocal !== null ? isSavedLocal : isSavedProp
+
+  const handleToggleSaveArtist = useCallback(async () => {
+    const nextSaved = !isSaved
+
+    if (effectiveArtistId && token) {
+      try {
+        const method = nextSaved ? 'POST' : 'DELETE'
+        const response = await fetch(`/api/v2/artists/${encodeURIComponent(effectiveArtistId)}/save`, {
+          method,
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      } catch (err) {
+        console.warn('Failed to toggle artist save:', err)
+        onToast?.('Could not update your library. Please try again.')
+        return
+      }
+    } else return
+
+    setIsSavedLocal(nextSaved)
+
+    if (onToggleSaveArtist) {
+      onToggleSaveArtist(effectiveArtistId, nextSaved, v2ArtistDetails || initialArtist)
+    }
+
+    const msg = nextSaved ? `Saved ${displayName} to your library` : `Removed ${displayName} from your library`
+    setToastMessage(msg)
+    onToast?.(msg)
+  }, [isSaved, effectiveArtistId, token, onToggleSaveArtist, v2ArtistDetails, initialArtist, displayName, onToast])
 
   // Fetch detailed artist from /api/v2/artists/:id
   useEffect(() => {
@@ -372,6 +483,32 @@ export default function ArtistDetailView({
               {formatTotalDuration(tracks, durations)}
             </span>
           </div>
+          <div className="artist-hero-actions" style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              className={`artist-save-btn ${isSaved ? 'saved' : ''}`}
+              onClick={handleToggleSaveArtist}
+              aria-label={isSaved ? "Remove from Library" : "Save Artist to Library"}
+              title={isSaved ? "Remove from Library" : "Save Artist to Library"}
+              data-testid="artist-save-btn"
+            >
+              {isSaved ? (
+                <>
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                    <path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+                  </svg>
+                  <span>Remove from Library</span>
+                </>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  <span>Save Artist to Library</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -388,7 +525,7 @@ export default function ArtistDetailView({
           <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>
-          <span>Play All</span>
+          <span>Play all</span>
         </button>
 
         <button
@@ -407,6 +544,7 @@ export default function ArtistDetailView({
 
         <button
           type="button"
+          ref={addAllTriggerBtnRef}
           className="artist-add-all-btn"
           onClick={() => setShowAddAllModal(true)}
           disabled={tracks.length === 0}
@@ -416,15 +554,30 @@ export default function ArtistDetailView({
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
             <path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/>
           </svg>
-          <span>Add All to Playlist</span>
+          <span>Add all to playlist</span>
         </button>
       </div>
 
       {/* Integrated Track List */}
       <div className="artist-tracklist-section" data-testid="artist-tracklist">
         {tracks.length === 0 ? (
-          <div className="artist-empty-tracks" data-testid="artist-empty-tracks">
-            No tracks found for this artist.
+          <div className="artist-empty-tracks empty-state" data-testid="artist-empty-tracks">
+            <div className="empty-state-icon-wrapper" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18V5l12-2v13" />
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="18" cy="16" r="3" />
+              </svg>
+            </div>
+            <p className="empty-state-title">No tracks found for this artist.</p>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onBack}
+              data-testid="artist-empty-back-btn"
+            >
+              Back to Discover
+            </button>
           </div>
         ) : (
           <TrackList
@@ -460,6 +613,7 @@ export default function ArtistDetailView({
       {showAddAllModal && typeof document !== 'undefined' && createPortal(
         <div className="modal-backdrop" onClick={() => setShowAddAllModal(false)}>
           <div
+            ref={addAllModalRef}
             className="create-playlist-modal artist-add-all-modal"
             role="dialog"
             aria-modal="true"
@@ -476,7 +630,10 @@ export default function ArtistDetailView({
                 aria-label="Close"
                 data-testid="btn-close-add-all"
               >
-                &times;
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
               </button>
             </div>
 
@@ -488,7 +645,7 @@ export default function ArtistDetailView({
               )}
 
               <div className="form-group">
-                <label>Choose Destination Playlist</label>
+                <label>Choose destination playlist</label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 6 }}>
                   {!createNew ? (
                     <>
@@ -518,7 +675,7 @@ export default function ArtistDetailView({
                         onClick={() => setCreateNew(true)}
                         data-testid="btn-toggle-create-new"
                       >
-                        + Create New Playlist
+                        + Create new playlist
                       </button>
                     </>
                   ) : (
@@ -541,7 +698,7 @@ export default function ArtistDetailView({
                           onClick={() => setCreateNew(false)}
                           data-testid="btn-toggle-choose-existing"
                         >
-                          ← Choose Existing Playlist
+                          ← Choose existing playlist
                         </button>
                       )}
                     </>
@@ -563,7 +720,7 @@ export default function ArtistDetailView({
                   disabled={isSubmitting || (!createNew && !selectedPlaylistId) || (createNew && !newPlaylistName.trim())}
                   data-testid="btn-confirm-add-all"
                 >
-                  {isSubmitting ? 'Adding...' : 'Add All to Playlist'}
+                  {isSubmitting ? 'Adding...' : 'Add all to playlist'}
                 </button>
               </div>
             </form>

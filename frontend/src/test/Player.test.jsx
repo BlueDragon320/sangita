@@ -166,7 +166,7 @@ describe('Player Component & Controls', () => {
       />
     )
 
-    const panelBtn = screen.getByTitle('Now Playing View')
+    const panelBtn = screen.getByTestId('player-right-panel-toggle')
     fireEvent.click(panelBtn)
 
     expect(handleTogglePanel).toHaveBeenCalledTimes(1)
@@ -256,8 +256,8 @@ describe('Player Component & Controls', () => {
     expect(screen.getByText('2:05')).toBeInTheDocument()
     expect(screen.getByText('5:54')).toBeInTheDocument()
 
-    // Clicking "Play here" triggers onClaimDevice
-    const claimBtn = screen.getByText('Play here')
+    // Clicking "Play on this device" triggers onClaimDevice
+    const claimBtn = screen.getByText('Play on this device')
     fireEvent.click(claimBtn)
     expect(handleClaimDevice).toHaveBeenCalledTimes(1)
   })

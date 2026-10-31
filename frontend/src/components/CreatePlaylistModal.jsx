@@ -173,13 +173,14 @@ export default function CreatePlaylistModal({ isOpen, onClose, onCreated, token 
               </svg>
             </div>
             <div>
-              <h3 id="create-playlist-title" className="modal-title">Create New Playlist</h3>
+              <h3 id="create-playlist-title" className="modal-title">Create new playlist</h3>
               <p className="modal-desc">Build your custom collection of songs</p>
             </div>
           </div>
           <button className="btn-icon modal-close-btn" onClick={onClose} title="Close" aria-label="Close dialog">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-              <path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
@@ -188,12 +189,12 @@ export default function CreatePlaylistModal({ isOpen, onClose, onCreated, token 
           {error && <div className="modal-error-banner" role="alert">{error}</div>}
           
           <div className="form-group">
-            <label htmlFor="playlist-name-input">Playlist Name</label>
+            <label htmlFor="playlist-name-input">Playlist name</label>
             <input
               id="playlist-name-input"
               type="text"
               className="modal-text-input"
-              placeholder="e.g. Summer Roadtrip, Chill Nights"
+              placeholder="e.g. Summer roadtrip, chill nights"
               value={name}
               onChange={e => setName(e.target.value)}
               autoFocus
@@ -302,8 +303,18 @@ export default function CreatePlaylistModal({ isOpen, onClose, onCreated, token 
               className="btn-modal-secondary"
               onClick={onClose}
               disabled={loading}
+              data-testid="create-playlist-cancel-btn"
             >
               Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-modal-secondary"
+              onClick={onClose}
+              disabled={loading}
+              data-testid="create-playlist-done-btn"
+            >
+              Done
             </button>
             <button
               type="submit"
@@ -311,7 +322,7 @@ export default function CreatePlaylistModal({ isOpen, onClose, onCreated, token 
               disabled={loading || !name.trim()}
               data-testid="create-playlist-submit-btn"
             >
-              {loading ? 'Creating…' : 'Create Playlist'}
+              {loading ? 'Creating…' : 'Create playlist'}
             </button>
           </div>
         </form>

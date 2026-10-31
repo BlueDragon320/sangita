@@ -12,13 +12,60 @@ export default function DevicePanel({
   const [transferringId, setTransferringId] = useState(null)
   const [statusAnnouncement, setStatusAnnouncement] = useState('')
   const prevActiveIdRef = useRef(activeDeviceId)
+  const panelRef = useRef(null)
+  const previousFocusRef = useRef(null)
 
-  // Close on Escape key
+  // Focus trap and focus restoration
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement
+    const timer = setTimeout(() => {
+      if (!panelRef.current) return
+      const focusableElements = panelRef.current.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusableElements.length > 0) {
+        focusableElements[0].focus()
+      }
+    }, 0)
+
+    return () => {
+      clearTimeout(timer)
+      if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
+        previousFocusRef.current.focus()
+      }
+    }
+  }, [])
+
+  // Close on Escape key and trap tab navigation
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose?.()
+        return
+      }
+
+      if (e.key === 'Tab') {
+        if (!panelRef.current) return
+        const focusable = Array.from(panelRef.current.querySelectorAll(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ))
+        if (focusable.length === 0) return
+
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault()
+            last.focus()
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault()
+            first.focus()
+          }
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -68,6 +115,7 @@ export default function DevicePanel({
     <>
       <div className="device-panel-backdrop" onClick={onClose} data-testid="device-backdrop" />
       <div
+        ref={panelRef}
         className="device-panel"
         role="dialog"
         aria-modal="true"

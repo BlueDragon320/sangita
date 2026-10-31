@@ -156,9 +156,37 @@ describe('ArtistDetailView Component', () => {
 
     expect(screen.getByTestId('artist-empty-tracks')).toBeInTheDocument()
     expect(screen.getByText('No tracks found for this artist.')).toBeInTheDocument()
+    expect(screen.getByTestId('artist-empty-back-btn')).toHaveTextContent('Back to Discover')
     expect(screen.getByTestId('artist-play-all-btn')).toBeDisabled()
     expect(screen.getByTestId('artist-shuffle-btn')).toBeDisabled()
     expect(screen.getByTestId('artist-add-all-btn')).toBeDisabled()
+  })
+
+  it('closes Add All to Playlist dialog on Escape and restores focus to trigger button', async () => {
+    global.fetch = vi.fn().mockImplementation(() =>
+      Promise.resolve({ ok: true, json: async () => [] })
+    )
+
+    render(
+      <ArtistDetailView
+        artistId="arijit"
+        artistName="Arijit Singh"
+        artist={{ name: 'Arijit Singh', tracks: mockTracks }}
+        durations={mockDurations}
+        token="token"
+      />
+    )
+
+    const addAllBtn = screen.getByTestId('artist-add-all-btn')
+    addAllBtn.focus()
+    fireEvent.click(addAllBtn)
+
+    expect(screen.getByTestId('artist-add-all-dialog')).toBeInTheDocument()
+
+    // Press Escape to close
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('artist-add-all-dialog')).not.toBeInTheDocument()
+    expect(document.activeElement).toBe(addAllBtn)
   })
 
   it('renders Add All to Playlist button and opens dialog with writable playlist choices', async () => {

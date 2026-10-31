@@ -12,7 +12,7 @@ describe('App Component Full Integration', () => {
   it('renders Login screen when no token is present', () => {
     render(<App />)
     expect(screen.getByText('Your personal music server')).toBeInTheDocument()
-    expect(screen.getByText('Sign In')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
   })
 
   it('renders App shell with Sidebar, Header, and HomeDashboard when logged in', async () => {
@@ -167,7 +167,7 @@ describe('App Component Full Integration', () => {
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith('/api/favorites/set', expect.anything()))
     fireEvent.click(moreBtn)
     const favBtnRemove = await screen.findByTestId('track-action-fav')
-    expect(favBtnRemove).toHaveAttribute('title', 'Remove from Favorites')
+    expect(favBtnRemove.getAttribute('title')).toMatch(/Remove from [Ff]avorites/)
     fireEvent.click(favBtnRemove)
     await waitFor(() => {
       const requests = global.fetch.mock.calls.filter(([url]) => url === '/api/favorites/set')

@@ -218,9 +218,9 @@ describe('AdminDashboard - Library Organization & Global Playlist Inventory', ()
     })
 
     // Check classification pills
-    expect(screen.getByText('⚠️ Unclassified')).toBeInTheDocument()
-    expect(screen.getByText('🎨 Artist')).toBeInTheDocument()
-    expect(screen.getByText('📋 Playlist')).toBeInTheDocument()
+    expect(screen.getAllByText('Unclassified').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Artist').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Playlist').length).toBeGreaterThan(0)
 
     // Check summary counters
     expect(screen.getByText('Detected Folders')).toBeInTheDocument()

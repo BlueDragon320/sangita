@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import SangitaLogo from './SangitaLogo.jsx'
 
 function strHue(str) {
@@ -7,8 +7,8 @@ function strHue(str) {
   return Math.abs(h) % 360;
 }
 
-// Spotify Library Icon (Used when expanded to collapse)
-function SpotifyLibraryIcon({ width = 18, height = 18 }) {
+// Library Icon (Used when expanded to collapse)
+function LibraryIcon({ width = 18, height = 18 }) {
   return (
     <svg viewBox="0 0 24 24" width={width} height={height} fill="currentColor">
       <path d="M4 3a1 1 0 0 1 1 1v16a1 1 0 1 1-2 0V4a1 1 0 0 1 1-1zm5 0a1 1 0 0 1 1 1v16a1 1 0 1 1-2 0V4a1 1 0 0 1 1-1zm5 1a1 1 0 0 1 1-1h1.5a1 1 0 0 1 .6.2l3.5 3a1 1 0 0 1 .4.8V20a1 1 0 0 1-1 1H15a1 1 0 0 1-1-1V4zm2 1.8V19h2V7.4l-2-1.6z"/>
@@ -43,12 +43,13 @@ function PlaylistThumb({ name, firstTrackPath, token }) {
       <div
         className="playlist-thumb playlist-thumb-fav"
         style={{
-          background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-          color: '#FFFFFF',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          color: 'var(--accent)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          boxShadow: '0 2px 10px rgba(16, 185, 129, 0.3)'
+          boxShadow: 'none'
         }}
       >
         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -82,17 +83,23 @@ function PlaylistThumb({ name, firstTrackPath, token }) {
     )
   }
 
-  const hue = strHue(name)
   return (
     <div
       className={`playlist-thumb ${isArtistName(name) ? 'playlist-thumb-artist' : ''}`}
       style={{
-        background: `linear-gradient(135deg, hsl(${hue}, 55%, 28%), hsl(${(hue + 50) % 360}, 50%, 15%))`,
-        borderRadius: isArtistName(name) ? '50%' : undefined
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: isArtistName(name) ? '50%' : undefined,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--text-dim)'
       }}
     >
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="var(--emerald)">
-        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M9 18V5l12-2v13" />
+        <circle cx="6" cy="18" r="3" />
+        <circle cx="18" cy="16" r="3" />
       </svg>
     </div>
   )
@@ -109,24 +116,40 @@ function PlaylistItemRow({
   visibility = 'private',
   sidebarCollapsed,
   meta,
-  onSelect
+  onSelect,
+  onSelectArtist,
+  artistData,
+  onDelete,
+  username
 }) {
   const isPublic = visibility === 'public'
+  const isOwner = meta?.is_owner !== undefined
+    ? meta.is_owner
+    : (meta?.isOwner !== undefined
+      ? meta.isOwner
+      : (meta?.owner && username ? meta.owner === username : true))
+  const canDelete = name !== 'Favorites' && onDelete && (meta?.id || meta?.owner || isMyPlaylist)
+
+  const handleClick = () => {
+    if (isArtist && onSelectArtist) {
+      onSelectArtist(meta?.id || name, name, artistData || meta)
+    } else if (meta) {
+      onSelect(name, meta)
+    } else {
+      onSelect(name)
+    }
+  }
 
   return (
     <div
       role="button"
       tabIndex={0}
       className={`playlist-item ${isActive ? 'active' : ''}`}
-      onClick={() => meta ? onSelect(name, meta) : onSelect(name)}
+      onClick={handleClick}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
-          if (meta) {
-            onSelect(name, meta)
-          } else {
-            onSelect(name)
-          }
+          handleClick()
         }
       }}
       title={sidebarCollapsed ? `${name} (${count} songs)` : undefined}
@@ -144,11 +167,28 @@ function PlaylistItemRow({
             </div>
           </div>
           {isActive && (
-            <span className="playlist-active-pin" title="Currently Selected">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="var(--emerald)">
+            <span className="playlist-active-pin" title="Currently selected">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="var(--accent)">
                 <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
               </svg>
             </span>
+          )}
+          {canDelete && (
+            <button
+              type="button"
+              className="playlist-item-remove-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete?.(e, name, meta)
+              }}
+              aria-label={!isOwner ? `Remove ${name} from library` : `Delete ${name}`}
+              title={!isOwner ? "Remove from library" : "Delete playlist"}
+              data-testid={`sidebar-delete-${name}`}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+              </svg>
+            </button>
           )}
         </>
       )}
@@ -171,11 +211,82 @@ function Sidebar({
   userPlaylists = [],
   playlistMetadata = {},
   folderClassifications = {},
-  username = ''
+  username = '',
+  savedArtists = [],
+  savedTracks = [],
+  onToggleSaveArtist,
+  onToggleSaveTrack,
+  onDeletePlaylist,
+  onSelectArtist
 }) {
   const [filterType, setFilterType] = useState('all') // 'all', 'playlists', 'artists'
   const [libSearch, setLibSearch] = useState('')
   const [internalClassifications, setInternalClassifications] = useState({})
+
+  // Close mobile drawer on Escape keydown
+  useEffect(() => {
+    if (!isOpen) return
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        if (onCloseDrawer) {
+          onCloseDrawer()
+        } else if (onToggleSidebar) {
+          onToggleSidebar()
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onCloseDrawer, onToggleSidebar])
+
+  const savedArtistMap = React.useMemo(() => {
+    const map = new Map()
+    if (Array.isArray(savedArtists)) {
+      savedArtists.forEach(a => {
+        const aName = typeof a === 'object' ? (a?.name || a?.id) : a
+        if (aName) map.set(aName, a)
+      })
+    }
+    return map
+  }, [savedArtists])
+
+  const handleDeleteItem = useCallback(async (e, name, meta) => {
+    e?.stopPropagation?.()
+    const targetId = meta?.id
+    const isOwner = meta?.is_owner !== undefined
+      ? meta.is_owner
+      : (meta?.isOwner !== undefined
+        ? meta.isOwner
+        : (meta?.owner && username ? meta.owner === username : true))
+
+    if (targetId && !isOwner) {
+      if (token) {
+        try {
+          await fetch(`/api/v2/playlists/${encodeURIComponent(targetId)}/save`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          })
+        } catch (err) {
+          console.warn('Failed to unsave playlist:', err)
+        }
+      }
+      if (onDeletePlaylist) {
+        onDeletePlaylist(name, targetId, false)
+      }
+    } else {
+      if (onDeletePlaylist) {
+        onDeletePlaylist(name, targetId, true)
+      } else if (targetId && token) {
+        try {
+          await fetch(`/api/v2/playlists/${encodeURIComponent(targetId)}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          })
+        } catch (err) {}
+      }
+    }
+  }, [username, token, onDeletePlaylist])
 
   useEffect(() => {
     if (!token) return
@@ -227,9 +338,6 @@ function Sidebar({
   }, [folderClassifications, internalClassifications])
 
   const allNames = Object.keys(playlists)
-  const hasFavorites = 'Favorites' in playlists && (
-    !libSearch || 'favorites'.includes(libSearch.toLowerCase())
-  )
 
   const isUserCreated = (name) => {
     if (name === 'Favorites') return true
@@ -242,6 +350,7 @@ function Sidebar({
 
   const isArtist = (name) => {
     if (name === 'Favorites') return false
+    if (savedArtistMap.has(name)) return true
     if (isUserCreated(name)) return false
     const classification = getClassification(name)
     if (classification === 'artist') return true
@@ -251,6 +360,7 @@ function Sidebar({
 
   const isItemVisible = (name) => {
     if (name === 'Favorites') return true
+    if (savedArtistMap.has(name)) return true
     const meta = playlistMetadata[name]
     if (meta && !meta.isFolderPlaylist) {
       const isOwner = meta.is_owner !== undefined
@@ -266,9 +376,21 @@ function Sidebar({
     return true
   }
 
+  // Combined distinct non-fav names from playlists and savedArtists
+  const candidateNames = React.useMemo(() => {
+    const names = new Set()
+    allNames.forEach(n => {
+      if (n !== 'Favorites') names.add(n)
+    })
+    savedArtistMap.forEach((_, aName) => {
+      if (aName !== 'Favorites') names.add(aName)
+    })
+    return Array.from(names)
+  }, [allNames, savedArtistMap])
+
   // Filter based on search query for non-Favorites items
-  const nonFavNames = allNames.filter(name =>
-    name !== 'Favorites' && isItemVisible(name) && name.toLowerCase().includes(libSearch.toLowerCase())
+  const nonFavNames = candidateNames.filter(name =>
+    isItemVisible(name) && name.toLowerCase().includes(libSearch.toLowerCase())
   )
 
   // Filter based on filterType ('all', 'playlists', 'artists')
@@ -281,6 +403,14 @@ function Sidebar({
 
   // Sort alphabetically
   filteredNonFavNames.sort((a, b) => a.localeCompare(b))
+
+  const favTracks = playlists['Favorites']
+  const hasFavoritesTracks = Array.isArray(favTracks) ? favTracks.length > 0 : Boolean(favTracks)
+  const otherItemsExist = candidateNames.some(n => isItemVisible(n))
+
+  const hasFavorites = 'Favorites' in playlists && (hasFavoritesTracks || otherItemsExist) && (
+    !libSearch || 'favorites'.includes(libSearch.toLowerCase())
+  )
 
   // Unified list: Favorites ALWAYS pinned at the top, followed directly by all remaining items sorted alphabetically
   const visibleItems = hasFavorites ? ['Favorites', ...filteredNonFavNames] : filteredNonFavNames
@@ -368,8 +498,8 @@ function Sidebar({
         <div className="library-toolbar" data-testid="library-toolbar">
           <div className="library-title-row">
             <div className="library-heading">
-              <SpotifyLibraryIcon width={16} height={16} />
-              <span>Your Library</span>
+              <LibraryIcon width={16} height={16} />
+              <span>Your library</span>
             </div>
             <button
               type="button"
@@ -410,7 +540,7 @@ function Sidebar({
             </svg>
             <input
               type="text"
-              placeholder="Search in library..."
+              placeholder="Search library"
               value={libSearch}
               onChange={e => setLibSearch(e.target.value)}
               className="library-search-input"
@@ -426,14 +556,66 @@ function Sidebar({
       {/* Unified Library List */}
       <nav className="sidebar-nav">
         {visibleItems.length === 0 ? (
-          <div className="sidebar-empty">
-            {allNames.length === 0 ? (sidebarCollapsed ? "" : "No items") : (sidebarCollapsed ? "" : "No matches")}
+          <div className="sidebar-empty" data-testid="sidebar-empty">
+            {libSearch ? (
+              sidebarCollapsed ? (
+                <button
+                  type="button"
+                  className="sidebar-empty-collapsed-btn"
+                  onClick={() => {
+                    if (onDiscover) onDiscover()
+                    else if (onSelect) onSelect('Discover')
+                  }}
+                  aria-label="Discover"
+                  title="Discover"
+                  data-testid="sidebar-empty-collapsed-btn"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                    <path d="M12 10.9c-.61 0-1.1.49-1.1 1.1s.49 1.1 1.1 1.1c.61 0 1.1-.49 1.1-1.1s-.49-1.1-1.1-1.1zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm2.19 12.19L6 18l3.81-8.19L18 6l-3.81 8.19z"/>
+                  </svg>
+                </button>
+              ) : "No matches"
+            ) : (
+              sidebarCollapsed ? (
+                <button
+                  type="button"
+                  className="sidebar-empty-collapsed-btn"
+                  onClick={() => {
+                    if (onDiscover) onDiscover()
+                    else if (onSelect) onSelect('Discover')
+                  }}
+                  aria-label="Discover"
+                  title="Discover"
+                  data-testid="sidebar-empty-collapsed-btn"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                    <path d="M12 10.9c-.61 0-1.1.49-1.1 1.1s.49 1.1 1.1 1.1c.61 0 1.1-.49 1.1-1.1s-.49-1.1-1.1-1.1zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm2.19 12.19L6 18l3.81-8.19L18 6l-3.81 8.19z"/>
+                  </svg>
+                </button>
+              ) : (
+                <div className="sidebar-empty-state" data-testid="sidebar-empty-state">
+                  <p className="sidebar-empty-text">Your library is empty</p>
+                  <button
+                    type="button"
+                    className="sidebar-empty-discover-btn"
+                    data-testid="sidebar-empty-discover-btn"
+                    onClick={() => {
+                      if (onDiscover) onDiscover()
+                      else if (onSelect) onSelect('Discover')
+                    }}
+                  >
+                    Explore Discover
+                  </button>
+                </div>
+              )
+            )}
           </div>
         ) : (
           <div className="sidebar-section" data-testid="sidebar-section-unified">
             {visibleItems.map(name => {
-              const count = playlists[name]?.length || 0
-              const firstTrack = playlists[name]?.[0]
+              const savedArtistObj = savedArtistMap.get(name)
+              const count = savedArtistObj?.track_count ?? savedArtistObj?.tracks?.length ?? (playlists[name]?.length || 0)
+              const firstTrack = savedArtistObj?.first_track_path ?? (Array.isArray(savedArtistObj?.tracks) ? savedArtistObj.tracks[0] : null) ?? playlists[name]?.[0]
               const isActive = name === currentPlaylist
               const isArtistItem = isArtist(name)
               const isMyPlaylistItem = isUserCreated(name)
@@ -453,6 +635,10 @@ function Sidebar({
                   sidebarCollapsed={sidebarCollapsed}
                   meta={playlistMetadata[name]}
                   onSelect={onSelect}
+                  onSelectArtist={onSelectArtist}
+                  artistData={savedArtistObj}
+                  onDelete={handleDeleteItem}
+                  username={username}
                 />
               )
             })}

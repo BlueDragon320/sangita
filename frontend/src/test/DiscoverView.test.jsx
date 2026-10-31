@@ -152,7 +152,7 @@ describe('DiscoverView Component', () => {
       expect(screen.getByText('Road Trip Songs')).toBeInTheDocument()
     })
 
-    expect(screen.getAllByTestId('folder-badge')[0]).toHaveTextContent('Source Folder')
+    expect(screen.getAllByTestId('folder-badge')[0]).toHaveTextContent('Folder')
   })
 
   it('filters artists and playlists with the quick search input and shows empty state on no match', async () => {
@@ -189,8 +189,8 @@ describe('DiscoverView Component', () => {
 
     // Search for non-existing keyword
     fireEvent.change(searchInput, { target: { value: 'NonExistentXYZ' } })
-    expect(screen.getByTestId('discover-artists-empty')).toBeInTheDocument()
-    expect(screen.getByText(/No artists found matching "NonExistentXYZ"/)).toBeInTheDocument()
+    expect(screen.getByTestId('discover-empty-search')).toBeInTheDocument()
+    expect(screen.getByText(/No matches found for "NonExistentXYZ"/)).toBeInTheDocument()
 
     // Clear search button
     const clearBtn = screen.getByTestId('discover-search-clear')
@@ -278,8 +278,8 @@ describe('DiscoverView Component', () => {
 
     const saveBtn = screen.getByTestId('discover-add-playlist-btn')
     expect(saveBtn).toBeInTheDocument()
-    expect(saveBtn).toHaveAttribute('title', 'Add to Library')
-    expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
+    expect(saveBtn).toHaveAttribute('title', 'Save to library')
+    expect(saveBtn).toHaveAttribute('aria-label', 'Save to library')
 
     // Also accessible via name-based testid
     expect(screen.getByTestId('add-to-my-playlists-Summer Vibes')).toBeInTheDocument()
@@ -296,11 +296,11 @@ describe('DiscoverView Component', () => {
     // Visual feedback: aria-label and title update to saved
     await waitFor(() => {
       expect(saveBtn).toHaveClass('saved')
-      expect(saveBtn).toHaveAttribute('aria-label', 'Remove from Library')
+      expect(saveBtn).toHaveAttribute('aria-label', 'Remove from library')
     })
   })
 
-  it('calls POST /api/v2/playlists/<id>/save when clicking "Add to Library" without calling clone endpoints', async () => {
+  it('calls POST /api/v2/playlists/<id>/save when clicking "Save to library" without calling clone endpoints', async () => {
     const mockPlaylists = [
       {
         id: 'pub-test-1',
@@ -339,7 +339,7 @@ describe('DiscoverView Component', () => {
     })
 
     const saveBtn = screen.getByTestId('discover-add-playlist-btn')
-    expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
+    expect(saveBtn).toHaveAttribute('aria-label', 'Save to library')
 
     fireEvent.click(saveBtn)
 
@@ -367,11 +367,11 @@ describe('DiscoverView Component', () => {
         true
       )
       expect(saveBtn).toHaveClass('saved')
-      expect(saveBtn).toHaveAttribute('aria-label', 'Remove from Library')
+      expect(saveBtn).toHaveAttribute('aria-label', 'Remove from library')
     })
   })
 
-  it('calls DELETE /api/v2/playlists/<id>/save when clicking "Remove from Library" without calling clone endpoints', async () => {
+  it('calls DELETE /api/v2/playlists/<id>/save when clicking "Remove from library" without calling clone endpoints', async () => {
     const mockPlaylists = [
       {
         id: 'pub-test-saved',
@@ -412,7 +412,7 @@ describe('DiscoverView Component', () => {
 
     const saveBtn = screen.getByTestId('discover-add-playlist-btn')
     expect(saveBtn).toHaveClass('saved')
-    expect(saveBtn).toHaveAttribute('aria-label', 'Remove from Library')
+    expect(saveBtn).toHaveAttribute('aria-label', 'Remove from library')
 
     fireEvent.click(saveBtn)
 
@@ -440,7 +440,7 @@ describe('DiscoverView Component', () => {
         false
       )
       expect(saveBtn).not.toHaveClass('saved')
-      expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
+      expect(saveBtn).toHaveAttribute('aria-label', 'Save to library')
     })
   })
 
@@ -494,7 +494,7 @@ describe('DiscoverView Component', () => {
 
     // UI state should NOT change to saved, and onSavePlaylist should NOT be called
     expect(saveBtn).not.toHaveClass('saved')
-    expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
+    expect(saveBtn).toHaveAttribute('aria-label', 'Save to library')
     expect(handleSavePlaylist).not.toHaveBeenCalled()
   })
 

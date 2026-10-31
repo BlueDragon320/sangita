@@ -116,13 +116,19 @@ export default function DiscoverView({
   onPlayTracks,
   username,
   onSavePlaylist,
+  onSaveArtist,
   onToggleSave,
-  onAddToMyPlaylists
+  onAddToMyPlaylists,
+  savedArtists: propSavedArtists = [],
+  savedTracks: propSavedTracks = [],
+  onToggleSaveArtist,
+  onToggleSaveTrack
 }) {
   const [searchFilter, setSearchFilter] = useState('')
   const [v2Artists, setV2Artists] = useState([])
   const [v2Playlists, setV2Playlists] = useState([])
   const [savedPlaylists, setSavedPlaylists] = useState(new Set())
+  const [savedArtists, setSavedArtists] = useState(new Set())
   const [loading, setLoading] = useState(true)
 
   // Fetch from /api/v2/artists and /api/v2/playlists?discover=true
@@ -169,6 +175,25 @@ export default function DiscoverView({
     loadData()
     return () => { isMounted = false }
   }, [token])
+
+  useEffect(() => {
+    if (Array.isArray(propSavedArtists) && propSavedArtists.length > 0) {
+      setSavedArtists(prev => {
+        const next = new Set(prev)
+        propSavedArtists.forEach(a => {
+          const key = typeof a === 'object' ? (a?.id || a?.name) : a
+          if (key) {
+            next.add(key)
+            if (typeof a === 'object') {
+              if (a.id) next.add(a.id)
+              if (a.name) next.add(a.name)
+            }
+          }
+        })
+        return next
+      })
+    }
+  }, [propSavedArtists])
 
   // Derive discoverable artists: Use v2Artists if present, otherwise extract from playlists & metadata
   const discoverableArtists = useMemo(() => {
@@ -414,6 +439,53 @@ export default function DiscoverView({
     }
   }, [token, savedPlaylists, onSavePlaylist, onToggleSave])
 
+  const handleSaveArtist = useCallback(async (e, artist) => {
+    e.stopPropagation()
+    const artistKey = artist.id || artist.name
+    const isCurrentlySaved = Boolean(artist.is_saved || savedArtists.has(artistKey))
+    const nextSaved = !isCurrentlySaved
+
+    if (artist.id) {
+      try {
+        const method = nextSaved ? 'POST' : 'DELETE'
+        const response = await fetch(`/api/v2/artists/${encodeURIComponent(artist.id)}/save`, {
+          method,
+          headers: token ? {
+            Authorization: `Bearer ${token}`
+          } : {}
+        })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      } catch (err) {
+        console.warn('Failed to toggle artist save:', err)
+        return
+      }
+    } else {
+      return
+    }
+
+    setSavedArtists(prev => {
+      const next = new Set(prev)
+      if (nextSaved) {
+        next.add(artistKey)
+      } else {
+        next.delete(artistKey)
+      }
+      return next
+    })
+
+    setV2Artists(prev => prev.map(a => {
+      if ((a.id && a.id === artist.id) || a.name === artist.name) {
+        return { ...a, is_saved: nextSaved }
+      }
+      return a
+    }))
+
+    const handler = onToggleSaveArtist || onSaveArtist || onSavePlaylist || onToggleSave
+    if (handler) {
+      handler(artist, nextSaved)
+    }
+  }, [token, savedArtists, onToggleSaveArtist, onSaveArtist, onSavePlaylist, onToggleSave])
+
   return (
     <div className="discover-view" data-testid="discover-view">
       {/* Header & Quick Search */}
@@ -433,7 +505,7 @@ export default function DiscoverView({
           </span>
           <input
             type="text"
-            placeholder="Filter artists, public playlists, and folder collections..."
+            placeholder="Search Discover"
             value={searchFilter}
             onChange={(e) => setSearchFilter(e.target.value)}
             className="discover-search-input"
@@ -454,75 +526,121 @@ export default function DiscoverView({
         </div>
       </div>
 
-      {/* SECTION 1: ARTISTS */}
-      <section className="discover-section" data-testid="discover-artists-section">
-        <div className="discover-section-header">
-          <h2 className="discover-section-title" data-testid="discover-artists-heading">Artists</h2>
-          <span className="discover-section-count">
-            {filteredArtists.length} {filteredArtists.length === 1 ? 'artist' : 'artists'}
-          </span>
+      {/* Empty Search Result Consolidator or Catalog Sections */}
+      {q && (filteredArtists.length + filteredSharedPlaylists.length + filteredPublicPlaylists.length + filteredFolderPlaylists.length === 0) ? (
+        <div className="discover-empty-state discover-empty-search" data-testid="discover-empty-search" data-testid-alt="discover-artists-empty">
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <p className="discover-empty-title">
+            No matches found for "{searchFilter}"
+          </p>
+          <p className="discover-empty-desc">
+            Check your search query or clear the filter to browse the catalog.
+          </p>
+          <button
+            type="button"
+            className="discover-clear-search-cta"
+            onClick={() => setSearchFilter('')}
+            data-testid="discover-empty-clear-btn"
+          >
+            Clear search
+          </button>
         </div>
-
-        {filteredArtists.length === 0 ? (
-          <div className="discover-empty-state" data-testid="discover-artists-empty">
-            <svg viewBox="0 0 24 24" width="40" height="40" fill="currentColor">
-              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-            </svg>
-            <p className="discover-empty-title">
-              {q ? `No artists found matching "${searchFilter}"` : 'No artists available in your catalog'}
-            </p>
-            <p className="discover-empty-desc">
-              {q ? 'Check your search query or clear the filter.' : 'Organize your music folders into artist directories to browse them here.'}
-            </p>
-          </div>
-        ) : (
-          <div className="discover-artists-grid" data-testid="artists-grid">
-            {filteredArtists.map((artist) => (
-              <div
-                key={artist.id || artist.name}
-                className="discover-artist-card"
-                role="button"
-                tabIndex={0}
-                onClick={() => onSelectArtist?.(artist.id, artist.name, artist)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    onSelectArtist?.(artist.id, artist.name, artist)
-                  }
-                }}
-                aria-label={`View artist ${artist.name}`}
-                data-testid={`artist-card-${artist.id || artist.name}`}
-              >
-                <ArtistAvatar artist={artist} token={token} />
-                <h3 className="discover-artist-name" title={artist.name} data-testid="artist-name">
-                  {artist.name}
-                </h3>
-                <p className="discover-artist-count" data-testid="artist-track-count">
-                  {artist.track_count} {artist.track_count === 1 ? 'song' : 'songs'}
-                </p>
-
-                {artist.track_count > 0 && onPlayTracks && (
-                  <button
-                    type="button"
-                    className="discover-card-play-btn"
-                    onClick={(e) => handlePlayArtist(e, artist)}
-                    aria-label={`Play songs by ${artist.name}`}
-                    title={`Play ${artist.name}`}
-                    data-testid="artist-play-btn"
-                  >
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                  </button>
-                )}
+      ) : (
+        <>
+          {/* SECTION 1: ARTISTS */}
+          {(!q || filteredArtists.length > 0) && (
+            <section className="discover-section" data-testid="discover-artists-section">
+              <div className="discover-section-header">
+                <h2 className="discover-section-title" data-testid="discover-artists-heading">Artists</h2>
+                <span className="discover-section-count">
+                  {filteredArtists.length} {filteredArtists.length === 1 ? 'artist' : 'artists'}
+                </span>
               </div>
-            ))}
-          </div>
-        )}
-      </section>
+
+              {filteredArtists.length === 0 ? (
+                <div className="discover-empty-state" data-testid="discover-artists-empty">
+                  <svg viewBox="0 0 24 24" width="40" height="40" fill="currentColor">
+                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                  </svg>
+                  <p className="discover-empty-title">
+                    No artists available in your catalog
+                  </p>
+                  <p className="discover-empty-desc">
+                    Organize your music folders into artist directories to browse them here.
+                  </p>
+                </div>
+              ) : (
+                <div className="discover-artists-grid" data-testid="artists-grid">
+                  {filteredArtists.map((artist) => (
+                    <div
+                      key={artist.id || artist.name}
+                      className="discover-artist-card"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onSelectArtist?.(artist.id, artist.name, artist)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          onSelectArtist?.(artist.id, artist.name, artist)
+                        }
+                      }}
+                      aria-label={`View artist ${artist.name}`}
+                      data-testid={`artist-card-${artist.id || artist.name}`}
+                    >
+                      <ArtistAvatar artist={artist} token={token} />
+                      <h3 className="discover-artist-name" title={artist.name} data-testid="artist-name">
+                        {artist.name}
+                      </h3>
+                      <p className="discover-artist-count" data-testid="artist-track-count">
+                        {artist.track_count} {artist.track_count === 1 ? 'song' : 'songs'}
+                      </p>
+
+                      {artist.track_count > 0 && onPlayTracks && (
+                        <button
+                          type="button"
+                          className="discover-card-play-btn"
+                          onClick={(e) => handlePlayArtist(e, artist)}
+                          aria-label={`Play songs by ${artist.name}`}
+                          title={`Play ${artist.name}`}
+                          data-testid="artist-play-btn"
+                        >
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className={`discover-card-save-btn discover-artist-save-btn ${(artist.is_saved || savedArtists.has(artist.id || artist.name)) ? 'saved' : ''} ${(!onPlayTracks || artist.track_count === 0) ? 'no-play' : ''}`}
+                        onClick={(e) => handleSaveArtist(e, artist)}
+                        aria-label={(artist.is_saved || savedArtists.has(artist.id || artist.name)) ? "Remove from library" : "Save to library"}
+                        title={(artist.is_saved || savedArtists.has(artist.id || artist.name)) ? "Remove from library" : "Save to library"}
+                        data-testid="discover-add-artist-btn"
+                      >
+                        <span data-testid={`add-to-my-playlists-${artist.name}`} style={{ display: 'none' }} aria-hidden="true" />
+                        {(artist.is_saved || savedArtists.has(artist.id || artist.name)) ? (
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                          </svg>
+                        ) : (
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
 
       {/* SECTION: SHARED WITH YOU */}
-      {sharedPlaylists.length > 0 && (
+      {sharedPlaylists.length > 0 && (!q || filteredSharedPlaylists.length > 0) && (
         <section className="discover-section" data-testid="discover-shared-playlists-section">
           <div className="discover-section-header">
             <h2 className="discover-section-title" data-testid="discover-shared-playlists-heading">Shared with You</h2>
@@ -580,18 +698,18 @@ export default function DiscoverView({
                     type="button"
                     className={`discover-card-save-btn ${(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? 'saved' : ''} ${(!onPlayTracks || pl.track_count === 0) ? 'no-play' : ''}`}
                     onClick={(e) => handleSavePlaylist(e, pl)}
-                    aria-label={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from Library" : "Add to Library"}
-                    title={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from Library" : "Add to Library"}
+                    aria-label={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from library" : "Save to library"}
+                    title={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from library" : "Save to library"}
                     data-testid="discover-add-playlist-btn"
                   >
-                    <span data-testid={`add-to-my-playlists-${pl.name}`} style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', border: 0 }} aria-hidden="true" />
+                    <span data-testid={`add-to-my-playlists-${pl.name}`} style={{ display: 'none' }} aria-hidden="true" />
                     {(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? (
-                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
                       </svg>
                     ) : (
-                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M12 5v14M5 12h14"/>
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
                       </svg>
                     )}
                   </button>
@@ -618,195 +736,201 @@ export default function DiscoverView({
       )}
 
       {/* SECTION 2: PUBLIC PLAYLISTS */}
-      <section className="discover-section" data-testid="discover-public-playlists-section">
-        <div className="discover-section-header">
-          <h2 className="discover-section-title" data-testid="discover-public-playlists-heading">Public Playlists</h2>
-          <span className="discover-section-count">
-            {filteredPublicPlaylists.length} {filteredPublicPlaylists.length === 1 ? 'playlist' : 'playlists'}
-          </span>
-        </div>
-
-        {filteredPublicPlaylists.length === 0 ? (
-          <div className="discover-empty-state" data-testid="discover-public-playlists-empty">
-            <svg viewBox="0 0 24 24" width="40" height="40" fill="currentColor">
-              <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
-            </svg>
-            <p className="discover-empty-title">
-              {q ? `No public playlists matching "${searchFilter}"` : 'No public playlists yet'}
-            </p>
-            <p className="discover-empty-desc">
-              {q ? 'Try a different search keyword.' : 'Playlists marked as public by other users will appear here.'}
-            </p>
+      {(!q || filteredPublicPlaylists.length > 0) && (
+        <section className="discover-section" data-testid="discover-public-playlists-section">
+          <div className="discover-section-header">
+            <h2 className="discover-section-title" data-testid="discover-public-playlists-heading">Public Playlists</h2>
+            <span className="discover-section-count">
+              {filteredPublicPlaylists.length} {filteredPublicPlaylists.length === 1 ? 'playlist' : 'playlists'}
+            </span>
           </div>
-        ) : (
-          <div className="discover-playlists-grid" data-testid="public-playlists-grid">
-            {filteredPublicPlaylists.map((pl) => (
-              <div
-                key={pl.id || pl.name}
-                className="discover-playlist-card"
-                role="button"
-                tabIndex={0}
-                onClick={() => onSelectPlaylist?.(pl.title || pl.name, pl)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    onSelectPlaylist?.(pl.title || pl.name, pl)
-                  }
-                }}
-                aria-label={`Open public playlist ${pl.name}`}
-                data-testid={`public-playlist-card-${pl.id || pl.name}`}
-              >
-                <PlaylistThumb playlist={pl} token={token} />
-                <div className="discover-playlist-info">
-                  <h3 className="discover-playlist-name" title={pl.name} data-testid="public-playlist-title">
-                    {pl.name}
-                  </h3>
-                  <div className="discover-playlist-meta-row">
-                    <span className="curator-badge" data-testid="curator-badge" title={`Curated by @${pl.curator}`}>
-                      @{pl.curator}
-                    </span>
-                    <span className="visibility-badge" data-testid="visibility-badge">
-                      Public
-                    </span>
-                    <span className="discover-playlist-count" data-testid="public-playlist-count">
-                      {pl.track_count} {pl.track_count === 1 ? 'track' : 'tracks'}
-                    </span>
-                  </div>
-                </div>
 
-                <button
-                  type="button"
-                  className={`discover-card-save-btn ${(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? 'saved' : ''} ${(!onPlayTracks || pl.track_count === 0) ? 'no-play' : ''}`}
-                  onClick={(e) => handleSavePlaylist(e, pl)}
-                  aria-label={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from Library" : "Add to Library"}
-                  title={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from Library" : "Add to Library"}
-                  data-testid="discover-add-playlist-btn"
+          {filteredPublicPlaylists.length === 0 ? (
+            <div className="discover-empty-state" data-testid="discover-public-playlists-empty">
+              <svg viewBox="0 0 24 24" width="40" height="40" fill="currentColor">
+                <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
+              </svg>
+              <p className="discover-empty-title">
+                {q ? `No public playlists matching "${searchFilter}"` : 'No public playlists yet'}
+              </p>
+              <p className="discover-empty-desc">
+                {q ? 'Try a different search keyword.' : 'Playlists marked as public by other users will appear here.'}
+              </p>
+            </div>
+          ) : (
+            <div className="discover-playlists-grid" data-testid="public-playlists-grid">
+              {filteredPublicPlaylists.map((pl) => (
+                <div
+                  key={pl.id || pl.name}
+                  className="discover-playlist-card"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectPlaylist?.(pl.title || pl.name, pl)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onSelectPlaylist?.(pl.title || pl.name, pl)
+                    }
+                  }}
+                  aria-label={`Open public playlist ${pl.name}`}
+                  data-testid={`public-playlist-card-${pl.id || pl.name}`}
                 >
-                  <span data-testid={`add-to-my-playlists-${pl.name}`} style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', border: 0 }} aria-hidden="true" />
-                  {(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? (
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-                      <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M12 5v14M5 12h14"/>
-                    </svg>
-                  )}
-                </button>
+                  <PlaylistThumb playlist={pl} token={token} />
+                  <div className="discover-playlist-info">
+                    <h3 className="discover-playlist-name" title={pl.name} data-testid="public-playlist-title">
+                      {pl.name}
+                    </h3>
+                    <div className="discover-playlist-meta-row">
+                      <span className="curator-badge" data-testid="curator-badge" title={`Curated by @${pl.curator}`}>
+                        @{pl.curator}
+                      </span>
+                      <span className="visibility-badge" data-testid="visibility-badge">
+                        Public
+                      </span>
+                      <span className="discover-playlist-count" data-testid="public-playlist-count">
+                        {pl.track_count} {pl.track_count === 1 ? 'track' : 'tracks'}
+                      </span>
+                    </div>
+                  </div>
 
-                {pl.track_count > 0 && onPlayTracks && (
                   <button
                     type="button"
-                    className="discover-card-play-btn"
-                    onClick={(e) => handlePlayPlaylist(e, pl)}
-                    aria-label={`Play ${pl.name}`}
-                    title={`Play ${pl.name}`}
-                    data-testid="playlist-play-btn"
+                    className={`discover-card-save-btn ${(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? 'saved' : ''} ${(!onPlayTracks || pl.track_count === 0) ? 'no-play' : ''}`}
+                    onClick={(e) => handleSavePlaylist(e, pl)}
+                    aria-label={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from library" : "Save to library"}
+                    title={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from library" : "Save to library"}
+                    data-testid="discover-add-playlist-btn"
                   >
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
+                    <span data-testid={`add-to-my-playlists-${pl.name}`} style={{ display: 'none' }} aria-hidden="true" />
+                    {(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? (
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                      </svg>
+                    )}
                   </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+
+                  {pl.track_count > 0 && onPlayTracks && (
+                    <button
+                      type="button"
+                      className="discover-card-play-btn"
+                      onClick={(e) => handlePlayPlaylist(e, pl)}
+                      aria-label={`Play ${pl.name}`}
+                      title={`Play ${pl.name}`}
+                      data-testid="playlist-play-btn"
+                    >
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* SECTION 3: FOLDER PLAYLISTS */}
-      <section className="discover-section" data-testid="discover-folder-playlists-section">
-        <div className="discover-section-header">
-          <h2 className="discover-section-title" data-testid="discover-folder-playlists-heading">Folder Playlists</h2>
-          <span className="discover-section-count">
-            {filteredFolderPlaylists.length} {filteredFolderPlaylists.length === 1 ? 'collection' : 'collections'}
-          </span>
-        </div>
-
-        {filteredFolderPlaylists.length === 0 ? (
-          <div className="discover-empty-state" data-testid="discover-folder-playlists-empty">
-            <svg viewBox="0 0 24 24" width="40" height="40" fill="currentColor">
-              <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
-            </svg>
-            <p className="discover-empty-title">
-              {q ? `No folder playlists matching "${searchFilter}"` : 'No folder collections found'}
-            </p>
-            <p className="discover-empty-desc">
-              {q ? 'Try clearing your search query.' : 'Admin-managed music folders classified as playlists will appear here.'}
-            </p>
+      {(!q || filteredFolderPlaylists.length > 0) && (
+        <section className="discover-section" data-testid="discover-folder-playlists-section">
+          <div className="discover-section-header">
+            <h2 className="discover-section-title" data-testid="discover-folder-playlists-heading">Folder Playlists</h2>
+            <span className="discover-section-count">
+              {filteredFolderPlaylists.length} {filteredFolderPlaylists.length === 1 ? 'collection' : 'collections'}
+            </span>
           </div>
-        ) : (
-          <div className="discover-playlists-grid" data-testid="folder-playlists-grid">
-            {filteredFolderPlaylists.map((pl) => (
-              <div
-                key={pl.id || pl.name}
-                className="discover-playlist-card"
-                role="button"
-                tabIndex={0}
-                onClick={() => onSelectPlaylist?.(pl.title || pl.name, pl)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    onSelectPlaylist?.(pl.title || pl.name, pl)
-                  }
-                }}
-                aria-label={`Open folder playlist ${pl.name}`}
-                data-testid={`folder-playlist-card-${pl.name}`}
-              >
-                <PlaylistThumb playlist={pl} token={token} />
-                <div className="discover-playlist-info">
-                  <h3 className="discover-playlist-name" title={pl.name} data-testid="folder-playlist-title">
-                    {pl.name}
-                  </h3>
-                  <div className="discover-playlist-meta-row">
-                    <span className="folder-badge" data-testid="folder-badge">
-                      Source Folder
-                    </span>
-                    <span className="discover-playlist-count" data-testid="folder-playlist-count">
-                      {pl.track_count} {pl.track_count === 1 ? 'track' : 'tracks'}
-                    </span>
-                  </div>
-                </div>
 
-                <button
-                  type="button"
-                  className={`discover-card-save-btn ${(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? 'saved' : ''} ${(!onPlayTracks || pl.track_count === 0) ? 'no-play' : ''}`}
-                  onClick={(e) => handleSavePlaylist(e, pl)}
-                  aria-label={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from Library" : "Add to Library"}
-                  title={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from Library" : "Add to Library"}
-                  data-testid="discover-add-playlist-btn"
+          {filteredFolderPlaylists.length === 0 ? (
+            <div className="discover-empty-state" data-testid="discover-folder-playlists-empty">
+              <svg viewBox="0 0 24 24" width="40" height="40" fill="currentColor">
+                <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
+              </svg>
+              <p className="discover-empty-title">
+                {q ? `No folder playlists matching "${searchFilter}"` : 'No folder collections found'}
+              </p>
+              <p className="discover-empty-desc">
+                {q ? 'Try clearing your search query.' : 'Admin-managed music folders classified as playlists will appear here.'}
+              </p>
+            </div>
+          ) : (
+            <div className="discover-playlists-grid" data-testid="folder-playlists-grid">
+              {filteredFolderPlaylists.map((pl) => (
+                <div
+                  key={pl.id || pl.name}
+                  className="discover-playlist-card"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectPlaylist?.(pl.title || pl.name, pl)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onSelectPlaylist?.(pl.title || pl.name, pl)
+                    }
+                  }}
+                  aria-label={`Open folder playlist ${pl.name}`}
+                  data-testid={`folder-playlist-card-${pl.name}`}
                 >
-                  <span data-testid={`add-to-my-playlists-${pl.name}`} style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', border: 0 }} aria-hidden="true" />
-                  {(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? (
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-                      <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M12 5v14M5 12h14"/>
-                    </svg>
-                  )}
-                </button>
+                  <PlaylistThumb playlist={pl} token={token} />
+                  <div className="discover-playlist-info">
+                    <h3 className="discover-playlist-name" title={pl.name} data-testid="folder-playlist-title">
+                      {pl.name}
+                    </h3>
+                    <div className="discover-playlist-meta-row">
+                      <span className="folder-badge" data-testid="folder-badge">
+                        Folder
+                      </span>
+                      <span className="discover-playlist-count" data-testid="folder-playlist-count">
+                        {pl.track_count} {pl.track_count === 1 ? 'track' : 'tracks'}
+                      </span>
+                    </div>
+                  </div>
 
-                {pl.track_count > 0 && onPlayTracks && (
                   <button
                     type="button"
-                    className="discover-card-play-btn"
-                    onClick={(e) => handlePlayPlaylist(e, pl)}
-                    aria-label={`Play ${pl.name}`}
-                    title={`Play ${pl.name}`}
-                    data-testid="folder-playlist-play-btn"
+                    className={`discover-card-save-btn ${(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? 'saved' : ''} ${(!onPlayTracks || pl.track_count === 0) ? 'no-play' : ''}`}
+                    onClick={(e) => handleSavePlaylist(e, pl)}
+                    aria-label={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from library" : "Save to library"}
+                    title={(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? "Remove from library" : "Save to library"}
+                    data-testid="discover-add-playlist-btn"
                   >
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
+                    <span data-testid={`add-to-my-playlists-${pl.name}`} style={{ display: 'none' }} aria-hidden="true" />
+                    {(pl.is_saved || savedPlaylists.has(pl.id || pl.name)) ? (
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                      </svg>
+                    )}
                   </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+
+                  {pl.track_count > 0 && onPlayTracks && (
+                    <button
+                      type="button"
+                      className="discover-card-play-btn"
+                      onClick={(e) => handlePlayPlaylist(e, pl)}
+                      aria-label={`Play ${pl.name}`}
+                      title={`Play ${pl.name}`}
+                      data-testid="folder-playlist-play-btn"
+                    >
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+        </>
+      )}
     </div>
   )
 }

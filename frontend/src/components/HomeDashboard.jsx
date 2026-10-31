@@ -112,8 +112,8 @@ export default function HomeDashboard({
           <div className="skeleton-line" style={{ width: 320, height: 32, marginBottom: 10, borderRadius: 6 }} />
           <div className="skeleton-line" style={{ width: 220, height: 14, marginBottom: 20, borderRadius: 4 }} />
           <div className="home-quick-actions">
-            <div className="skeleton-pill" style={{ width: 130, height: 36, borderRadius: 9999 }} />
-            <div className="skeleton-pill" style={{ width: 130, height: 36, borderRadius: 9999 }} />
+            <div className="skeleton-pill" style={{ width: 130, height: 36, borderRadius: 'var(--radius-sm)' }} />
+            <div className="skeleton-pill" style={{ width: 130, height: 36, borderRadius: 'var(--radius-sm)' }} />
           </div>
         </div>
 
@@ -160,7 +160,7 @@ export default function HomeDashboard({
       {/* 1. COMPACT GREETING HEADER & QUICK ACTIONS */}
       <div className="home-hero">
         <div className="home-hero-content">
-          <div className="home-greeting-tag">Your Personal Hub</div>
+          <div className="home-greeting-tag">Your personal hub</div>
           <h1 className="home-greeting-title" data-testid="home-greeting">
             {greeting}, <span className="home-username">{username || 'Blue'}</span>
           </h1>
@@ -259,7 +259,7 @@ export default function HomeDashboard({
         <div className="home-section-header">
           <div className="home-section-title-group">
             <h2 className="home-section-title">Your Top 10 Most Played Songs</h2>
-            <span className="home-section-subtitle">Ranked by your personal playback frequency</span>
+            <span className="home-section-subtitle">Your top 10 songs by play count</span>
           </div>
 
           {topTracks.length > 0 && (
@@ -269,8 +269,8 @@ export default function HomeDashboard({
               data-testid="home-save-top10-btn"
               title="Create a new playlist with your Top 10 songs"
             >
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 6H4M10 12H4M10 18H4M18 9v6M15 12h6" />
               </svg>
               <span>Save as Playlist</span>
             </button>
@@ -307,7 +307,7 @@ export default function HomeDashboard({
                 >
                   {/* Rank Badge */}
                   <div className="col-rank">
-                    <span className={`rank-badge ${idx < 3 ? `rank-top rank-${idx + 1}` : ''}`}>
+                    <span className="rank-badge">
                       {idx + 1}
                     </span>
                     <button
@@ -442,7 +442,7 @@ export default function HomeDashboard({
                   </svg>
                 </div>
                 <div className="stat-card-info">
-                  <span className="stat-card-label">Listening Time</span>
+                  <span className="stat-card-label">Listening time</span>
                   <span className="stat-card-value">{formatListeningTime(totalSeconds)}</span>
                 </div>
               </div>
@@ -454,7 +454,7 @@ export default function HomeDashboard({
                   </svg>
                 </div>
                 <div className="stat-card-info">
-                  <span className="stat-card-label">Songs Played</span>
+                  <span className="stat-card-label">Songs played</span>
                   <span className="stat-card-value">{totalPlays}</span>
                 </div>
               </div>
@@ -466,7 +466,7 @@ export default function HomeDashboard({
                   </svg>
                 </div>
                 <div className="stat-card-info">
-                  <span className="stat-card-label">Tracks Explored</span>
+                  <span className="stat-card-label">Tracks explored</span>
                   <span className="stat-card-value">{uniqueTracks}</span>
                 </div>
               </div>
@@ -478,7 +478,7 @@ export default function HomeDashboard({
                   </svg>
                 </div>
                 <div className="stat-card-info">
-                  <span className="stat-card-label">#1 Top Song</span>
+                  <span className="stat-card-label">Top song</span>
                   <span className="stat-card-value highlight" title={topSong?.name || 'Play some music'}>
                     {topSong ? topSong.name : 'No plays yet'}
                   </span>

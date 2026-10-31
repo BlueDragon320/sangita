@@ -34,6 +34,14 @@ function PlayIcon({ width = 14, height = 14 }) {
   )
 }
 
+function PauseIcon({ width = 14, height = 14 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={width} height={height} fill="currentColor" aria-hidden="true">
+      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+    </svg>
+  )
+}
+
 function DownloadIcon({ width = 16, height = 16 }) {
   return (
     <svg viewBox="0 0 24 24" width={width} height={height} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -111,13 +119,23 @@ function TrackRowItem({
   onPlayTrack,
   onToggleFavorite,
   onAddToPlaylist,
-  onDownloadTrack
+  onDownloadTrack,
+  isSaved,
+  savedTracks = [],
+  onToggleSaveTrack
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const moreBtnRef = useRef(null)
   const menuRef = useRef(null)
 
   const isUnavailable = Boolean(track.is_unavailable || track.unavailable || track.is_available === false)
+  const isSavedTrack = Boolean(
+    isSaved ||
+    (Array.isArray(savedTracks) && savedTracks.some(t => {
+      const p = typeof t === 'object' ? t?.path : t
+      return p === track.path
+    }))
+  )
   const isCurrentlyPlaying = isActive && isPlaying
   const trackTitle = track.name || track.title || (isUnavailable ? 'Unavailable track' : 'Unknown track')
   const artistName = track.artist || (isUnavailable ? 'Restricted' : (track.playlist || 'Sangita Artist'))
@@ -199,7 +217,7 @@ function TrackRowItem({
 
   return (
     <div
-      className={`spotify-track-row ${isActive ? 'active' : ''} ${isUnavailable ? 'track-row-unavailable' : ''}`}
+      className={`track-row spotify-track-row ${isActive ? 'active' : ''} ${isUnavailable ? 'track-row-unavailable' : ''}`}
       onClick={() => {
         if (!isUnavailable && onPlayTrack) {
           onPlayTrack(track, idx)
@@ -250,7 +268,7 @@ function TrackRowItem({
                 <PlayingBars />
               ) : (
                 <span className="track-paused-indicator" aria-label="Paused" title="Paused">
-                  ⏸
+                  <PauseIcon width={14} height={14} />
                 </span>
               )
             ) : (
@@ -299,7 +317,7 @@ function TrackRowItem({
       </div>
 
       {/* Actions & Duration Column */}
-      <div className="col-duration" role="gridcell">
+      <div className="col-duration" role="gridcell" style={{ minWidth: 44 }}>
         {/* Add to Playlist shortcut button (desktop) */}
         {onAddToPlaylist && (
           <div className="track-row-actions">
@@ -320,7 +338,7 @@ function TrackRowItem({
         )}
 
         {/* Duration timestamp */}
-        <div className="track-duration-timestamp">
+        <div className="track-duration-timestamp" style={{ minWidth: 44, fontVariantNumeric: 'tabular-nums' }}>
           {fmtDur(dur)}
         </div>
 
@@ -374,7 +392,7 @@ function TrackRowItem({
                   className={`track-action-item ${isUnavailable ? 'disabled' : ''}`}
                   disabled={isUnavailable}
                   aria-disabled={isUnavailable ? 'true' : undefined}
-                  title={isUnavailable ? "Unavailable in your library" : "Play Track"}
+                  title={isUnavailable ? "Unavailable in your library" : "Play track"}
                   data-testid="track-action-play"
                   onClick={(e) => {
                     e.stopPropagation()
@@ -384,7 +402,7 @@ function TrackRowItem({
                   }}
                 >
                   <PlayIcon width={14} height={14} />
-                  <span>Play Track</span>
+                  <span>Play track</span>
                 </button>
 
                 <button
@@ -392,8 +410,8 @@ function TrackRowItem({
                   role="menuitem"
                   className={`track-action-item ${isFav ? 'active' : ''}`}
                   data-testid="track-action-fav"
-                  title={isFav ? "Remove from Favorites" : "Add to Favorites"}
-                  aria-label={isFav ? `Remove ${trackTitle} from Favorites` : `Add ${trackTitle} to Favorites`}
+                  title={isFav ? "Remove from favorites" : "Add to favorites"}
+                  aria-label={isFav ? `Remove ${trackTitle} from favorites` : `Add ${trackTitle} to favorites`}
                   onClick={(e) => {
                     e.stopPropagation()
                     setIsMenuOpen(false)
@@ -402,15 +420,36 @@ function TrackRowItem({
                 >
                   <span
                     data-testid={`track-row-like-${idx}`}
-                    title={isFav ? "Remove from Favorites" : "Add to Favorites"}
-                    aria-label={isFav ? `Remove ${trackTitle} from Favorites` : `Add ${trackTitle} to Favorites`}
+                    title={isFav ? "Remove from favorites" : "Add to favorites"}
+                    aria-label={isFav ? `Remove ${trackTitle} from favorites` : `Add ${trackTitle} to favorites`}
                     className="track-action-fav-inner"
                     style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', width: '100%' }}
                   >
                     <HeartIcon filled={isFav} />
-                    <span>{isFav ? 'Remove from Favorites' : 'Add to Favorites'}</span>
+                    <span>{isFav ? 'Remove from favorites' : 'Add to favorites'}</span>
                   </span>
                 </button>
+
+                {onToggleSaveTrack && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={`track-action-item ${isSavedTrack ? 'active' : ''}`}
+                    data-testid="track-action-save"
+                    title={isSavedTrack ? "Remove from library" : "Save to library"}
+                    aria-label={isSavedTrack ? `Remove ${trackTitle} from library` : `Save ${trackTitle} to library`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setIsMenuOpen(false)
+                      onToggleSaveTrack(track.path, !isSavedTrack)
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill={isSavedTrack ? "var(--accent)" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <span>{isSavedTrack ? 'Remove from library' : 'Save to library'}</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -424,7 +463,7 @@ function TrackRowItem({
                   }}
                 >
                   <PlusIcon width={14} height={14} />
-                  <span>Add to Playlist...</span>
+                  <span>Add to playlist</span>
                 </button>
 
                 <button
@@ -433,7 +472,7 @@ function TrackRowItem({
                   className={`track-action-item ${isUnavailable ? 'disabled' : ''}`}
                   disabled={isUnavailable}
                   aria-disabled={isUnavailable ? 'true' : undefined}
-                  title={isUnavailable ? "Unavailable in your library" : "Download Track"}
+                  title={isUnavailable ? "Unavailable in your library" : "Download track"}
                   data-testid="track-action-download"
                   onClick={(e) => {
                     e.stopPropagation()
@@ -447,7 +486,7 @@ function TrackRowItem({
                   }}
                 >
                   <DownloadIcon width={14} height={14} />
-                  <span>Download Track</span>
+                  <span>Download track</span>
                 </button>
               </div>
             </>
@@ -474,7 +513,11 @@ function TrackList({
   emptyActionText,
   onEmptyAction,
   isFiltered,
-  filterQuery
+  filterQuery,
+  savedArtists = [],
+  savedTracks = [],
+  onToggleSaveArtist,
+  onToggleSaveTrack
 }) {
   if (tracks.length === 0) {
     const isFilteredState = Boolean(filterQuery || isFiltered)
@@ -515,12 +558,12 @@ function TrackList({
   }
 
   return (
-    <div className="spotify-tracklist-container" data-testid="track-list" role="table" aria-label="Tracks">
+    <div className="track-list spotify-tracklist-container" data-testid="track-list" role="table" aria-label="Tracks">
       {/* Table Column Headers: Number, Title, Duration */}
-      <div className="spotify-table-header" role="row">
+      <div className="track-table-header spotify-table-header" role="row">
         <div className="col-num" role="columnheader">#</div>
         <div className="col-title" role="columnheader">Title</div>
-        <div className="col-duration" role="columnheader">
+        <div className="col-duration" role="columnheader" style={{ minWidth: 44 }} aria-label="Duration" title="Duration">
           <ClockIcon />
         </div>
       </div>
@@ -546,6 +589,8 @@ function TrackList({
             onToggleFavorite={onToggleFavorite}
             onAddToPlaylist={onAddToPlaylist}
             onDownloadTrack={onDownloadTrack}
+            savedTracks={savedTracks}
+            onToggleSaveTrack={onToggleSaveTrack}
           />
         )
       })}

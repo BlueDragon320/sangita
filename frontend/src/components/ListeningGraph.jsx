@@ -223,12 +223,9 @@ export default function ListeningGraph({ token }) {
         >
           <defs>
             <linearGradient id="graphGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--emerald, #10B981)" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="var(--emerald, #10B981)" stopOpacity="0.0" />
+              <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.10" />
+              <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.0" />
             </linearGradient>
-            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="var(--emerald, #10B981)" floodOpacity="0.4"/>
-            </filter>
           </defs>
 
           {/* Horizontal Gridlines & Y-Axis Labels */}
@@ -270,8 +267,8 @@ export default function ListeningGraph({ token }) {
             <path
               d={graphDimensions.pathD}
               fill="none"
-              stroke="var(--emerald, #10B981)"
-              strokeWidth="2.5"
+              stroke="var(--accent)"
+              strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
@@ -316,9 +313,9 @@ export default function ListeningGraph({ token }) {
                   <circle
                     cx={p.x}
                     cy={p.y}
-                    r={isHovered ? 6 : 3.5}
-                    fill={isHovered ? "#FFFFFF" : "var(--emerald, #10B981)"}
-                    stroke="var(--bg, #0F172A)"
+                    r={isHovered ? 5 : 3}
+                    fill={isHovered ? "var(--text)" : "var(--accent)"}
+                    stroke="var(--bg)"
                     strokeWidth="2"
                     className="graph-point-dot"
                   />

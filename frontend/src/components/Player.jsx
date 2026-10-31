@@ -24,7 +24,13 @@ function PlayerDisc({ track, token, discBg }) {
   const coverUrl = track?.path ? getCoverUrl(track.path, token) : null
 
   return (
-    <div className="player-disc" style={{ background: imgErr || !coverUrl ? discBg : undefined }}>
+    <div
+      className="player-disc"
+      style={{
+        background: imgErr || !coverUrl ? discBg : undefined,
+        border: '1px solid var(--border)'
+      }}
+    >
       {!imgErr && coverUrl ? (
         <img
           src={coverUrl}
@@ -208,10 +214,7 @@ function Player({
   onUnlockWebAudio
 }) {
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0
-  const hue = strHue(track?.name || '')
-  const discBg = track
-    ? `linear-gradient(135deg, hsl(${hue}, 55%, 24%), hsl(${(hue + 60) % 360}, 50%, 16%))`
-    : 'var(--card)'
+  const discBg = 'var(--surface)'
 
   const isRemote = !isActiveDevice && syncState && syncState.activeDeviceId && syncState.activeDeviceId !== myDeviceId
 
@@ -245,7 +248,7 @@ function Player({
   }
 
   const sliderStyle = (val, max = 100) => ({
-    background: `linear-gradient(to right, var(--emerald) ${val}%, var(--border-hi) ${val}%)`,
+    background: `linear-gradient(to right, var(--accent) ${val}%, var(--border-hi) ${val}%)`,
     height: 4,
     borderRadius: 2,
     flex: max === 100 ? 1 : undefined,
@@ -269,8 +272,23 @@ function Player({
       playlist: 'Remote Track',
     } : null)
 
+    const remoteTitle = activeTrack ? (activeTrack.title || activeTrack.name || '') : ''
+    const remoteArtist = activeTrack ? (activeTrack.artist || activeTrack.playlist || playlist || 'Unknown Artist') : ''
+    const remoteAnnouncement = activeTrack && remoteTitle
+      ? `Now playing: ${remoteTitle} by ${remoteArtist}`
+      : ''
+
     return (
       <footer className="player player-remote" data-testid="player-bar">
+        <div
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          data-testid="player-live-region"
+        >
+          {remoteAnnouncement}
+        </div>
         <PlayerTopProgress pct={remotePct} currentTime={remotePositionSec} duration={remoteDurationSec} onSeek={(newPct) => onSendRemote({ action: 'seek', payload: { pct: newPct } })} formatTime={formatTime} />
         <div className="player-left">
           <PlayerDisc track={activeTrack} token={token} discBg={discBg} />
@@ -289,17 +307,17 @@ function Player({
                 <button
                   className="btn-icon player-add-btn"
                   onClick={() => onAddToPlaylist(activeTrack)}
-                  title="Add to Playlist"
-                  aria-label="Add to Playlist"
+                  title="Add to playlist"
+                  aria-label="Add to playlist"
                   data-testid="player-add-btn"
                 >
-                  <PlusIcon width={16} height={16} />
+                  <PlusIcon width={18} height={18} />
                 </button>
               )}
               <button
                 className={`btn-icon player-like-btn ${isFavorite ? 'active' : ''}`}
                 onClick={() => onToggleFavorite && onToggleFavorite(activeTrack.path)}
-                title={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                title={isFavorite ? "Remove from favorites" : "Add to favorites"}
                 aria-label={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
                 aria-pressed={isFavorite}
                 data-testid="player-like-btn"
@@ -308,16 +326,21 @@ function Player({
               </button>
             </div>
           )}
-          <button className="player-claim-btn" onClick={onClaimDevice} aria-label="Play here on this device">
-            Play here
+          <button
+            className="player-claim-btn"
+            onClick={onClaimDevice}
+            aria-label="Play on this device"
+            title="Play on this device"
+          >
+            Play on this device
           </button>
         </div>
         <div className="player-center">
           <div className="player-controls">
             <button
-              className={`btn-icon btn-shuffle ${isShuffle ? 'active glow' : ''}`}
+              className={`btn-icon btn-shuffle ${isShuffle ? 'active' : ''}`}
               onClick={() => onSendRemote({ action: 'shuffle', payload: { shuffle: !isShuffle }})}
-              title={isShuffle ? "Shuffle ON" : "Shuffle OFF"}
+              title={isShuffle ? "Shuffle on" : "Shuffle off"}
               aria-label="Shuffle"
               aria-pressed={isShuffle}
             >
@@ -348,9 +371,9 @@ function Player({
               <NextIcon />
             </button>
             <button
-              className={`btn-icon btn-repeat ${isLoop ? 'active glow' : ''}`}
+              className={`btn-icon btn-repeat ${isLoop ? 'active' : ''}`}
               onClick={() => onSendRemote({ action: 'loop', payload: { loop: !isLoop }})}
-              title={isLoop ? "Repeat ON" : "Repeat OFF"}
+              title={isLoop ? "Repeat on" : "Repeat off"}
               aria-label="Repeat"
               aria-pressed={isLoop}
             >
@@ -363,7 +386,7 @@ function Player({
             <button
               className={`btn-icon player-lyrics-btn ${showLyrics ? 'active' : ''}`}
               onClick={onToggleLyrics}
-              title={showLyrics ? "Hide Lyrics" : "Show Synced Lyrics"}
+              title={showLyrics ? "Hide lyrics" : "Show synced lyrics"}
               aria-label="Toggle synced lyrics"
               aria-pressed={showLyrics}
               data-testid="lyrics-toggle-btn"
@@ -375,7 +398,7 @@ function Player({
             <button
               className={`btn-icon ${showRightPanel ? 'active' : ''}`}
               onClick={onToggleRightPanel}
-              title="Now Playing View"
+              title="Now playing view"
               aria-label="Toggle now playing panel"
               aria-expanded={showRightPanel}
               data-testid="player-right-panel-toggle"
@@ -383,15 +406,20 @@ function Player({
               <PanelIcon />
             </button>
           )}
-          <button
-            className="btn-icon player-devices-btn"
-            onClick={onOpenDevices}
-            title="Connected Devices"
-            aria-label="Connected devices"
-            data-testid="player-devices-btn"
-          >
-            <DevicesIcon />
-          </button>
+          <div className="player-device-indicator">
+            <button
+              className="btn-icon player-devices-btn"
+              onClick={onOpenDevices}
+              title="Connected devices"
+              aria-label="Connected devices"
+              data-testid="player-devices-btn"
+            >
+              <DevicesIcon />
+            </button>
+            <span className="player-device-status-badge" title="Active playback device">
+              {activeDeviceName ? `Playing on ${activeDeviceName}` : 'Remote device'}
+            </span>
+          </div>
           {syncState?.volume !== undefined && (
             <>
               <button
@@ -430,8 +458,23 @@ function Player({
     )
   }
 
+  const localTitle = track ? (track.title || track.name || '') : ''
+  const localArtist = track ? (track.artist || track.playlist || playlist || 'Unknown Artist') : ''
+  const localAnnouncement = track && localTitle
+    ? `Now playing: ${localTitle} by ${localArtist}`
+    : ''
+
   return (
     <footer className="player" data-testid="player-bar">
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="player-live-region"
+      >
+        {localAnnouncement}
+      </div>
       <PlayerTopProgress pct={pct} currentTime={currentTime} duration={duration} onSeek={onSeek} formatTime={formatTime} />
       <div className={`player-left ${track ? '' : 'player-empty'}`}>
         <PlayerDisc track={track} token={token} discBg={discBg} />
@@ -450,17 +493,17 @@ function Player({
               <button
                 className="btn-icon player-add-btn"
                 onClick={() => onAddToPlaylist(track)}
-                title="Add to Playlist"
-                aria-label="Add to Playlist"
+                title="Add to playlist"
+                aria-label="Add to playlist"
                 data-testid="player-add-btn"
               >
-                <PlusIcon width={16} height={16} />
+                <PlusIcon width={18} height={18} />
               </button>
             )}
             <button
               className={`btn-icon player-like-btn ${isFavorite ? 'active' : ''}`}
               onClick={() => onToggleFavorite && onToggleFavorite(track.path)}
-              title={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+              title={isFavorite ? "Remove from favorites" : "Add to favorites"}
               aria-label={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
               aria-pressed={isFavorite}
               data-testid="player-like-btn"
@@ -474,10 +517,10 @@ function Player({
       <div className="player-center">
         <div className="player-controls">
           <button
-            className={`btn-icon btn-shuffle ${isShuffle ? 'active glow' : ''}`}
+            className={`btn-icon btn-shuffle ${isShuffle ? 'active' : ''}`}
             onClick={onToggleShuffle}
             data-testid="player-shuffle-btn"
-            title={isShuffle ? "Shuffle ON" : "Shuffle OFF"}
+            title={isShuffle ? "Shuffle on" : "Shuffle off"}
             aria-label="Shuffle"
             aria-pressed={isShuffle}
           >
@@ -511,10 +554,10 @@ function Player({
             <NextIcon />
           </button>
           <button
-            className={`btn-icon btn-repeat ${isLoop ? 'active glow' : ''}`}
+            className={`btn-icon btn-repeat ${isLoop ? 'active' : ''}`}
             onClick={onToggleLoop}
             data-testid="player-loop-btn"
-            title={isLoop ? "Repeat ON" : "Repeat OFF"}
+            title={isLoop ? "Repeat on" : "Repeat off"}
             aria-label="Repeat"
             aria-pressed={isLoop}
           >
@@ -528,7 +571,7 @@ function Player({
           <button
             className={`btn-icon player-lyrics-btn ${showLyrics ? 'active' : ''}`}
             onClick={onToggleLyrics}
-            title={showLyrics ? "Hide Lyrics" : "Show Synced Lyrics"}
+            title={showLyrics ? "Hide lyrics" : "Show synced lyrics"}
             aria-label="Toggle synced lyrics"
             aria-pressed={showLyrics}
             data-testid="lyrics-toggle-btn"
@@ -540,7 +583,7 @@ function Player({
           <button
             className={`btn-icon ${showRightPanel ? 'active' : ''}`}
             onClick={onToggleRightPanel}
-            title="Now Playing View"
+            title="Now playing view"
             aria-label="Toggle now playing panel"
             aria-expanded={showRightPanel}
             data-testid="player-right-panel-toggle"
@@ -548,15 +591,20 @@ function Player({
             <PanelIcon />
           </button>
         )}
-        <button
-          className="btn-icon player-devices-btn"
-          onClick={onOpenDevices}
-          title="Connected Devices"
-          aria-label="Connected devices"
-          data-testid="player-devices-btn"
-        >
-          <DevicesIcon />
-        </button>
+        <div className="player-device-indicator">
+          <button
+            className="btn-icon player-devices-btn"
+            onClick={onOpenDevices}
+            title="Connected devices"
+            aria-label="Connected devices"
+            data-testid="player-devices-btn"
+          >
+            <DevicesIcon />
+          </button>
+          <span className="player-device-status-badge" title="Active playback device">
+            This device
+          </span>
+        </div>
         <button
           className="btn-icon"
           onClick={handleMuteToggle}
@@ -590,120 +638,137 @@ function Player({
    â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 function NoteIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="var(--emerald)">
-      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
     </svg>
   )
 }
 
 function HeartIcon({ filled }) {
-  return filled ? (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="var(--emerald)">
-      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-    </svg>
-  ) : (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill={filled ? "var(--accent)" : "none"}
+      stroke={filled ? "var(--accent)" : "currentColor"}
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
     </svg>
   )
 }
 
 function ShuffleIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="16 3 21 3 21 8"/>
-      <line x1="4" y1="20" x2="21" y2="3"/>
-      <polyline points="21 16 21 21 16 21"/>
-      <line x1="15" y1="15" x2="21" y2="21"/>
-      <line x1="4" y1="4" x2="9" y2="9"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="16 3 21 3 21 8" />
+      <line x1="4" y1="20" x2="21" y2="3" />
+      <polyline points="21 16 21 21 16 21" />
+      <line x1="15" y1="15" x2="21" y2="21" />
+      <line x1="4" y1="4" x2="9" y2="9" />
     </svg>
   )
 }
 
 function PrevIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-      <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="19 20 9 12 19 4 19 20" />
+      <line x1="5" y1="19" x2="5" y2="5" />
     </svg>
   )
 }
 
 function PlayIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style={{ marginLeft: 2 }}>
-      <path d="M8 5v14l11-7z"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 2 }}>
+      <polygon points="6 4 20 12 6 20 6 4" />
     </svg>
   )
 }
 
 function PauseIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="7" y1="5" x2="7" y2="19" />
+      <line x1="17" y1="5" x2="17" y2="19" />
     </svg>
   )
 }
 
 function NextIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-      <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="5 4 15 12 5 20 5 4" />
+      <line x1="19" y1="5" x2="19" y2="19" />
     </svg>
   )
 }
 
 function LoopIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="17 1 21 5 17 9"/>
-      <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-      <polyline points="7 23 3 19 7 15"/>
-      <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="17 1 21 5 17 9" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+      <polyline points="7 23 3 19 7 15" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
     </svg>
   )
 }
 
 function VolumeIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
     </svg>
   )
 }
 
 function MuteIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <line x1="22" y1="9" x2="16" y2="15" />
+      <line x1="16" y1="9" x2="22" y2="15" />
     </svg>
   )
 }
 
 function DevicesIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-      <path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="4" width="14" height="10" rx="1.5" />
+      <path d="M6 18h6" />
+      <path d="M18 10h3a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z" />
     </svg>
   )
 }
 
 function PanelIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="15" y1="3" x2="15" y2="21" />
     </svg>
   )
 }
 
-function PlusIcon({ width = 16, height = 16 }) {
+function PlusIcon({ width = 18, height = 18 }) {
   return (
-    <svg viewBox="0 0 24 24" width={width} height={height} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" width={width} height={height} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 5v14M5 12h14"/>
     </svg>
   )
 }
 
-function LyricsIcon({ width = 19, height = 19, className = '' }) {
+function LyricsIcon({ width = 18, height = 18, className = '' }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -711,27 +776,18 @@ function LyricsIcon({ width = 19, height = 19, className = '' }) {
       height={height}
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.8"
+      strokeWidth="1.75"
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
       style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
     >
-      {/* Under-sheet / offset layer */}
-      <path d="M6 21h12a2 2 0 0 0 2-2V7" strokeOpacity="0.4" strokeWidth="1.5" />
-      {/* Main front page with folded corner */}
-      <path d="M4 3a1.5 1.5 0 0 1 1.5-1.5h8.5l5 5V18a1.5 1.5 0 0 1-1.5 1.5H5.5A1.5 1.5 0 0 1 4 18V3z" />
-      <polyline points="14 1.5 14 6.5 19 6.5" />
-      {/* Horizontal lyrics lines */}
-      <line x1="6.8" y1="7" x2="10.5" y2="7" strokeWidth="1.6" />
-      <line x1="6.8" y1="9.6" x2="10.5" y2="9.6" strokeWidth="1.6" />
-      <line x1="6.8" y1="12.2" x2="9.5" y2="12.2" strokeWidth="1.6" />
-      <line x1="6.8" y1="14.8" x2="16" y2="14.8" strokeWidth="1.6" />
-      {/* Beamed music notes */}
-      <path d="M12.8 11.5V5.2l4.8-1.2v6.2" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
-      <path d="M12.8 7.4l4.8-1.2" stroke="currentColor" strokeWidth="1.6" />
-      <ellipse cx="11.4" cy="11.5" rx="1.6" ry="1.2" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
-      <ellipse cx="16.4" cy="10.3" rx="1.6" ry="1.2" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
+      <path d="M3 6h10" />
+      <path d="M3 11h7" />
+      <path d="M3 16h5" />
+      <path d="M3 21h10" />
+      <path d="M17 17a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Z" />
+      <path d="M17 17V5l4-1v5" />
     </svg>
   )
 }

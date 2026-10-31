@@ -23,7 +23,7 @@ describe('Sidebar Component & Collapse / Expand', () => {
     )
 
     expect(screen.getByText('Sangita')).toBeInTheDocument()
-    expect(screen.getByText('Your Library')).toBeInTheDocument()
+    expect(screen.getByText('Your library')).toBeInTheDocument()
     expect(screen.getByText('Chill Vibes')).toBeInTheDocument()
     expect(screen.getByText('Rock Classics')).toBeInTheDocument()
     expect(screen.getByText('Playlist • 2 songs')).toBeInTheDocument()
@@ -234,6 +234,44 @@ describe('Sidebar Component & Collapse / Expand', () => {
     const closeBtn = screen.getByTestId('sidebar-close-btn')
     fireEvent.click(closeBtn)
     expect(handleToggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes mobile drawer on Escape key press when open', () => {
+    const handleClose = vi.fn()
+    render(
+      <Sidebar
+        playlists={mockPlaylists}
+        currentPlaylist="Chill Vibes"
+        onSelect={vi.fn()}
+        isOpen={true}
+        sidebarCollapsed={false}
+        onCloseDrawer={handleClose}
+      />
+    )
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(handleClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders a compact Discover icon button when collapsed and library is empty', () => {
+    const handleDiscover = vi.fn()
+    render(
+      <Sidebar
+        playlists={{}}
+        currentPlaylist=""
+        onSelect={vi.fn()}
+        isOpen={false}
+        sidebarCollapsed={true}
+        onDiscover={handleDiscover}
+      />
+    )
+
+    const compactDiscoverBtn = screen.getByTestId('sidebar-empty-collapsed-btn')
+    expect(compactDiscoverBtn).toBeInTheDocument()
+    expect(compactDiscoverBtn).toHaveAttribute('aria-label', 'Discover')
+
+    fireEvent.click(compactDiscoverBtn)
+    expect(handleDiscover).toHaveBeenCalledTimes(1)
   })
 
   it('renders Create Playlist button in library toolbar and calls onCreatePlaylist', () => {

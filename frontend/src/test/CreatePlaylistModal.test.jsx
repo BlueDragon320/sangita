@@ -18,10 +18,11 @@ describe('CreatePlaylistModal Component', () => {
       />
     )
 
-    expect(screen.getByText('Create New Playlist')).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('e.g. Summer Roadtrip, Chill Nights')).toBeInTheDocument()
+    expect(screen.getByText('Create new playlist')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('e.g. Summer roadtrip, chill nights')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Add an optional description')).toBeInTheDocument()
     expect(screen.getByText('Cancel')).toBeInTheDocument()
+    expect(screen.getByTestId('create-playlist-done-btn')).toBeInTheDocument()
     expect(screen.getByTestId('create-playlist-submit-btn')).toBeInTheDocument()
   })
 
@@ -95,7 +96,7 @@ describe('CreatePlaylistModal Component', () => {
       />
     )
 
-    const input = screen.getByPlaceholderText('e.g. Summer Roadtrip, Chill Nights')
+    const input = screen.getByPlaceholderText('e.g. Summer roadtrip, chill nights')
     const form = input.closest('form')
     
     // Type reserved name
@@ -123,7 +124,7 @@ describe('CreatePlaylistModal Component', () => {
       />
     )
 
-    const input = screen.getByPlaceholderText('e.g. Summer Roadtrip, Chill Nights')
+    const input = screen.getByPlaceholderText('e.g. Summer roadtrip, chill nights')
     fireEvent.change(input, { target: { value: 'Roadtrip 2026' } })
 
     const submitBtn = screen.getByTestId('create-playlist-submit-btn')
@@ -241,7 +242,7 @@ describe('CreatePlaylistModal Component', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(dialog).toHaveAttribute('aria-labelledby', 'create-playlist-title')
-    expect(screen.getByRole('heading', { level: 3, name: 'Create New Playlist' })).toHaveAttribute('id', 'create-playlist-title')
+    expect(screen.getByRole('heading', { level: 3, name: 'Create new playlist' })).toHaveAttribute('id', 'create-playlist-title')
 
     const closeBtn = screen.getByRole('button', { name: 'Close dialog' })
     expect(closeBtn).toBeInTheDocument()
@@ -257,7 +258,7 @@ describe('CreatePlaylistModal Component', () => {
       />
     )
 
-    const input = screen.getByPlaceholderText('e.g. Summer Roadtrip, Chill Nights')
+    const input = screen.getByPlaceholderText('e.g. Summer roadtrip, chill nights')
     const form = input.closest('form')
     fireEvent.change(input, { target: { value: 'Favorites' } })
     fireEvent.submit(form)
