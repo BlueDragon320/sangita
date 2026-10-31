@@ -15,6 +15,7 @@ describe('Login Component', () => {
 
     expect(screen.getByText(/private website for personal use/i)).toBeInTheDocument()
     expect(screen.getByText('Sangita')).toBeInTheDocument()
+    expect(screen.getByTestId('sangita-logo')).toBeInTheDocument()
     expect(screen.getByText('Your personal music server')).toBeInTheDocument()
 
     const usernameInput = screen.getByTestId('login-username-input')

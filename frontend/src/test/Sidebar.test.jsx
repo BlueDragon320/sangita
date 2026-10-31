@@ -23,6 +23,7 @@ describe('Sidebar Component & Collapse / Expand', () => {
     )
 
     expect(screen.getByText('Sangita')).toBeInTheDocument()
+    expect(screen.getByTestId('sangita-logo')).toBeInTheDocument()
     expect(screen.getByText('Your library')).toBeInTheDocument()
     expect(screen.getByText('Chill Vibes')).toBeInTheDocument()
     expect(screen.getByText('Rock Classics')).toBeInTheDocument()
