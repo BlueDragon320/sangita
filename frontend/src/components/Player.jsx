@@ -322,11 +322,21 @@ function Player({
 
   // Remember previous volume when unmuting instead of hardcoding 80
   const prevVolumeRef = useRef(volume > 0 ? volume : 80)
+  const lastRemoteSeekRef = useRef(0)
+
   useEffect(() => {
     if (volume > 0) {
       prevVolumeRef.current = volume
     }
   }, [volume])
+
+  const handleRemoteSeek = (newPct, meta = {}) => {
+    const now = Date.now()
+    if (meta.isEnd || now - lastRemoteSeekRef.current >= 150) {
+      lastRemoteSeekRef.current = now
+      onSendRemote?.({ action: 'seek', payload: { pct: newPct } })
+    }
+  }
 
   const handleMuteToggle = () => {
     if (volume === 0) {
@@ -379,15 +389,6 @@ function Player({
     const remoteAnnouncement = activeTrack && remoteTitle
       ? `Now playing: ${remoteTitle} by ${remoteArtist}`
       : ''
-
-    const lastRemoteSeekRef = useRef(0)
-    const handleRemoteSeek = (newPct, meta = {}) => {
-      const now = Date.now()
-      if (meta.isEnd || now - lastRemoteSeekRef.current >= 150) {
-        lastRemoteSeekRef.current = now
-        onSendRemote({ action: 'seek', payload: { pct: newPct } })
-      }
-    }
 
     return (
       <footer className="player player-remote" data-testid="player-bar">
