@@ -158,5 +158,126 @@ describe('ArtistDetailView Component', () => {
     expect(screen.getByText('No tracks found for this artist.')).toBeInTheDocument()
     expect(screen.getByTestId('artist-play-all-btn')).toBeDisabled()
     expect(screen.getByTestId('artist-shuffle-btn')).toBeDisabled()
+    expect(screen.getByTestId('artist-add-all-btn')).toBeDisabled()
+  })
+
+  it('renders Add All to Playlist button and opens dialog with writable playlist choices', async () => {
+    global.fetch = vi.fn().mockImplementation((url, opts) => {
+      if (url.includes('/api/v2/playlists')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { id: 10, title: 'Chill Vibes', is_owner: true, track_count: 5 }
+          ]
+        })
+      }
+      if (url.includes('/api/v2/artists/arijit/add-to-playlist')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            success: true,
+            tracks_added: 2,
+            duplicates_skipped: 1
+          })
+        })
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const onRefreshPlaylists = vi.fn()
+    const onToast = vi.fn()
+
+    render(
+      <ArtistDetailView
+        artistId="arijit"
+        artistName="Arijit Singh"
+        artist={{ name: 'Arijit Singh', tracks: mockTracks }}
+        token="token"
+        userPlaylists={['Chill Vibes']}
+        playlistMetadata={{ 'Chill Vibes': { id: 10, is_owner: true } }}
+        onRefreshPlaylists={onRefreshPlaylists}
+        onToast={onToast}
+      />
+    )
+
+    const addAllBtn = screen.getByTestId('artist-add-all-btn')
+    expect(addAllBtn).toBeInTheDocument()
+    expect(addAllBtn).not.toBeDisabled()
+
+    // Click Add All to Playlist
+    fireEvent.click(addAllBtn)
+
+    // Dialog should open
+    expect(screen.getByTestId('artist-add-all-dialog')).toBeInTheDocument()
+    expect(screen.getByText('Add All Tracks to Playlist')).toBeInTheDocument()
+    expect(screen.getByTestId('btn-toggle-create-new')).toBeInTheDocument()
+
+    // Wait for playlists to be loaded and select active
+    await waitFor(() => {
+      expect(screen.getByTestId('select-target-playlist')).toBeInTheDocument()
+      expect(screen.getByTestId('btn-confirm-add-all')).not.toBeDisabled()
+    })
+
+    // Submit existing playlist
+    const form = screen.getByTestId('artist-add-all-dialog').querySelector('form')
+    fireEvent.submit(form)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('artist-toast')).toHaveTextContent('Added 2 tracks to Chill Vibes (1 duplicate skipped)')
+    })
+    expect(onToast).toHaveBeenCalledWith('Added 2 tracks to Chill Vibes (1 duplicate skipped)')
+    expect(onRefreshPlaylists).toHaveBeenCalledTimes(1)
+    expect(onToast).toHaveBeenCalledWith('Added 2 tracks to Chill Vibes (1 duplicate skipped)')
+    expect(onRefreshPlaylists).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows switching to Create New Playlist mode in dialog and creates new playlist', async () => {
+    global.fetch = vi.fn().mockImplementation((url, opts) => {
+      if (url.includes('/api/v2/playlists')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => []
+        })
+      }
+      if (opts?.method === 'POST' && url.includes('/api/v2/artists/arijit/add-to-playlist')) {
+        const body = JSON.parse(opts.body)
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            success: true,
+            tracks_added: 2,
+            duplicates_skipped: 0,
+            playlist_name: body.new_playlist_name
+          })
+        })
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    render(
+      <ArtistDetailView
+        artistId="arijit"
+        artistName="Arijit Singh"
+        artist={{ name: 'Arijit Singh', tracks: mockTracks }}
+        token="token"
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('artist-add-all-btn'))
+    expect(screen.getByTestId('artist-add-all-dialog')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('input-new-playlist-name')).toBeInTheDocument()
+    })
+    const input = screen.getByTestId('input-new-playlist-name')
+
+    fireEvent.change(input, { target: { value: 'Best of Arijit' } })
+
+    const form = screen.getByTestId('artist-add-all-dialog').querySelector('form')
+    fireEvent.submit(form)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('artist-toast')).toHaveTextContent('Added 2 tracks to Best of Arijit')
+    })
   })
 })

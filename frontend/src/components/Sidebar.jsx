@@ -59,8 +59,11 @@ function PlaylistThumb({ name, firstTrackPath, token }) {
   }
 
   const [imgErr, setImgErr] = useState(false)
-  const coverUrl = firstTrackPath
-    ? `/api/cover/${firstTrackPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token || '')}&v=2`
+  const resolvedTrackPath = typeof firstTrackPath === 'string'
+    ? firstTrackPath
+    : (firstTrackPath?.path || firstTrackPath?.filepath || null)
+  const coverUrl = resolvedTrackPath
+    ? `/api/cover/${resolvedTrackPath.split('/').map(encodeURIComponent).join('/')}?token=${encodeURIComponent(token || '')}&v=2`
     : name
     ? `/api/cover/${encodeURIComponent(name)}?token=${encodeURIComponent(token || '')}&v=2`
     : null
@@ -70,7 +73,7 @@ function PlaylistThumb({ name, firstTrackPath, token }) {
       <div className={`playlist-thumb ${isArtistName(name) ? 'playlist-thumb-artist' : 'playlist-thumb-img'}`}>
         <img
           src={coverUrl}
-          key={firstTrackPath || name}
+          key={resolvedTrackPath || name}
           alt={name}
           onError={() => setImgErr(true)}
           style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', borderRadius: isArtistName(name) ? '50%' : 'inherit', display: 'block' }}
@@ -135,19 +138,6 @@ function PlaylistItemRow({
           <div className="playlist-item-info">
             <div className="playlist-item-title-row">
               <span className="playlist-item-name">{name}</span>
-              {isMyPlaylist && isPublic && (
-                <span
-                  className="playlist-visibility-badge badge-public"
-                  title="Public playlist"
-                  aria-label="Public playlist"
-                  data-testid={`playlist-visibility-${name}`}
-                >
-                  <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-                  </svg>
-                  <span className="badge-text">Public</span>
-                </span>
-              )}
             </div>
             <div className="playlist-item-count">
               {isArtist ? 'Artist' : 'Playlist'} • {count} song{count !== 1 ? 's' : ''}
@@ -180,7 +170,8 @@ function Sidebar({
   view,
   userPlaylists = [],
   playlistMetadata = {},
-  folderClassifications = {}
+  folderClassifications = {},
+  username = ''
 }) {
   const [filterType, setFilterType] = useState('all') // 'all', 'playlists', 'artists'
   const [libSearch, setLibSearch] = useState('')
@@ -258,9 +249,26 @@ function Sidebar({
     return isArtistName(name)
   }
 
+  const isItemVisible = (name) => {
+    if (name === 'Favorites') return true
+    const meta = playlistMetadata[name]
+    if (meta && !meta.isFolderPlaylist) {
+      const isOwner = meta.is_owner !== undefined
+        ? meta.is_owner
+        : (meta.isOwner !== undefined
+          ? meta.isOwner
+          : (meta.owner && username ? meta.owner === username : true))
+      const isSaved = meta.is_saved !== undefined ? meta.is_saved : Boolean(meta.isSaved)
+      if (!isOwner && !isSaved) {
+        return false
+      }
+    }
+    return true
+  }
+
   // Filter based on search query for non-Favorites items
   const nonFavNames = allNames.filter(name =>
-    name !== 'Favorites' && name.toLowerCase().includes(libSearch.toLowerCase())
+    name !== 'Favorites' && isItemVisible(name) && name.toLowerCase().includes(libSearch.toLowerCase())
   )
 
   // Filter based on filterType ('all', 'playlists', 'artists')

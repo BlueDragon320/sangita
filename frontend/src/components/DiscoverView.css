@@ -654,6 +654,51 @@
   outline-offset: 2px;
 }
 
+.artist-add-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: 28px;
+  background: var(--surface-hi, rgba(255, 255, 255, 0.08));
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s, background-color 0.2s, border-color 0.2s;
+}
+
+.artist-add-all-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--border-hi);
+  transform: scale(1.04);
+}
+
+.artist-add-all-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.artist-feedback-toast {
+  position: fixed;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #18181b;
+  color: #ffffff;
+  border: 1px solid var(--accent, #10b981);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  padding: 12px 24px;
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 9999;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .artist-empty-tracks {
   padding: 48px 20px;
   text-align: center;

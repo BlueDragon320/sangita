@@ -270,7 +270,7 @@ describe('App Component Full Integration', () => {
       if (url === '/api/playlists') {
         return Promise.resolve({ ok: true, json: async () => ({ 'Chill Vibes': ['Chill Vibes/song1.mp3'] }) })
       }
-      if (url === '/api/v2/playlists') {
+      if (url.startsWith('/api/v2/playlists') && !url.includes('/pub-42')) {
         return Promise.resolve({ ok: true, json: async () => mockPublicPlaylists })
       }
       if (url.includes('/api/v2/playlists/pub-42')) {
@@ -375,6 +375,7 @@ describe('App Component Full Integration', () => {
     localStorage.setItem('sangita_token', 'mock-token')
     localStorage.setItem('sangita_user', 'alex')
 
+    let saveCalled = false
     let cloneCalled = false
     let playlistFetchCount = 0
 
@@ -399,8 +400,15 @@ describe('App Component Full Integration', () => {
         playlistFetchCount++
         return Promise.resolve({ ok: true, json: async () => ({ 'Chill Vibes': ['Chill Vibes/song1.mp3'] }) })
       }
-      if (url === '/api/v2/playlists') {
+      if (url.startsWith('/api/v2/playlists') && !url.includes('/clone') && !url.includes('/save')) {
         return Promise.resolve({ ok: true, json: async () => mockPublicPlaylists })
+      }
+      if (url.includes('/api/v2/playlists/pub-42/save')) {
+        saveCalled = true
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ status: 'saved', playlist_id: 'pub-42' })
+        })
       }
       if (url.includes('/api/v2/playlists/pub-42/clone')) {
         cloneCalled = true
@@ -431,17 +439,19 @@ describe('App Component Full Integration', () => {
     fireEvent.click(saveBtn)
 
     await waitFor(() => {
-      expect(cloneCalled).toBe(true)
+      expect(saveCalled).toBe(true)
+      expect(cloneCalled).toBe(false)
       expect(playlistFetchCount).toBeGreaterThan(initialFetchCount)
-      expect(screen.getByTestId('toast-notification')).toHaveTextContent(/Added "Community Anthems" to your playlists/)
+      expect(screen.getByTestId('toast-notification')).toHaveTextContent(/Saved playlist to your library/)
     })
   })
 
-  it('handles duplicate playlist name by appending suffix when saving from Discover', async () => {
+  it('saves playlist from Discover without creating cloned copies or duplicate suffixes', async () => {
     localStorage.setItem('sangita_token', 'mock-token')
     localStorage.setItem('sangita_user', 'alex')
 
-    let savedBody = null
+    let saveCalled = false
+    let cloneCalled = false
 
     const mockPublicPlaylists = [
       {
@@ -464,14 +474,21 @@ describe('App Component Full Integration', () => {
         // User already has 'Chill Vibes' in their library!
         return Promise.resolve({ ok: true, json: async () => ({ 'Chill Vibes': ['Chill Vibes/song1.mp3'] }) })
       }
-      if (url === '/api/v2/playlists') {
+      if (url.startsWith('/api/v2/playlists') && !url.includes('/clone') && !url.includes('/save')) {
         return Promise.resolve({ ok: true, json: async () => mockPublicPlaylists })
       }
-      if (url.includes('/api/v2/playlists/pub-88/clone')) {
-        savedBody = JSON.parse(opts.body)
+      if (url.includes('/api/v2/playlists/pub-88/save')) {
+        saveCalled = true
         return Promise.resolve({
           ok: true,
-          json: async () => ({ id: 'new-cloned-88', title: savedBody.title, track_count: 2 })
+          json: async () => ({ status: 'saved', playlist_id: 'pub-88' })
+        })
+      }
+      if (url.includes('/clone')) {
+        cloneCalled = true
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ id: 'new-cloned-88', title: 'Chill Vibes (1)', track_count: 2 })
         })
       }
       return Promise.resolve({ ok: true, json: async () => ({}) })
@@ -495,9 +512,9 @@ describe('App Component Full Integration', () => {
     fireEvent.click(saveBtn)
 
     await waitFor(() => {
-      expect(savedBody).not.toBeNull()
-      expect(savedBody.title).toBe('Chill Vibes (1)')
-      expect(screen.getByTestId('toast-notification')).toHaveTextContent(/Added "Chill Vibes \(1\)" to your playlists/)
+      expect(saveCalled).toBe(true)
+      expect(cloneCalled).toBe(false)
+      expect(screen.getByTestId('toast-notification')).toHaveTextContent(/Saved playlist to your library/)
     })
   })
 

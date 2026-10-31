@@ -123,7 +123,7 @@ describe('AdminDashboard - Library Organization & Global Playlist Inventory', ()
         })
       }
 
-      if (url.includes('/api/admin/library/playlists') && method === 'GET') {
+      if ((url.includes('/api/v2/admin/playlists') || url.includes('/api/admin/library/playlists')) && method === 'GET') {
         return Promise.resolve({
           ok: true,
           json: async () => mockPlaylists

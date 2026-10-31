@@ -142,9 +142,10 @@
 }
 
 [data-theme="amoled"] .hero-tag-public {
-  background: #0C0C0E !important;
-  color: var(--accent, #10B981) !important;
-  border-color: rgba(16, 185, 129, 0.3) !important;
+  background: transparent !important;
+  color: var(--text-dim, #71717a) !important;
+  border: none !important;
+  padding: 0 !important;
 }
 
 [data-theme="amoled"] .hero-dropdown-menu {
@@ -1562,12 +1563,43 @@ body:has(.fullscreen-mode) .main-scroll-body,
 }
 
 .hero-tag-public {
-  background: rgba(16, 185, 129, 0.12);
-  color: var(--accent, #10b981);
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  background: transparent !important;
+  color: var(--text-dim, #71717a) !important;
+  border: none !important;
+  padding: 0 !important;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   filter: none !important;
+}
+
+.btn-hero-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card, #18181b);
+  color: var(--text, #ffffff);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-hero-save:hover {
+  background: var(--card-hover, #27272a);
+  border-color: var(--border-hover, rgba(255, 255, 255, 0.2));
+}
+
+.btn-hero-save.saved {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--accent, #10b981);
+  border-color: rgba(16, 185, 129, 0.3);
 }
 
 /* Unavailable Alert Banner */

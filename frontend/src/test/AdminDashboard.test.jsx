@@ -1350,5 +1350,139 @@ describe('AdminDashboard Component', () => {
     // Crucial requirement: empty sessions message is NOT displayed
     expect(screen.queryByText('No users currently streaming audio.')).not.toBeInTheDocument()
   })
+
+  it('renders Playlists table in Music & Catalog tab with owner and visibility, toggling visibility via PUT /api/v2/admin/playlists/:id/visibility', async () => {
+    const mockPlaylists = [
+      { id: 201, title: 'Summer Party', owner: 'dj_dave', visibility: 'public', track_count: 15 },
+      { id: 202, title: 'Secret Lounge', owner: 'secret_agent', visibility: 'private', track_count: 8 }
+    ]
+
+    global.fetch = vi.fn().mockImplementation((url, opts) => {
+      if (url.includes('/api/admin/library/playlists') && (!opts || opts.method === 'GET' || !opts.method)) {
+        return Promise.resolve({ ok: true, json: async () => mockPlaylists })
+      }
+      if (url.includes('/api/v2/admin/playlists/201/visibility') && opts?.method === 'PUT') {
+        return Promise.resolve({ ok: true, json: async () => ({ status: 'success', visibility: 'private' }) })
+      }
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.resolve({ ok: true, json: async () => mockAnalyticsData })
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('admin-tab-music'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('playlist-row-201')).toBeInTheDocument()
+      expect(screen.getByTestId('playlist-row-202')).toBeInTheDocument()
+    })
+
+    expect(screen.getByTestId('playlist-owner-201')).toHaveTextContent('dj_dave')
+    expect(screen.getByTestId('playlist-visibility-201')).toHaveTextContent('public')
+    expect(screen.getByTestId('playlist-owner-202')).toHaveTextContent('secret_agent')
+    expect(screen.getByTestId('playlist-visibility-202')).toHaveTextContent('private')
+
+    // Click toggle visibility button on 201
+    const toggleBtn = screen.getByTestId('btn-toggle-visibility-201')
+    expect(toggleBtn).toHaveTextContent('Make Private')
+    fireEvent.click(toggleBtn)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('playlist-visibility-201')).toHaveTextContent('private')
+    })
+  })
+
+  it('manages playlist access grants in Music tab: opens modal, lists granted users, grants access, and revokes access', async () => {
+    const mockPlaylists = [
+      { id: 301, title: 'VIP Playlist', owner: 'vip_owner', visibility: 'private', track_count: 10 }
+    ]
+
+    global.fetch = vi.fn().mockImplementation((url, opts) => {
+      if (url.includes('/api/admin/library/playlists')) {
+        return Promise.resolve({ ok: true, json: async () => mockPlaylists })
+      }
+      if (url.includes('/api/v2/admin/playlists/301/access')) {
+        if (!opts || opts.method === 'GET' || !opts.method) {
+          return Promise.resolve({ ok: true, json: async () => ({ users: ['alice', 'bob'] }) })
+        }
+        if (opts.method === 'POST') {
+          const body = JSON.parse(opts.body)
+          if (body.grant_user) {
+            return Promise.resolve({ ok: true, json: async () => ({ status: 'granted', user: body.grant_user }) })
+          }
+          if (body.revoke_user) {
+            return Promise.resolve({ ok: true, json: async () => ({ status: 'revoked', user: body.revoke_user }) })
+          }
+        }
+      }
+      if (url.includes('/api/admin/analytics')) {
+        return Promise.resolve({ ok: true, json: async () => mockAnalyticsData })
+      }
+      if (url.includes('/api/admin/users')) {
+        return Promise.resolve({ ok: true, json: async () => mockUsersData })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(
+      <AdminDashboard
+        token="test-token"
+        playlists={{ 'Chill Vibes': ['song1.mp3'] }}
+        onLogout={vi.fn()}
+        theme="dark"
+        onCycleTheme={vi.fn()}
+        ThemeIcon={MockThemeIcon}
+        onBackToPlayer={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('admin-tab-music'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-manage-access-301')).toBeInTheDocument()
+    })
+
+    // Open access modal
+    fireEvent.click(screen.getByTestId('btn-manage-access-301'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('playlist-access-modal')).toBeInTheDocument()
+      expect(screen.getByTestId('access-user-row-alice')).toBeInTheDocument()
+      expect(screen.getByTestId('access-user-row-bob')).toBeInTheDocument()
+    })
+
+    // Grant access to charlie
+    const input = screen.getByTestId('input-grant-user')
+    fireEvent.change(input, { target: { value: 'charlie' } })
+    const grantBtn = screen.getByTestId('btn-grant-access')
+    fireEvent.click(grantBtn)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('access-user-row-charlie')).toBeInTheDocument()
+    })
+
+    // Revoke access from alice
+    const revokeBtn = screen.getByTestId('btn-revoke-alice')
+    fireEvent.click(revokeBtn)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('access-user-row-alice')).not.toBeInTheDocument()
+    })
+  })
 })
 

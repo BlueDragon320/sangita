@@ -21,10 +21,12 @@ class TestV2APIsComprehensive(unittest.TestCase):
         cls.admin_token = app_mod._make_token('admin')
         cls.user1_token = app_mod._make_token('v2_user1')
         cls.user2_token = app_mod._make_token('v2_user2')
+        cls.user3_token = app_mod._make_token('v2_user3')
 
         cls.admin_headers = {'Authorization': f'Bearer {cls.admin_token}'}
         cls.user1_headers = {'Authorization': f'Bearer {cls.user1_token}'}
         cls.user2_headers = {'Authorization': f'Bearer {cls.user2_token}'}
+        cls.user3_headers = {'Authorization': f'Bearer {cls.user3_token}'}
 
         # Setup test folders and songs in MUSIC_DIR
         cls.music_dir = app_mod.MUSIC_DIR
@@ -67,10 +69,28 @@ class TestV2APIsComprehensive(unittest.TestCase):
             'role': 'user',
             'rules': {'allowed_playlists': ['RockFolder']}
         }
+        users['v2_user3'] = {
+            'username': 'v2_user3',
+            'role': 'user',
+            'rules': {'allowed_playlists': ['RockFolder']}
+        }
         app_mod.save_users(users)
 
         # Ensure DB is migrated
         app_mod.init_db()
+
+        # Clean up any leftover test playlists from previous test runs
+        conn = app_mod.get_db()
+        try:
+            conn.execute("DELETE FROM playlists WHERE owner IN ('v2_user1', 'v2_user2', 'v2_user3')")
+            conn.execute("DELETE FROM user_playlists WHERE username IN ('v2_user1', 'v2_user2', 'v2_user3')")
+            conn.execute("DELETE FROM playlist_tracks WHERE username IN ('v2_user1', 'v2_user2', 'v2_user3')")
+            conn.execute("DELETE FROM playlist_tracks_v2 WHERE playlist_id NOT IN (SELECT id FROM playlists)")
+            conn.execute("DELETE FROM user_saved_playlists WHERE username IN ('v2_user1', 'v2_user2', 'v2_user3')")
+            conn.execute("DELETE FROM playlist_access_grants WHERE username IN ('v2_user1', 'v2_user2', 'v2_user3')")
+            conn.commit()
+        finally:
+            conn.close()
 
     @classmethod
     def tearDownClass(cls):
@@ -99,6 +119,12 @@ class TestV2APIsComprehensive(unittest.TestCase):
         conn = app_mod.get_db()
         try:
             conn.execute("DELETE FROM source_folders WHERE folder_name IN ('RockFolder', 'JazzFolder', 'SecretFolder')")
+            conn.execute("DELETE FROM playlists WHERE owner IN ('v2_user1', 'v2_user2', 'v2_user3')")
+            conn.execute("DELETE FROM user_playlists WHERE username IN ('v2_user1', 'v2_user2', 'v2_user3')")
+            conn.execute("DELETE FROM playlist_tracks WHERE username IN ('v2_user1', 'v2_user2', 'v2_user3')")
+            conn.execute("DELETE FROM playlist_tracks_v2 WHERE playlist_id NOT IN (SELECT id FROM playlists)")
+            conn.execute("DELETE FROM user_saved_playlists WHERE username IN ('v2_user1', 'v2_user2', 'v2_user3')")
+            conn.execute("DELETE FROM playlist_access_grants WHERE username IN ('v2_user1', 'v2_user2', 'v2_user3')")
             conn.commit()
         finally:
             conn.close()
@@ -110,12 +136,12 @@ class TestV2APIsComprehensive(unittest.TestCase):
                 conn = sqlite3.connect(db_path)
                 conn.row_factory = sqlite3.Row
                 tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-                for t in ["source_folders", "artists", "playlists", "playlist_tracks_v2"]:
+                for t in ["source_folders", "artists", "playlists", "playlist_tracks_v2", "user_saved_playlists", "playlist_access_grants"]:
                     self.assertIn(t, tables, f"Table {t} should exist in {db_path}")
 
                 # Verify playlists columns
                 pl_cols = [r["name"] for r in conn.execute("PRAGMA table_info(playlists)").fetchall()]
-                for c in ["id", "owner", "title", "description", "visibility", "is_folder_playlist"]:
+                for c in ["id", "owner", "title", "description", "visibility", "is_folder_playlist", "idempotency_key"]:
                     self.assertIn(c, pl_cols, f"Column {c} missing in playlists table in {db_path}")
 
                 conn.close()
@@ -233,6 +259,7 @@ class TestV2APIsComprehensive(unittest.TestCase):
 
         # Confirm 404
         self.assertEqual(self.client.get(f'/api/v2/playlists/{pub_id}', headers=self.user1_headers).status_code, 404)
+        self.client.delete(f'/api/v2/playlists/{priv_id}', headers=self.user1_headers)
 
     def test_05_strict_source_enforcement_on_stream_download_cover_lyrics(self):
         """Verify strict allowed_playlists enforcement on stream, download, cover, and lyrics."""
@@ -491,6 +518,454 @@ class TestV2APIsComprehensive(unittest.TestCase):
         self.client.delete(f'/api/v2/playlists/{source_priv_id}', headers=self.user1_headers)
         self.client.delete(f'/api/v2/playlists/{admin_cloned_id}', headers=self.admin_headers)
         self.client.delete(f'/api/v2/playlists/{u1_folder_cloned_id}', headers=self.user1_headers)
+
+    def test_10_unique_playlist_titles_enforcement(self):
+        """Verify enforcement of unique playlist titles per owner (case-insensitive) on create and update."""
+        # 1. User1 creates a playlist
+        res1 = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'Synthwave Chill',
+            'visibility': 'private'
+        })
+        self.assertEqual(res1.status_code, 201)
+        pl1_id = res1.get_json()['id']
+
+        # 2. User1 attempts to create another playlist with exact same title -> 409
+        res2 = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'Synthwave Chill',
+            'visibility': 'private'
+        })
+        self.assertEqual(res2.status_code, 409)
+        self.assertEqual(res2.get_json().get('error'), 'A playlist with this title already exists')
+
+        # 3. User1 attempts to create another playlist with case variation -> 409
+        res3 = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'synthwave chill',
+            'visibility': 'public'
+        })
+        self.assertEqual(res3.status_code, 409)
+        self.assertEqual(res3.get_json().get('error'), 'A playlist with this title already exists')
+
+        # 4. User2 CAN create a playlist with the same title ('Synthwave Chill') because uniqueness is per owner
+        res_u2 = self.client.post('/api/v2/playlists', headers=self.user2_headers, json={
+            'title': 'Synthwave Chill',
+            'visibility': 'private'
+        })
+        self.assertEqual(res_u2.status_code, 201)
+        pl_u2_id = res_u2.get_json()['id']
+
+        # 5. User1 creates a second distinct playlist
+        res4 = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'Lo-Fi Beats',
+            'visibility': 'private'
+        })
+        self.assertEqual(res4.status_code, 201)
+        pl2_id = res4.get_json()['id']
+
+        # 6. User1 renames second playlist to an existing title ('Synthwave Chill') -> 409
+        res_rename_conflict = self.client.put(f'/api/v2/playlists/{pl2_id}', headers=self.user1_headers, json={
+            'title': 'Synthwave Chill'
+        })
+        self.assertEqual(res_rename_conflict.status_code, 409)
+        self.assertEqual(res_rename_conflict.get_json().get('error'), 'A playlist with this title already exists')
+
+        # 7. User1 renames second playlist to case-insensitive variation of existing title -> 409
+        res_rename_case = self.client.put(f'/api/v2/playlists/{pl2_id}', headers=self.user1_headers, json={
+            'title': 'SYNTHWAVE CHILL'
+        })
+        self.assertEqual(res_rename_case.status_code, 409)
+        self.assertEqual(res_rename_case.get_json().get('error'), 'A playlist with this title already exists')
+
+        # 8. Updating the playlist keeping its current title succeeds -> 200
+        res_same_title = self.client.put(f'/api/v2/playlists/{pl2_id}', headers=self.user1_headers, json={
+            'title': 'Lo-Fi Beats',
+            'description': 'Updated description only'
+        })
+        self.assertEqual(res_same_title.status_code, 200)
+        self.assertEqual(res_same_title.get_json()['title'], 'Lo-Fi Beats')
+
+        # Clean up
+        self.client.delete(f'/api/v2/playlists/{pl1_id}', headers=self.user1_headers)
+        self.client.delete(f'/api/v2/playlists/{pl2_id}', headers=self.user1_headers)
+        self.client.delete(f'/api/v2/playlists/{pl_u2_id}', headers=self.user2_headers)
+
+    def test_11_catch_all_frontend_route_guard_api_404(self):
+        """Verify that unknown routes under /api/ return 404 rather than false-positive frontend 200 OK."""
+        # 1. Unknown V2 route
+        res1 = self.client.get('/api/v2/non-existent-route')
+        self.assertEqual(res1.status_code, 404)
+        self.assertEqual(res1.get_json(), {"error": "Resource not found"})
+
+        # 2. Unknown nested route
+        res2 = self.client.post('/api/v2/playlists/some-id/invalid-action')
+        self.assertEqual(res2.status_code, 404)
+        self.assertEqual(res2.get_json(), {"error": "Resource not found"})
+
+        # 3. Base /api or /api/
+        res3 = self.client.get('/api/unknown-endpoint')
+        self.assertEqual(res3.status_code, 404)
+        self.assertEqual(res3.get_json(), {"error": "Resource not found"})
+
+    def test_12_personal_library_isolation_and_discover_mode(self):
+        """Verify personal library only contains owned + saved playlists, discover contains public playlists, and save/unsave lifecycle."""
+        # 1. user1 creates a public playlist and a private playlist
+        res_pub = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'User1 Public Showcase',
+            'visibility': 'public'
+        })
+        self.assertEqual(res_pub.status_code, 201)
+        pub_id = res_pub.get_json()['id']
+
+        res_priv = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'User1 Secret Stash',
+            'visibility': 'private'
+        })
+        self.assertEqual(res_priv.status_code, 201)
+        priv_id = res_priv.get_json()['id']
+
+        # 2. user2 queries library mode (default) -> user1's public and private playlists are NOT present
+        lib_u2 = self.client.get('/api/v2/playlists', headers=self.user2_headers)
+        self.assertEqual(lib_u2.status_code, 200)
+        u2_lib_ids = [p['id'] for p in lib_u2.get_json()['playlists']]
+        self.assertNotIn(pub_id, u2_lib_ids)
+        self.assertNotIn(priv_id, u2_lib_ids)
+
+        # 3. user2 queries discover mode (?discover=true) -> user1's public playlist IS present, private is NOT
+        disc_u2 = self.client.get('/api/v2/playlists?discover=true', headers=self.user2_headers)
+        self.assertEqual(disc_u2.status_code, 200)
+        disc_pls = disc_u2.get_json()['playlists']
+        found_pub = next((p for p in disc_pls if p['id'] == pub_id), None)
+        self.assertIsNotNone(found_pub)
+        self.assertFalse(found_pub['is_owner'])
+        self.assertFalse(found_pub['is_saved'])
+        self.assertIsNone(next((p for p in disc_pls if p['id'] == priv_id), None))
+
+        # 4. user2 saves user1's public playlist
+        save_res = self.client.post(f'/api/v2/playlists/{pub_id}/save', headers=self.user2_headers)
+        self.assertEqual(save_res.status_code, 200)
+        self.assertEqual(save_res.get_json(), {"status": "saved", "playlist_id": pub_id})
+
+        # 5. user2 queries library mode -> user1's public playlist now appears in user2's library
+        lib_u2_after = self.client.get('/api/v2/playlists', headers=self.user2_headers)
+        self.assertEqual(lib_u2_after.status_code, 200)
+        saved_in_lib = next((p for p in lib_u2_after.get_json()['playlists'] if p['id'] == pub_id), None)
+        self.assertIsNotNone(saved_in_lib)
+        self.assertFalse(saved_in_lib['is_owner'])
+        self.assertTrue(saved_in_lib['is_saved'])
+
+        # In discover mode, is_saved is now true
+        disc_u2_after = self.client.get('/api/v2/playlists?discover=true', headers=self.user2_headers)
+        found_pub_disc = next((p for p in disc_u2_after.get_json()['playlists'] if p['id'] == pub_id), None)
+        self.assertIsNotNone(found_pub_disc)
+        self.assertTrue(found_pub_disc['is_saved'])
+
+        # 6. user2 unsaves user1's public playlist
+        unsave_res = self.client.delete(f'/api/v2/playlists/{pub_id}/save', headers=self.user2_headers)
+        self.assertEqual(unsave_res.status_code, 200)
+        self.assertEqual(unsave_res.get_json(), {"status": "unsaved", "playlist_id": pub_id})
+
+        # 7. user2 queries library mode -> playlist is no longer in library
+        lib_u2_unsaved = self.client.get('/api/v2/playlists', headers=self.user2_headers)
+        u2_lib_ids_unsaved = [p['id'] for p in lib_u2_unsaved.get_json()['playlists']]
+        self.assertNotIn(pub_id, u2_lib_ids_unsaved)
+
+        # Clean up
+        self.client.delete(f'/api/v2/playlists/{pub_id}', headers=self.user1_headers)
+        self.client.delete(f'/api/v2/playlists/{priv_id}', headers=self.user1_headers)
+
+    def test_13_artist_add_to_playlist_and_source_isolation(self):
+        """POST /api/v2/artists/<id>/add-to-playlist supports new & existing playlists, deduplication, and source isolation."""
+        # 1. Create artist and map RockFolder and SecretFolder to artist
+        art_name = f"MultiArtist_{uuid.uuid4().hex[:6]}"
+        create_art = self.client.post('/api/v2/artists', headers=self.admin_headers, json={'name': art_name})
+        self.assertEqual(create_art.status_code, 201)
+        art_id = create_art.get_json()['id']
+
+        conn = app_mod.get_db()
+        try:
+            conn.execute("""
+                INSERT OR REPLACE INTO source_folders (folder_name, display_name, classification, mapped_artist_id, mapped_artist_name)
+                VALUES ('RockFolder', 'Rock Classics', 'artist', ?, ?)
+            """, (art_id, art_name))
+            conn.execute("""
+                INSERT OR REPLACE INTO source_folders (folder_name, display_name, classification, mapped_artist_id, mapped_artist_name)
+                VALUES ('SecretFolder', 'Secret Vault', 'artist', ?, ?)
+            """, (art_id, art_name))
+            conn.commit()
+        finally:
+            conn.close()
+
+        # user2 has access to RockFolder but NOT SecretFolder
+        # 2. user2 adds artist collection to a NEW playlist
+        res_new = self.client.post(f'/api/v2/artists/{art_id}/add-to-playlist', headers=self.user2_headers, json={
+            'new_playlist_title': 'My Artist Collection',
+            'description': 'Collection test',
+            'visibility': 'private'
+        })
+        self.assertEqual(res_new.status_code, 200)
+        data_new = res_new.get_json()
+        self.assertEqual(data_new['status'], 'added')
+        target_pl_id = data_new['playlist_id']
+        self.assertGreaterEqual(data_new['tracks_added'], 1)
+        self.assertEqual(data_new['duplicates_skipped'], 0)
+        self.assertEqual(data_new['total_tracks'], data_new['tracks_added'])
+
+        # 3. Verify user2 playlist detail: rock_anthem.mp3 is added, secret_classified.mp3 was NOT added
+        detail = self.client.get(f'/api/v2/playlists/{target_pl_id}', headers=self.user2_headers)
+        self.assertEqual(detail.status_code, 200)
+        pl_tracks = [t['track_path'] for t in detail.get_json()['tracks']]
+        self.assertIn('RockFolder/rock_anthem.mp3', pl_tracks)
+        self.assertNotIn('SecretFolder/secret_classified.mp3', pl_tracks)
+
+        # 4. user2 calls add-to-playlist again on the EXISTING playlist -> duplicate skipping
+        res_dup = self.client.post(f'/api/v2/artists/{art_id}/add-to-playlist', headers=self.user2_headers, json={
+            'playlist_id': target_pl_id
+        })
+        self.assertEqual(res_dup.status_code, 200)
+        data_dup = res_dup.get_json()
+        self.assertEqual(data_dup['status'], 'added')
+        self.assertEqual(data_dup['playlist_id'], target_pl_id)
+        self.assertEqual(data_dup['tracks_added'], 0)
+        self.assertGreaterEqual(data_dup['duplicates_skipped'], 1)
+        self.assertEqual(data_dup['total_tracks'], data_new['total_tracks'])
+
+        # 5. user1 attempts to add artist tracks to user2's playlist -> 403 Forbidden
+        res_forbidden = self.client.post(f'/api/v2/artists/{art_id}/add-to-playlist', headers=self.user1_headers, json={
+            'playlist_id': target_pl_id
+        })
+        self.assertEqual(res_forbidden.status_code, 403)
+
+        # Clean up
+        self.client.delete(f'/api/v2/playlists/{target_pl_id}', headers=self.user2_headers)
+
+    def test_14_admin_access_grants_visibility_and_streaming_permissions(self):
+        """Admin playlist access grants, visibility toggle, and enforcement across detail, cloning, streaming."""
+        # 1. user1 creates private playlist with a Rock track and a Jazz track
+        p_res = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'User1 Exclusive Private',
+            'visibility': 'private',
+            'tracks': ['RockFolder/rock_anthem.mp3', 'JazzFolder/jazz_smooth.mp3']
+        })
+        self.assertEqual(p_res.status_code, 201)
+        pl_id = p_res.get_json()['id']
+
+        # 2. user2 has no grant -> 404 on detail, clone, save, stream with playlist_id
+        self.assertEqual(self.client.get(f'/api/v2/playlists/{pl_id}', headers=self.user2_headers).status_code, 404)
+        self.assertEqual(self.client.post(f'/api/v2/playlists/{pl_id}/clone', headers=self.user2_headers).status_code, 404)
+        self.assertEqual(self.client.post(f'/api/v2/playlists/{pl_id}/save', headers=self.user2_headers).status_code, 404)
+        self.assertEqual(self.client.get(f'/api/stream/RockFolder/rock_anthem.mp3?playlist_id={pl_id}', headers=self.user2_headers).status_code, 404)
+
+        # 3. Non-admin cannot view/modify access grants
+        self.assertEqual(self.client.get(f'/api/v2/admin/playlists/{pl_id}/access', headers=self.user2_headers).status_code, 403)
+        self.assertEqual(self.client.post(f'/api/v2/admin/playlists/{pl_id}/access', headers=self.user2_headers, json={'grant_user': 'v2_user2'}).status_code, 403)
+
+        # 4. Admin inspects access grants
+        admin_acc = self.client.get(f'/api/v2/admin/playlists/{pl_id}/access', headers=self.admin_headers)
+        self.assertEqual(admin_acc.status_code, 200)
+        self.assertEqual(admin_acc.get_json()['grants'], [])
+
+        # 5. Admin grants access to user2
+        grant_res = self.client.post(f'/api/v2/admin/playlists/{pl_id}/access', headers=self.admin_headers, json={
+            'grant_user': 'v2_user2'
+        })
+        self.assertEqual(grant_res.status_code, 200)
+        self.assertIn('v2_user2', grant_res.get_json()['grants'])
+
+        # 6. user2 can now access detail; user2 only has access to RockFolder, JazzFolder track is masked!
+        u2_detail = self.client.get(f'/api/v2/playlists/{pl_id}', headers=self.user2_headers)
+        self.assertEqual(u2_detail.status_code, 200)
+        u2_tracks = u2_detail.get_json()['tracks']
+        self.assertEqual(len(u2_tracks), 1)
+        self.assertEqual(u2_tracks[0]['track_path'], 'RockFolder/rock_anthem.mp3')
+        self.assertEqual(u2_detail.get_json()['unavailable_count'], 1)
+
+        # user2 can now save it
+        self.assertEqual(self.client.post(f'/api/v2/playlists/{pl_id}/save', headers=self.user2_headers).status_code, 200)
+        # Appears in user2's library
+        u2_lib = self.client.get('/api/v2/playlists', headers=self.user2_headers)
+        self.assertIn(pl_id, [p['id'] for p in u2_lib.get_json()['playlists']])
+
+        # user2 can now clone it
+        u2_clone = self.client.post(f'/api/v2/playlists/{pl_id}/clone', headers=self.user2_headers)
+        self.assertEqual(u2_clone.status_code, 201)
+        u2_clone_id = u2_clone.get_json()['id']
+        self.client.delete(f'/api/v2/playlists/{u2_clone_id}', headers=self.user2_headers)
+
+        # user2 can stream with playlist_id
+        stream_ok = self.client.get(f'/api/stream/RockFolder/rock_anthem.mp3?playlist_id={pl_id}', headers=self.user2_headers)
+        self.assertIn(stream_ok.status_code, (200, 206))
+
+        # user2 cannot stream JazzFolder track (track source strictly enforced -> 403)
+        stream_denied = self.client.get(f'/api/stream/JazzFolder/jazz_smooth.mp3?playlist_id={pl_id}', headers=self.user2_headers)
+        self.assertEqual(stream_denied.status_code, 403)
+
+        # 7. Admin revokes access from user2
+        revoke_res = self.client.post(f'/api/v2/admin/playlists/{pl_id}/access', headers=self.admin_headers, json={
+            'revoke_user': 'v2_user2'
+        })
+        self.assertEqual(revoke_res.status_code, 200)
+        self.assertNotIn('v2_user2', revoke_res.get_json()['grants'])
+
+        # user2 now gets 404 again and playlist disappears from library
+        self.assertEqual(self.client.get(f'/api/v2/playlists/{pl_id}', headers=self.user2_headers).status_code, 404)
+        u2_lib_revoked = self.client.get('/api/v2/playlists', headers=self.user2_headers)
+        self.assertNotIn(pl_id, [p['id'] for p in u2_lib_revoked.get_json()['playlists']])
+
+        # 8. Admin changes visibility to public
+        vis_res = self.client.put(f'/api/v2/admin/playlists/{pl_id}/visibility', headers=self.admin_headers, json={
+            'visibility': 'public'
+        })
+        self.assertEqual(vis_res.status_code, 200)
+        self.assertEqual(vis_res.get_json()['visibility'], 'public')
+
+        # user2 can now access as public
+        self.assertEqual(self.client.get(f'/api/v2/playlists/{pl_id}', headers=self.user2_headers).status_code, 200)
+
+        # Clean up
+        self.client.delete(f'/api/v2/playlists/{pl_id}', headers=self.user1_headers)
+
+    def test_15_idempotency_key_create_and_clone(self):
+        """Idempotency key prevents duplicate playlists on create and clone."""
+        idem_create_key = f"create-idem-{uuid.uuid4().hex}"
+
+        # 1. Create with idempotency_key in JSON body
+        res1 = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'Original Idem Playlist',
+            'description': 'First try',
+            'visibility': 'public',
+            'idempotency_key': idem_create_key
+        })
+        self.assertEqual(res1.status_code, 201)
+        orig_id = res1.get_json()['id']
+
+        # 2. Repeat request with same idempotency_key (even with different title) -> returns existing playlist with 200 OK
+        res2 = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'Different Title Attempt',
+            'description': 'Retry',
+            'visibility': 'public',
+            'idempotency_key': idem_create_key
+        })
+        self.assertEqual(res2.status_code, 200)
+        self.assertEqual(res2.get_json()['id'], orig_id)
+        self.assertEqual(res2.get_json()['title'], 'Original Idem Playlist')
+
+        # 3. Clone with Idempotency-Key header
+        idem_clone_key = f"clone-idem-{uuid.uuid4().hex}"
+        clone_headers = dict(self.user2_headers)
+        clone_headers['Idempotency-Key'] = idem_clone_key
+
+        res_c1 = self.client.post(f'/api/v2/playlists/{orig_id}/clone', headers=clone_headers, json={
+            'title': 'Cloned Idem Playlist'
+        })
+        self.assertEqual(res_c1.status_code, 201)
+        cloned_id = res_c1.get_json()['id']
+
+        # 4. Repeat clone with same Idempotency-Key header -> returns existing clone with 200 OK
+        res_c2 = self.client.post(f'/api/v2/playlists/{orig_id}/clone', headers=clone_headers, json={
+            'title': 'Another Clone Name'
+        })
+        self.assertEqual(res_c2.status_code, 200)
+        self.assertEqual(res_c2.get_json()['id'], cloned_id)
+        self.assertEqual(res_c2.get_json()['title'], 'Cloned Idem Playlist')
+
+        # Clean up
+        self.client.delete(f'/api/v2/playlists/{orig_id}', headers=self.user1_headers)
+        self.client.delete(f'/api/v2/playlists/{cloned_id}', headers=self.user2_headers)
+
+    def test_16_simplified_folder_playlist_descriptions(self):
+        """Folder playlists should have empty descriptions rather than 'Folder playlist for ...'."""
+        conn = app_mod.get_db()
+        try:
+            conn.execute("""
+                INSERT OR REPLACE INTO source_folders (folder_name, display_name, classification)
+                VALUES ('RockFolder', 'Rock Music', 'playlist')
+            """)
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Trigger sync via GET /api/v2/playlists
+        res = self.client.get('/api/v2/playlists', headers=self.user1_headers)
+        self.assertEqual(res.status_code, 200)
+
+        conn = app_mod.get_db()
+        try:
+            folder_pl = conn.execute("SELECT * FROM playlists WHERE is_folder_playlist = 1 AND (title = 'Rock Music' OR title = 'RockFolder')").fetchone()
+            self.assertIsNotNone(folder_pl)
+            self.assertEqual(folder_pl['description'], "")
+
+            # Ensure no existing playlists match old pattern
+            old_pattern_count = conn.execute("SELECT COUNT(*) as cnt FROM playlists WHERE is_folder_playlist = 1 AND description LIKE 'Folder playlist for %'").fetchone()['cnt']
+            self.assertEqual(old_pattern_count, 0)
+        finally:
+            conn.close()
+
+    def test_17_granted_private_playlist_discoverable_and_savable(self):
+        """
+        A private playlist granted to an individual is discoverable in Discover mode with is_granted=True,
+        not visible to non-granted users, and can be saved to library where is_saved=True.
+        """
+        # 1. User A (v2_user1) creates a private playlist
+        create_res = self.client.post('/api/v2/playlists', headers=self.user1_headers, json={
+            'title': 'User A Secret Mix',
+            'description': 'Only for invited friends',
+            'visibility': 'private',
+            'tracks': ['RockFolder/rock_anthem.mp3']
+        })
+        self.assertEqual(create_res.status_code, 201)
+        pl_id = create_res.get_json()['id']
+
+        try:
+            # Initially, User B (v2_user2) cannot see this private playlist in Discover
+            u2_disc_before = self.client.get('/api/v2/playlists?discover=true', headers=self.user2_headers)
+            self.assertEqual(u2_disc_before.status_code, 200)
+            self.assertNotIn(pl_id, [p['id'] for p in u2_disc_before.get_json()['playlists']])
+
+            # Admin grants access to User B (v2_user2)
+            grant_res = self.client.post(f'/api/v2/admin/playlists/{pl_id}/access', headers=self.admin_headers, json={
+                'grant_user': 'v2_user2'
+            })
+            self.assertEqual(grant_res.status_code, 200)
+
+            # User B querying GET /api/v2/playlists?discover=true sees the granted private playlist with is_granted = True
+            u2_disc_after = self.client.get('/api/v2/playlists?discover=true', headers=self.user2_headers)
+            self.assertEqual(u2_disc_after.status_code, 200)
+            u2_playlists = u2_disc_after.get_json()['playlists']
+            u2_pl = next((p for p in u2_playlists if p['id'] == pl_id), None)
+            self.assertIsNotNone(u2_pl, "User B should discover the granted private playlist")
+            self.assertTrue(u2_pl.get('is_granted'), "Granted playlist should have is_granted = True")
+            self.assertFalse(u2_pl.get('is_saved'), "Playlist should not be saved yet")
+
+            # User C (v2_user3, not granted) querying GET /api/v2/playlists?discover=true does NOT see the private playlist
+            u3_disc = self.client.get('/api/v2/playlists?discover=true', headers=self.user3_headers)
+            self.assertEqual(u3_disc.status_code, 200)
+            self.assertNotIn(pl_id, [p['id'] for p in u3_disc.get_json()['playlists']], "User C should not see private playlist in discover")
+
+            # User C directly requesting detail also gets 404
+            u3_detail = self.client.get(f'/api/v2/playlists/{pl_id}', headers=self.user3_headers)
+            self.assertEqual(u3_detail.status_code, 404)
+
+            # User B can call POST /api/v2/playlists/<id>/save to add it to their personal library
+            save_res = self.client.post(f'/api/v2/playlists/{pl_id}/save', headers=self.user2_headers)
+            self.assertEqual(save_res.status_code, 200)
+
+            # User B querying GET /api/v2/playlists (library mode) now sees it in their library with is_saved = True
+            u2_lib = self.client.get('/api/v2/playlists', headers=self.user2_headers)
+            self.assertEqual(u2_lib.status_code, 200)
+            u2_lib_playlists = u2_lib.get_json()['playlists']
+            saved_pl = next((p for p in u2_lib_playlists if p['id'] == pl_id), None)
+            self.assertIsNotNone(saved_pl, "User B should see saved playlist in library")
+            self.assertTrue(saved_pl.get('is_saved'), "Saved playlist should have is_saved = True")
+            self.assertTrue(saved_pl.get('is_granted'), "Saved playlist should retain is_granted = True")
+
+            # User B can also inspect detail of the playlist and see is_granted = True and is_saved = True
+            u2_detail = self.client.get(f'/api/v2/playlists/{pl_id}', headers=self.user2_headers)
+            self.assertEqual(u2_detail.status_code, 200)
+            self.assertTrue(u2_detail.get_json().get('is_granted'))
+            self.assertTrue(u2_detail.get_json().get('is_saved'))
+
+        finally:
+            # Clean up
+            self.client.delete(f'/api/v2/playlists/{pl_id}', headers=self.user1_headers)
 
 if __name__ == '__main__':
     unittest.main()

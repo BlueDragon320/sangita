@@ -146,7 +146,10 @@ function Hero({
   onDeletePlaylist,
   playlistId,
   durations = {},
-  token
+  token,
+  isSaved = false,
+  is_saved = false,
+  onToggleSave
 }) {
   const [showEditModal, setShowEditModal] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -154,6 +157,11 @@ function Hero({
   const [editName, setEditName] = useState(playlistName || '')
   const [editDesc, setEditDesc] = useState(description || '')
   const [editVis, setEditVis] = useState(visibility || 'public')
+  const [isSavedState, setIsSavedState] = useState(Boolean(isSaved || is_saved))
+
+  useEffect(() => {
+    setIsSavedState(Boolean(isSaved || is_saved))
+  }, [isSaved, is_saved])
 
   const editModalRef = useRef(null)
   const deleteDialogRef = useRef(null)
@@ -294,6 +302,26 @@ function Hero({
       }
     }
     setShowDeleteDialog(false)
+  }
+
+  const handleToggleSave = async () => {
+    const nextSaved = !isSavedState
+    setIsSavedState(nextSaved)
+    if (onToggleSave) {
+      onToggleSave(nextSaved)
+    }
+    const idToUse = playlistId
+    if (idToUse && token) {
+      try {
+        const method = nextSaved ? 'POST' : 'DELETE'
+        await fetch(`/api/v2/playlists/${encodeURIComponent(idToUse)}/save`, {
+          method,
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      } catch (err) {
+        console.warn('Failed to toggle save:', err)
+      }
+    }
   }
 
   return (
@@ -446,7 +474,7 @@ function Hero({
           <h1 className="hero-title" title={playlistName || 'Library'}>
             {playlistName || 'Library'}
           </h1>
-          {description && (
+          {description && !description.startsWith('Folder playlist for ') && (
             <p className="hero-description-text" data-testid="hero-description">{description}</p>
           )}
           <div className="hero-creator-row">
@@ -499,6 +527,33 @@ function Hero({
               <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zM14.83 13.41l-1.41 1.41 2.13 2.13L13.5 19H19v-5.5l-2.04 2.04z"/>
             </svg>
           </button>
+
+          {!isOwnerUser && !isReserved && (
+            <button
+              type="button"
+              className={`btn-hero-save ${isSavedState ? 'saved' : ''}`}
+              onClick={handleToggleSave}
+              aria-label={isSavedState ? "Remove from Library" : "Add to Library"}
+              title={isSavedState ? "Remove from Library" : "Add to Library"}
+              data-testid="hero-save-btn"
+            >
+              {isSavedState ? (
+                <>
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                  </svg>
+                  <span>Remove from Library</span>
+                </>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                  </svg>
+                  <span>Add to Library</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
 
         <div className="hero-action-right" data-testid="hero-action-right" />

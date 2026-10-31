@@ -948,9 +948,12 @@ export default function App() {
       .then(data => {
         const list = Array.isArray(data) ? data : (data?.playlists || [])
         const metaMap = {}
+        const savedMap = {}
         list.forEach(p => {
           const title = p.title || p.name
           if (title) {
+            const isOwner = p.is_owner !== undefined ? p.is_owner : (p.owner ? p.owner === username : true)
+            const isSaved = Boolean(p.is_saved)
             metaMap[title] = {
               id: p.id,
               title: title,
@@ -959,11 +962,30 @@ export default function App() {
               description: p.description || '',
               unavailableCount: p.unavailable_count || 0,
               isFolderPlaylist: Boolean(p.is_folder_playlist),
-              isOwner: p.owner ? p.owner === username : true
+              isOwner: isOwner,
+              is_owner: isOwner,
+              isSaved: isSaved,
+              is_saved: isSaved
+            }
+            if (isSaved) {
+              savedMap[title] = Array.isArray(p.tracks) ? p.tracks : []
             }
           }
         })
         setPlaylistMetadata(metaMap)
+        if (Object.keys(savedMap).length > 0) {
+          setPlaylists(prev => {
+            const next = { ...prev }
+            let changed = false
+            for (const [t, trks] of Object.entries(savedMap)) {
+              if (!next[t]) {
+                next[t] = trks
+                changed = true
+              }
+            }
+            return changed ? next : prev
+          })
+        }
       })
       .catch(() => {})
   }, [token, username])
@@ -1908,6 +1930,60 @@ export default function App() {
     }
   }, [playlists, token, fetchPlaylists, view, handleSidebarSelect]);
 
+  const handleToggleSavePlaylist = useCallback(async (targetPlaylistOrIsSaved, maybeNextSaved) => {
+    let plName = currentPlaylist;
+    let plId = activePlaylistMeta?.id || playlistMetadata[plName]?.id;
+    let nextSaved;
+    let needFetch = true;
+
+    if (targetPlaylistOrIsSaved && typeof targetPlaylistOrIsSaved === 'object') {
+      const pl = targetPlaylistOrIsSaved;
+      plName = pl.name || pl.title;
+      plId = pl.id || playlistMetadata[plName]?.id;
+      nextSaved = maybeNextSaved !== undefined
+        ? maybeNextSaved
+        : !(pl.is_saved || playlistMetadata[plName]?.is_saved);
+      // DiscoverView already performed the server save call
+      needFetch = false;
+    } else {
+      const currentlySaved = activePlaylistMeta?.is_saved !== undefined
+        ? Boolean(activePlaylistMeta.is_saved)
+        : Boolean(playlistMetadata[plName]?.is_saved);
+      nextSaved = targetPlaylistOrIsSaved !== undefined ? targetPlaylistOrIsSaved : !currentlySaved;
+    }
+
+    if (!plId && !plName) return;
+
+    try {
+      if (needFetch && plId) {
+        const method = nextSaved ? 'POST' : 'DELETE';
+        await fetch(`/api/v2/playlists/${encodeURIComponent(plId)}/save`, {
+          method,
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+      }
+      setPlaylistMetadata(prev => {
+        const next = { ...prev };
+        if (plName) {
+          next[plName] = {
+            ...(next[plName] || {}),
+            id: plId || next[plName]?.id,
+            is_saved: nextSaved,
+            isSaved: nextSaved
+          };
+        }
+        return next;
+      });
+      if (plName === currentPlaylist) {
+        setActivePlaylistMeta(prev => prev ? { ...prev, is_saved: nextSaved, isSaved: nextSaved } : null);
+      }
+      fetchPlaylists();
+      setToastNotification(nextSaved ? 'Saved playlist to your library' : 'Removed playlist from your library');
+    } catch (err) {
+      console.warn('Error toggling playlist save:', err);
+    }
+  }, [currentPlaylist, activePlaylistMeta, playlistMetadata, token, fetchPlaylists]);
+
   const handleDiscover = useCallback(() => {
     setView('discover');
     setSearchQuery('');
@@ -2092,6 +2168,7 @@ export default function App() {
           userPlaylists={userPlaylists}
           playlistMetadata={playlistMetadata}
           folderClassifications={folderClassifications}
+          username={username}
         />
         <div className="main-area">
           <Header
@@ -2143,7 +2220,7 @@ export default function App() {
                 }}
                 onPlayTracks={handlePlayDiscoveredTracks}
                 username={username}
-                onSavePlaylist={handleSaveEntirePlaylist}
+                onSavePlaylist={handleToggleSavePlaylist}
               />
             ) : view === 'artist' ? (
               <ArtistDetailView
@@ -2166,6 +2243,10 @@ export default function App() {
                 onAddToPlaylist={(t) => setAddToPlaylistTrack(t)}
                 onDownloadTrack={downloadTrack}
                 onBack={handleBackFromArtist}
+                onToast={(msg) => setToastNotification(msg)}
+                onRefreshPlaylists={fetchPlaylists}
+                userPlaylists={userPlaylists}
+                playlistMetadata={playlistMetadata}
               />
             ) : view === 'home' ? (
               <HomeDashboard
@@ -2301,6 +2382,9 @@ export default function App() {
                   unavailableCount={activePlaylistMeta?.unavailableCount ?? activePlaylistMeta?.unavailable_count ?? (playlistViewMeta?.unavailable_count || 0)}
                   isOwner={activePlaylistMeta?.owner ? activePlaylistMeta.owner === username : true}
                   playlistId={activePlaylistMeta?.id}
+                  isSaved={Boolean(activePlaylistMeta?.is_saved || playlistMetadata[currentPlaylist]?.is_saved || playlistMetadata[currentPlaylist]?.isSaved)}
+                  is_saved={Boolean(activePlaylistMeta?.is_saved || playlistMetadata[currentPlaylist]?.is_saved || playlistMetadata[currentPlaylist]?.isSaved)}
+                  onToggleSave={handleToggleSavePlaylist}
                   onEditPlaylist={handleEditPlaylist}
                   onDeletePlaylist={handleDeletePlaylist}
                   onSaveToMyPlaylists={handleSaveEntirePlaylist}

@@ -418,12 +418,130 @@ export default function AdminDashboard({
   }, [token])
 
   useEffect(() => {
-    if (activeTab === 'library-org' && token) {
-      fetchFolders()
+    if ((activeTab === 'library-org' || activeTab === 'music') && token) {
+      if (activeTab === 'library-org') {
+        fetchFolders()
+        fetchArtists()
+      }
       fetchAdminPlaylists()
-      fetchArtists()
     }
   }, [activeTab, token, fetchFolders, fetchAdminPlaylists, fetchArtists])
+
+  const [accessModal, setAccessModal] = useState({
+    open: false,
+    playlist: null,
+    users: [],
+    loading: false,
+    saving: false,
+    revokingUser: null,
+    error: null,
+    inputUser: ''
+  })
+
+  const handleOpenAccessModal = async (pl) => {
+    setAccessModal({
+      open: true,
+      playlist: pl,
+      users: [],
+      loading: true,
+      saving: false,
+      revokingUser: null,
+      error: null,
+      inputUser: ''
+    })
+    try {
+      const res = await fetch(`/api/v2/admin/playlists/${pl.id}/access`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const users = Array.isArray(data) ? data : (data.users || data.access_grants || data.granted_users || [])
+        setAccessModal(m => ({ ...m, users, loading: false }))
+      } else {
+        setAccessModal(m => ({ ...m, loading: false, error: 'Failed to load access grants' }))
+      }
+    } catch (err) {
+      setAccessModal(m => ({ ...m, loading: false, error: err.message }))
+    }
+  }
+
+  const handleGrantUserAccess = async (e) => {
+    e?.preventDefault()
+    const usernameToGrant = accessModal.inputUser?.trim()
+    if (!usernameToGrant || !accessModal.playlist) return
+    setAccessModal(m => ({ ...m, saving: true, error: null }))
+    try {
+      const res = await fetch(`/api/v2/admin/playlists/${accessModal.playlist.id}/access`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ grant_user: usernameToGrant })
+      })
+      if (res.ok) {
+        setAccessModal(m => ({
+          ...m,
+          saving: false,
+          inputUser: '',
+          users: m.users.some(u => (typeof u === 'string' ? u : u.username) === usernameToGrant)
+            ? m.users
+            : [...m.users, usernameToGrant]
+        }))
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        setAccessModal(m => ({ ...m, saving: false, error: errData.error || 'Failed to grant access' }))
+      }
+    } catch (err) {
+      setAccessModal(m => ({ ...m, saving: false, error: err.message }))
+    }
+  }
+
+  const handleRevokeUserAccess = async (userToRevoke) => {
+    if (!accessModal.playlist) return
+    setAccessModal(m => ({ ...m, revokingUser: userToRevoke, error: null }))
+    try {
+      const res = await fetch(`/api/v2/admin/playlists/${accessModal.playlist.id}/access`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ revoke_user: userToRevoke })
+      })
+      if (res.ok) {
+        setAccessModal(m => ({
+          ...m,
+          revokingUser: null,
+          users: m.users.filter(u => (typeof u === 'string' ? u : u.username) !== userToRevoke)
+        }))
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        setAccessModal(m => ({ ...m, revokingUser: null, error: errData.error || 'Failed to revoke access' }))
+      }
+    } catch (err) {
+      setAccessModal(m => ({ ...m, revokingUser: null, error: err.message }))
+    }
+  }
+
+  const handleToggleAdminPlaylistVisibility = async (pl) => {
+    const newVisibility = pl.visibility === 'public' ? 'private' : 'public'
+    try {
+      const res = await fetch(`/api/v2/admin/playlists/${pl.id}/visibility`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ visibility: newVisibility })
+      })
+      if (res.ok) {
+        setAdminPlaylists(prev => prev.map(p => p.id === pl.id ? { ...p, visibility: newVisibility } : p))
+      }
+    } catch (err) {
+      console.error('Failed to toggle visibility:', err)
+    }
+  }
 
   const handleOpenClassifyModal = (f) => {
     setClassifyModal({
@@ -2655,6 +2773,117 @@ export default function AdminDashboard({
                             <td>{p.play_count}</td>
                             <td>{formatDuration(p.total_seconds)}</td>
                             <td>{p.unique_tracks}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              {/* Playlists Management & Access Controls */}
+              <div className="admin-panel" data-testid="admin-playlists-panel" style={{ marginTop: 24 }}>
+                <div className="admin-panel-header">
+                  <div>
+                    <div className="admin-panel-title">
+                      <MusicIcon />
+                      <span>All Playlists & Access Controls</span>
+                    </div>
+                    <div className="admin-panel-subtitle">
+                      Manage playlist visibility (Public / Private) and user access grants.
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      type="button"
+                      className="admin-nav-btn"
+                      onClick={fetchAdminPlaylists}
+                      disabled={playlistsLoading}
+                      aria-label="Refresh playlists"
+                      data-testid="btn-refresh-admin-playlists"
+                    >
+                      <RefreshIcon />
+                      <span>Refresh</span>
+                    </button>
+                  </div>
+                </div>
+
+                {playlistsLoading && adminPlaylists.length === 0 ? (
+                  <div className="loading-state" style={{ padding: 36 }}>
+                    <div className="spinner" />
+                    <p>Loading playlist inventory…</p>
+                  </div>
+                ) : playlistsError ? (
+                  <div className="admin-empty-state admin-error-state" style={{ borderColor: 'var(--red)', margin: '16px 0' }}>
+                    <div style={{ fontSize: '28px', marginBottom: 8 }}>⚠️</div>
+                    <h3 style={{ color: 'var(--red)' }}>Failed to Load Playlists</h3>
+                    <p>{playlistsError}</p>
+                    <button className="admin-nav-btn" onClick={fetchAdminPlaylists} style={{ marginTop: 12 }}>
+                      <RefreshIcon />
+                      <span>Retry</span>
+                    </button>
+                  </div>
+                ) : adminPlaylists.length === 0 ? (
+                  <div className="empty-state" style={{ padding: 36 }}>
+                    <MusicIcon />
+                    <h3 style={{ marginTop: 10, fontSize: '14px' }}>No Playlists Recorded</h3>
+                    <p style={{ fontSize: '12px' }}>No user or folder playlists have been created yet.</p>
+                  </div>
+                ) : (
+                  <div className="admin-table-container">
+                    <table className="admin-table" data-testid="admin-playlists-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: '28%' }}>Title</th>
+                          <th style={{ width: '18%' }}>Owner</th>
+                          <th style={{ width: '20%' }}>Visibility</th>
+                          <th style={{ width: '12%' }}>Tracks</th>
+                          <th style={{ width: '22%', textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminPlaylists.map(pl => (
+                          <tr key={pl.id} data-testid={`playlist-row-${pl.id}`}>
+                            <td>
+                              <div style={{ fontWeight: 600, fontSize: '13px' }}>{pl.title || pl.name}</div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>ID: {pl.id}</div>
+                            </td>
+                            <td>
+                              <span data-testid={`playlist-owner-${pl.id}`} style={{ fontWeight: 600 }}>{pl.owner}</span>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span
+                                  className={`visibility-badge ${pl.visibility}`}
+                                  data-testid={`playlist-visibility-${pl.id}`}
+                                >
+                                  {pl.visibility === 'public' ? 'public' : 'private'}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="admin-nav-btn small"
+                                  onClick={() => handleToggleAdminPlaylistVisibility(pl)}
+                                  title={`Toggle visibility to ${pl.visibility === 'public' ? 'private' : 'public'}`}
+                                  data-testid={`btn-toggle-visibility-${pl.id}`}
+                                >
+                                  <span>{pl.visibility === 'public' ? 'Make Private' : 'Make Public'}</span>
+                                </button>
+                              </div>
+                            </td>
+                            <td>
+                              <span style={{ fontWeight: 600 }}>{pl.track_count ?? 0}</span>
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                className="admin-nav-btn small"
+                                onClick={() => handleOpenAccessModal(pl)}
+                                data-testid={`btn-manage-access-${pl.id}`}
+                                aria-label={`Manage access for ${pl.title || pl.name}`}
+                              >
+                                <UsersIcon width={14} height={14} />
+                                <span>Manage Access</span>
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -4993,6 +5222,120 @@ export default function AdminDashboard({
                 data-testid="btn-confirm-delete-playlist"
               >
                 {deletePlaylistDialog.deleting ? 'Deleting…' : 'Delete Playlist'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. Playlist Access Control Modal */}
+      {accessModal.open && (
+        <div
+          className="admin-modal-backdrop"
+          onClick={() => setAccessModal(m => ({ ...m, open: false }))}
+          data-testid="playlist-access-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="access-modal-title"
+        >
+          <div className="admin-modal" style={{ maxWidth: 540 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 id="access-modal-title" className="modal-title">
+                Manage Access: {accessModal.playlist?.title || accessModal.playlist?.name}
+              </h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-sub)', marginTop: 4 }}>
+                View and manage users granted access to this playlist.
+              </p>
+            </div>
+
+            {accessModal.error && (
+              <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--red)', borderRadius: 6, color: 'var(--red)', fontSize: '12px', marginBottom: 12 }}>
+                {accessModal.error}
+              </div>
+            )}
+
+            {/* Grant access form */}
+            <form onSubmit={handleGrantUserAccess} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              <input
+                type="text"
+                className="admin-input-search"
+                style={{ flex: 1 }}
+                placeholder="Enter username to grant access…"
+                value={accessModal.inputUser || ''}
+                onChange={e => setAccessModal(m => ({ ...m, inputUser: e.target.value }))}
+                data-testid="input-grant-user"
+              />
+              <button
+                type="submit"
+                className="admin-nav-btn primary"
+                disabled={!accessModal.inputUser?.trim() || accessModal.saving}
+                data-testid="btn-grant-access"
+              >
+                {accessModal.saving ? 'Granting…' : 'Grant Access'}
+              </button>
+            </form>
+
+            {/* Access grants list */}
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-dim)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Users with Access Grants
+              </div>
+
+              {accessModal.loading ? (
+                <div className="loading-state" style={{ padding: 20 }}>
+                  <div className="spinner" />
+                  <p>Loading access grants…</p>
+                </div>
+              ) : accessModal.users.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)', background: 'var(--surface)', borderRadius: 8, fontSize: '13px' }} data-testid="empty-access-grants">
+                  No users have explicit access grants for this playlist.
+                </div>
+              ) : (
+                <div className="admin-table-container">
+                  <table className="admin-table" data-testid="access-grants-table">
+                    <thead>
+                      <tr>
+                        <th>Username</th>
+                        <th style={{ textAlign: 'right' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accessModal.users.map((u, idx) => {
+                        const uName = typeof u === 'string' ? u : (u.username || u.user || `User ${idx}`)
+                        return (
+                          <tr key={uName} data-testid={`access-user-row-${uName}`}>
+                            <td>
+                              <span style={{ fontWeight: 600 }}>{uName}</span>
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                className="admin-action-btn delete"
+                                onClick={() => handleRevokeUserAccess(uName)}
+                                title={`Revoke access for ${uName}`}
+                                aria-label={`Revoke access for ${uName}`}
+                                data-testid={`btn-revoke-${uName}`}
+                              >
+                                <span>Revoke</span>
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-btn-row" style={{ marginTop: 20 }}>
+              <button
+                type="button"
+                className="admin-nav-btn"
+                onClick={() => setAccessModal(m => ({ ...m, open: false }))}
+                data-testid="btn-close-access-modal"
+              >
+                Close
               </button>
             </div>
           </div>

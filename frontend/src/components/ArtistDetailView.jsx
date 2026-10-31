@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import TrackList from './TrackList.jsx'
 import './DiscoverView.css'
 
@@ -44,10 +45,22 @@ export default function ArtistDetailView({
   onToggleFavorite,
   onAddToPlaylist,
   onDownloadTrack,
-  onBack
+  onBack,
+  onToast,
+  onRefreshPlaylists,
+  userPlaylists = [],
+  playlistMetadata = {}
 }) {
   const [v2ArtistDetails, setV2ArtistDetails] = useState(null)
   const [imgErr, setImgErr] = useState(false)
+  const [showAddAllModal, setShowAddAllModal] = useState(false)
+  const [availablePlaylists, setAvailablePlaylists] = useState([])
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
+  const [createNew, setCreateNew] = useState(false)
+  const [newPlaylistName, setNewPlaylistName] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [toastMessage, setToastMessage] = useState(null)
+  const [modalError, setModalError] = useState(null)
 
   const displayName = v2ArtistDetails?.name || initialArtist?.name || artistName || 'Unknown Artist'
 
@@ -181,6 +194,128 @@ export default function ArtistDetailView({
     }
   }, [tracks, onShuffle, onPlayTrack])
 
+  const userPlaylistsRef = useRef(userPlaylists)
+  userPlaylistsRef.current = userPlaylists
+  const playlistMetadataRef = useRef(playlistMetadata)
+  playlistMetadataRef.current = playlistMetadata
+  const playlistsRef = useRef(playlists)
+  playlistsRef.current = playlists
+
+  useEffect(() => {
+    if (!showAddAllModal) return
+    let isMounted = true
+    async function loadPlaylists() {
+      try {
+        const res = await fetch('/api/v2/playlists', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        })
+        if (res.ok && isMounted) {
+          const data = await res.json()
+          const list = Array.isArray(data) ? data : (data?.playlists || [])
+          const personal = list.filter(p => !p.is_folder_playlist && p.is_owner !== false)
+          setAvailablePlaylists(personal)
+          if (personal.length > 0) {
+            setSelectedPlaylistId(personal[0].id)
+            setCreateNew(false)
+          } else {
+            setCreateNew(true)
+          }
+          return
+        }
+      } catch {}
+
+      if (isMounted) {
+        const derived = []
+        const uPlaylists = userPlaylistsRef.current
+        const pMeta = playlistMetadataRef.current
+        const pls = playlistsRef.current
+        if (Array.isArray(uPlaylists)) {
+          uPlaylists.forEach(name => {
+            const meta = pMeta?.[name]
+            derived.push({
+              id: meta?.id || name,
+              title: name,
+              name: name,
+              track_count: pls?.[name]?.length || 0
+            })
+          })
+        }
+        setAvailablePlaylists(derived)
+        if (derived.length > 0) {
+          setSelectedPlaylistId(derived[0].id)
+          setCreateNew(false)
+        } else {
+          setCreateNew(true)
+        }
+      }
+    }
+    loadPlaylists()
+    return () => { isMounted = false }
+  }, [showAddAllModal, token])
+
+  useEffect(() => {
+    if (toastMessage) {
+      const t = setTimeout(() => setToastMessage(null), 4000)
+      return () => clearTimeout(t)
+    }
+  }, [toastMessage])
+
+  const handleAddAllSubmit = async (e) => {
+    e?.preventDefault()
+    setIsSubmitting(true)
+    setModalError(null)
+
+    const effectiveArtistId = artistId || v2ArtistDetails?.id || initialArtist?.id || encodeURIComponent(displayName)
+
+    let targetName = ''
+    let payload = {}
+
+    if (createNew) {
+      if (!newPlaylistName.trim()) {
+        setModalError('Please enter a playlist name')
+        setIsSubmitting(false)
+        return
+      }
+      targetName = newPlaylistName.trim()
+      payload = { new_playlist_name: targetName, title: targetName, create_new: true }
+    } else {
+      const plObj = availablePlaylists.find(p => String(p.id) === String(selectedPlaylistId) || p.title === selectedPlaylistId || p.name === selectedPlaylistId)
+      targetName = plObj?.title || plObj?.name || 'Playlist'
+      payload = { playlist_id: selectedPlaylistId, playlist_name: targetName }
+    }
+
+    try {
+      const res = await fetch(`/api/v2/artists/${encodeURIComponent(effectiveArtistId)}/add-to-playlist`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify(payload)
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        const added = data.tracks_added ?? data.added ?? tracks.length
+        const skipped = data.duplicates_skipped ?? data.skipped ?? data.duplicates ?? 0
+        const msg = `Added ${added} track${added === 1 ? '' : 's'} to ${targetName}${skipped > 0 ? ` (${skipped} duplicate${skipped === 1 ? '' : 's'} skipped)` : ''}`
+        setToastMessage(msg)
+        setShowAddAllModal(false)
+        setCreateNew(false)
+        setNewPlaylistName('')
+        onToast?.(msg)
+        onRefreshPlaylists?.()
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setModalError(err.error || 'Failed to add tracks to playlist')
+      }
+    } catch (err) {
+      setModalError(err.message || 'Network error occurred')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   return (
     <div className="artist-detail-view" data-testid="artist-detail-view">
       {/* Top Back Navigation */}
@@ -269,6 +404,20 @@ export default function ArtistDetailView({
           </svg>
           <span>Shuffle</span>
         </button>
+
+        <button
+          type="button"
+          className="artist-add-all-btn"
+          onClick={() => setShowAddAllModal(true)}
+          disabled={tracks.length === 0}
+          aria-label={`Add all tracks by ${displayName} to playlist`}
+          data-testid="artist-add-all-btn"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/>
+          </svg>
+          <span>Add All to Playlist</span>
+        </button>
       </div>
 
       {/* Integrated Track List */}
@@ -296,6 +445,132 @@ export default function ArtistDetailView({
           />
         )}
       </div>
+
+      {/* Feedback Toast */}
+      {toastMessage && (
+        <div className="artist-feedback-toast" role="status" aria-live="polite" data-testid="artist-toast">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+          </svg>
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Add All to Playlist Dialog */}
+      {showAddAllModal && typeof document !== 'undefined' && createPortal(
+        <div className="modal-backdrop" onClick={() => setShowAddAllModal(false)}>
+          <div
+            className="create-playlist-modal artist-add-all-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-all-dialog-title"
+            onClick={e => e.stopPropagation()}
+            data-testid="artist-add-all-dialog"
+          >
+            <div className="modal-header">
+              <h3 id="add-all-dialog-title" className="modal-title">Add All Tracks to Playlist</h3>
+              <button
+                type="button"
+                className="btn-icon modal-close-btn"
+                onClick={() => setShowAddAllModal(false)}
+                aria-label="Close"
+                data-testid="btn-close-add-all"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleAddAllSubmit} className="create-playlist-form">
+              {modalError && (
+                <div className="modal-error" role="alert" data-testid="add-all-error" style={{ color: 'var(--red)', marginBottom: 12 }}>
+                  {modalError}
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>Choose Destination Playlist</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 6 }}>
+                  {!createNew ? (
+                    <>
+                      {availablePlaylists.length > 0 ? (
+                        <select
+                          className="modal-select-input"
+                          value={selectedPlaylistId}
+                          onChange={e => setSelectedPlaylistId(e.target.value)}
+                          data-testid="select-target-playlist"
+                        >
+                          {availablePlaylists.map(p => (
+                            <option key={p.id || p.name} value={p.id || p.name}>
+                              {p.title || p.name} ({p.track_count ?? 0} tracks)
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <p style={{ fontSize: '13px', color: 'var(--text-dim)', margin: 0 }}>
+                          No personal playlists found.
+                        </p>
+                      )}
+
+                      <button
+                        type="button"
+                        className="btn-link"
+                        style={{ textAlign: 'left', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '13px', fontWeight: 600 }}
+                        onClick={() => setCreateNew(true)}
+                        data-testid="btn-toggle-create-new"
+                      >
+                        + Create New Playlist
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        className="modal-text-input"
+                        placeholder="New playlist name..."
+                        value={newPlaylistName}
+                        onChange={e => setNewPlaylistName(e.target.value)}
+                        data-testid="input-new-playlist-name"
+                        autoFocus
+                      />
+
+                      {availablePlaylists.length > 0 && (
+                        <button
+                          type="button"
+                          className="btn-link"
+                          style={{ textAlign: 'left', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '13px', fontWeight: 600 }}
+                          onClick={() => setCreateNew(false)}
+                          data-testid="btn-toggle-choose-existing"
+                        >
+                          ← Choose Existing Playlist
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="modal-footer" style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setShowAddAllModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={isSubmitting || (!createNew && !selectedPlaylistId) || (createNew && !newPlaylistName.trim())}
+                  data-testid="btn-confirm-add-all"
+                >
+                  {isSubmitting ? 'Adding...' : 'Add All to Playlist'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

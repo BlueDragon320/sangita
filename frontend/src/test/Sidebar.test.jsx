@@ -348,7 +348,7 @@ describe('Sidebar Component & Collapse / Expand', () => {
     expect(itemNames).toEqual(['Favorites', 'Arijit Singh', 'My Workout', 'Pop Hits'])
   })
 
-  it('renders public badge on public user playlists but no private badge on private playlists', () => {
+  it('does not display intrusive public or private badges in sidebar for a clean retail storefront', () => {
     const customPlaylists = {
       'Private Jam': ['s1.mp3'],
       'Public Party': ['s2.mp3']
@@ -370,12 +370,12 @@ describe('Sidebar Component & Collapse / Expand', () => {
       />
     )
 
+    expect(screen.getByTestId('sidebar-playlist-Private Jam')).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-playlist-Public Party')).toBeInTheDocument()
     expect(screen.queryByTestId('playlist-visibility-Private Jam')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('playlist-visibility-Public Party')).not.toBeInTheDocument()
     expect(screen.queryByText('Private')).not.toBeInTheDocument()
-
-    const publicBadge = screen.getByTestId('playlist-visibility-Public Party')
-    expect(publicBadge).toHaveClass('badge-public')
-    expect(publicBadge).toHaveTextContent('Public')
+    expect(screen.queryByText('Public')).not.toBeInTheDocument()
   })
 
   it('renders Discover navigation button and triggers onDiscover or onSelect', () => {
@@ -473,7 +473,7 @@ describe('Sidebar Component & Collapse / Expand', () => {
 
     const item = screen.getByTestId('sidebar-playlist-Chill Beats')
     expect(item).toBeInTheDocument()
-    expect(screen.getByTestId('playlist-visibility-Chill Beats')).toBeInTheDocument()
+    expect(screen.queryByTestId('playlist-visibility-Chill Beats')).not.toBeInTheDocument()
     expect(item).toHaveTextContent('Playlist • 2 songs')
   })
 
@@ -513,6 +513,36 @@ describe('Sidebar Component & Collapse / Expand', () => {
     fireEvent.click(screen.getByTestId('lib-chip-artists'))
     expect(getRenderedItemNames()).toEqual(['Favorites', 'main'])
     expect(screen.queryByText('Raju')).not.toBeInTheDocument()
+  })
+
+  it('keeps personal library personal: only displays user own playlists, Favorites, and explicitly saved playlists, excluding unsaved public playlists', () => {
+    const playlists = {
+      'Favorites': [{ id: 1, title: 'Fav Song' }],
+      'My Playlist': [{ id: 2, title: 'My Song' }],
+      'Saved Stranger Playlist': [{ id: 3, title: 'Stranger Song' }],
+      'Unsaved Public Playlist': [{ id: 4, title: 'Public Song' }]
+    }
+    const playlistMetadata = {
+      'My Playlist': { is_owner: true, is_saved: false },
+      'Saved Stranger Playlist': { is_owner: false, is_saved: true },
+      'Unsaved Public Playlist': { is_owner: false, is_saved: false, visibility: 'public' }
+    }
+
+    render(
+      <Sidebar
+        playlists={playlists}
+        userPlaylists={['My Playlist', 'Saved Stranger Playlist', 'Unsaved Public Playlist']}
+        playlistMetadata={playlistMetadata}
+        username="alice"
+        currentPlaylist="Favorites"
+        onSelect={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Favorites')).toBeInTheDocument()
+    expect(screen.getByText('My Playlist')).toBeInTheDocument()
+    expect(screen.getByText('Saved Stranger Playlist')).toBeInTheDocument()
+    expect(screen.queryByText('Unsaved Public Playlist')).not.toBeInTheDocument()
   })
 })
 

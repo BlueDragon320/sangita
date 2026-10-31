@@ -8,7 +8,7 @@ describe('DiscoverView Component', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders dedicated discovery dashboard with data-testid="discover-view"', async () => {
+  it('renders dedicated discovery dashboard with data-testid="discover-view" and fetches /api/v2/playlists?discover=true', async () => {
     global.fetch = vi.fn().mockImplementation(() =>
       Promise.resolve({
         ok: true,
@@ -29,6 +29,13 @@ describe('DiscoverView Component', () => {
       expect(screen.getByText('Discover')).toBeInTheDocument()
       expect(screen.getByTestId('discover-search-input')).toBeInTheDocument()
     })
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/v2/playlists?discover=true',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer test-token' })
+      })
+    )
   })
 
   it('renders Artists fetched from /api/v2/artists with avatar, name, and track count', async () => {
@@ -271,8 +278,8 @@ describe('DiscoverView Component', () => {
 
     const saveBtn = screen.getByTestId('discover-add-playlist-btn')
     expect(saveBtn).toBeInTheDocument()
-    expect(saveBtn).toHaveAttribute('title', 'Add entire playlist to My Playlists')
-    expect(saveBtn).toHaveAttribute('aria-label', 'Add entire playlist to My Playlists')
+    expect(saveBtn).toHaveAttribute('title', 'Add to Library')
+    expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
 
     // Also accessible via name-based testid
     expect(screen.getByTestId('add-to-my-playlists-Summer Vibes')).toBeInTheDocument()
@@ -280,18 +287,218 @@ describe('DiscoverView Component', () => {
     // Click save button: should NOT trigger onSelectPlaylist because stopPropagation is called
     fireEvent.click(saveBtn)
 
-    expect(handleSavePlaylist).toHaveBeenCalledTimes(1)
-    expect(handleSavePlaylist).toHaveBeenCalledWith(expect.objectContaining({ name: 'Summer Vibes', id: 'pub-test-1' }))
+    await waitFor(() => {
+      expect(handleSavePlaylist).toHaveBeenCalledTimes(1)
+      expect(handleSavePlaylist).toHaveBeenCalledWith(expect.objectContaining({ name: 'Summer Vibes', id: 'pub-test-1' }), true)
+    })
     expect(handleSelectPlaylist).not.toHaveBeenCalled()
 
     // Visual feedback: aria-label and title update to saved
     await waitFor(() => {
       expect(saveBtn).toHaveClass('saved')
-      expect(saveBtn).toHaveAttribute('aria-label', 'Saved to My Playlists')
+      expect(saveBtn).toHaveAttribute('aria-label', 'Remove from Library')
     })
   })
 
-  it('renders Add to My Playlists button on folder playlist card and triggers onSavePlaylist', async () => {
+  it('calls POST /api/v2/playlists/<id>/save when clicking "Add to Library" without calling clone endpoints', async () => {
+    const mockPlaylists = [
+      {
+        id: 'pub-test-1',
+        name: 'Summer Vibes',
+        curator: 'dj_dan',
+        visibility: 'public',
+        is_public: true,
+        track_count: 12,
+        tracks: ['Summer/beat.mp3']
+      }
+    ]
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/v2/playlists?discover=true')) {
+        return Promise.resolve({ ok: true, json: async () => mockPlaylists })
+      }
+      if (url.includes('/api/v2/playlists/pub-test-1/save')) {
+        return Promise.resolve({ ok: true, json: async () => ({ status: 'saved' }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const handleSavePlaylist = vi.fn()
+
+    render(
+      <DiscoverView
+        token="test-token"
+        playlists={{}}
+        trackMetadata={{}}
+        onSavePlaylist={handleSavePlaylist}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Summer Vibes')).toBeInTheDocument()
+    })
+
+    const saveBtn = screen.getByTestId('discover-add-playlist-btn')
+    expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
+
+    fireEvent.click(saveBtn)
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/v2/playlists/pub-test-1/save',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-token'
+          })
+        })
+      )
+    })
+
+    // Verify clone endpoints were NEVER called
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/clone'),
+      expect.anything()
+    )
+
+    await waitFor(() => {
+      expect(handleSavePlaylist).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Summer Vibes', id: 'pub-test-1' }),
+        true
+      )
+      expect(saveBtn).toHaveClass('saved')
+      expect(saveBtn).toHaveAttribute('aria-label', 'Remove from Library')
+    })
+  })
+
+  it('calls DELETE /api/v2/playlists/<id>/save when clicking "Remove from Library" without calling clone endpoints', async () => {
+    const mockPlaylists = [
+      {
+        id: 'pub-test-saved',
+        name: 'Late Night Chill',
+        curator: 'alex',
+        visibility: 'public',
+        is_public: true,
+        is_saved: true,
+        track_count: 5,
+        tracks: ['Chill/song1.mp3']
+      }
+    ]
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/v2/playlists?discover=true')) {
+        return Promise.resolve({ ok: true, json: async () => mockPlaylists })
+      }
+      if (url.includes('/api/v2/playlists/pub-test-saved/save')) {
+        return Promise.resolve({ ok: true, json: async () => ({ status: 'unsaved' }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const handleSavePlaylist = vi.fn()
+
+    render(
+      <DiscoverView
+        token="test-token"
+        playlists={{}}
+        trackMetadata={{}}
+        onSavePlaylist={handleSavePlaylist}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Late Night Chill')).toBeInTheDocument()
+    })
+
+    const saveBtn = screen.getByTestId('discover-add-playlist-btn')
+    expect(saveBtn).toHaveClass('saved')
+    expect(saveBtn).toHaveAttribute('aria-label', 'Remove from Library')
+
+    fireEvent.click(saveBtn)
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/v2/playlists/pub-test-saved/save',
+        expect.objectContaining({
+          method: 'DELETE',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-token'
+          })
+        })
+      )
+    })
+
+    // Verify clone endpoints were NEVER called
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/clone'),
+      expect.anything()
+    )
+
+    await waitFor(() => {
+      expect(handleSavePlaylist).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Late Night Chill', id: 'pub-test-saved' }),
+        false
+      )
+      expect(saveBtn).not.toHaveClass('saved')
+      expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
+    })
+  })
+
+  it('does not update local state or notify onSavePlaylist if server save call fails', async () => {
+    const mockPlaylists = [
+      {
+        id: 'pub-fail-1',
+        name: 'Failing Playlist',
+        curator: 'alex',
+        visibility: 'public',
+        is_public: true,
+        track_count: 5,
+        tracks: ['Fail/song.mp3']
+      }
+    ]
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/v2/playlists?discover=true')) {
+        return Promise.resolve({ ok: true, json: async () => mockPlaylists })
+      }
+      if (url.includes('/api/v2/playlists/pub-fail-1/save')) {
+        return Promise.resolve({ ok: false, status: 500, statusText: 'Internal Server Error' })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const handleSavePlaylist = vi.fn()
+
+    render(
+      <DiscoverView
+        token="test-token"
+        playlists={{}}
+        trackMetadata={{}}
+        onSavePlaylist={handleSavePlaylist}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Failing Playlist')).toBeInTheDocument()
+    })
+
+    const saveBtn = screen.getByTestId('discover-add-playlist-btn')
+    fireEvent.click(saveBtn)
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/v2/playlists/pub-fail-1/save',
+        expect.objectContaining({ method: 'POST' })
+      )
+    })
+
+    // UI state should NOT change to saved, and onSavePlaylist should NOT be called
+    expect(saveBtn).not.toHaveClass('saved')
+    expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
+    expect(handleSavePlaylist).not.toHaveBeenCalled()
+  })
+
+  it('renders Save to Library button on folder playlist card and triggers onSavePlaylist', async () => {
     global.fetch = vi.fn().mockImplementation(() =>
       Promise.resolve({ ok: true, json: async () => [] })
     )
@@ -321,7 +528,71 @@ describe('DiscoverView Component', () => {
     const addBtn = screen.getByTestId('discover-add-playlist-btn')
     fireEvent.click(addBtn)
 
-    expect(handleSavePlaylist).toHaveBeenCalledTimes(1)
-    expect(handleSavePlaylist).toHaveBeenCalledWith(expect.objectContaining({ name: 'Road Trip Songs' }))
+    await waitFor(() => {
+      expect(handleSavePlaylist).toHaveBeenCalledTimes(1)
+      expect(handleSavePlaylist).toHaveBeenCalledWith(expect.objectContaining({ name: 'Road Trip Songs' }), true)
+    })
+  })
+
+  it('renders individually shared private playlists in a dedicated "Shared with You" section', async () => {
+    const mockPlaylists = [
+      {
+        id: 'shared-priv-1',
+        name: 'VIP Lounge Mix',
+        curator: 'vip_curator',
+        visibility: 'private',
+        is_public: false,
+        is_shared: true,
+        is_granted: true,
+        track_count: 15,
+        tracks: ['VIP/lounge1.mp3']
+      },
+      {
+        id: 'pub-1',
+        name: 'Public Anthems',
+        curator: 'alex',
+        visibility: 'public',
+        is_public: true,
+        track_count: 10,
+        tracks: ['Pop/hit1.mp3']
+      }
+    ]
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/v2/playlists?discover=true')) {
+        return Promise.resolve({ ok: true, json: async () => mockPlaylists })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const handleSelectPlaylist = vi.fn()
+    const handleSavePlaylist = vi.fn()
+
+    render(
+      <DiscoverView
+        token="test-token"
+        playlists={{}}
+        trackMetadata={{}}
+        onSelectPlaylist={handleSelectPlaylist}
+        onSavePlaylist={handleSavePlaylist}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('discover-shared-playlists-section')).toBeInTheDocument()
+      expect(screen.getByTestId('discover-shared-playlists-heading')).toHaveTextContent('Shared with You')
+      expect(screen.getByText('VIP Lounge Mix')).toBeInTheDocument()
+    })
+
+    const sharedCard = screen.getByTestId('shared-playlist-card-shared-priv-1')
+    expect(sharedCard).toBeInTheDocument()
+
+    // Curator & Shared badge
+    expect(screen.getByText('@vip_curator')).toBeInTheDocument()
+    expect(screen.getByText('Shared')).toBeInTheDocument()
+    expect(screen.getByText('15 tracks')).toBeInTheDocument()
+
+    // Public Anthems is in the public section
+    expect(screen.getByTestId('public-playlist-card-pub-1')).toBeInTheDocument()
   })
 })

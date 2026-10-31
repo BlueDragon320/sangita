@@ -578,4 +578,95 @@ describe('Hero Component & Spotify Layout', () => {
     fireEvent.click(backdrop)
     expect(screen.queryByTestId('hero-edit-modal')).not.toBeInTheDocument()
   })
+
+  it('renders Add to Library / Remove from Library button in hero action bar for non-owner playlists', () => {
+    const handleToggleSave = vi.fn()
+    const { rerender } = render(
+      <Hero
+        playlistName="Stranger Playlist"
+        playlistId="pl-99"
+        tracks={mockTracks}
+        isPlaying={false}
+        isShuffle={false}
+        owner="bob"
+        currentUser="alice"
+        isOwner={false}
+        isSaved={false}
+        onToggleSave={handleToggleSave}
+      />
+    )
+
+    const saveBtn = screen.getByTestId('hero-save-btn')
+    expect(saveBtn).toBeInTheDocument()
+    expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
+    expect(saveBtn).toHaveTextContent('Add to Library')
+
+    fireEvent.click(saveBtn)
+    expect(handleToggleSave).toHaveBeenCalledWith(true)
+
+    // Rerender as saved
+    rerender(
+      <Hero
+        playlistName="Stranger Playlist"
+        playlistId="pl-99"
+        tracks={mockTracks}
+        isPlaying={false}
+        isShuffle={false}
+        owner="bob"
+        currentUser="alice"
+        isOwner={false}
+        isSaved={true}
+        onToggleSave={handleToggleSave}
+      />
+    )
+
+    expect(screen.getByTestId('hero-save-btn')).toHaveAttribute('aria-label', 'Remove from Library')
+    expect(screen.getByTestId('hero-save-btn')).toHaveTextContent('Remove from Library')
+  })
+
+  it('suppresses auto-generated Folder playlist descriptions while rendering custom descriptions', () => {
+    const { rerender } = render(
+      <Hero
+        playlistName="Lo-Fi Beats"
+        tracks={mockTracks}
+        isPlaying={false}
+        isShuffle={false}
+        description="Folder playlist for Lo-Fi Beats"
+      />
+    )
+
+    // Generated "Folder playlist for ..." description should be suppressed
+    expect(screen.queryByTestId('hero-description')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Folder playlist for/)).not.toBeInTheDocument()
+
+    // Custom user description should be rendered
+    rerender(
+      <Hero
+        playlistName="Lo-Fi Beats"
+        tracks={mockTracks}
+        isPlaying={false}
+        isShuffle={false}
+        description="Handcrafted chill beats to study and relax to"
+      />
+    )
+
+    expect(screen.getByTestId('hero-description')).toBeInTheDocument()
+    expect(screen.getByText('Handcrafted chill beats to study and relax to')).toBeInTheDocument()
+  })
+
+  it('renders Public Playlist with unobtrusive text styling class', () => {
+    render(
+      <Hero
+        playlistName="Global Top 50"
+        tracks={mockTracks}
+        isPlaying={false}
+        isShuffle={false}
+        isPrivate={false}
+      />
+    )
+
+    const badge = screen.getByTestId('hero-visibility-badge')
+    expect(badge).toHaveTextContent('Public Playlist')
+    expect(badge).toHaveClass('hero-tag-public')
+  })
 })
