@@ -471,9 +471,21 @@ io.on('connection', (socket) => {
 
     if (!resolvedTargetId || resolvedTargetId === deviceId) return;
 
+    const safePayload = { ...(payload || {}) };
+    if (action === 'volume' && safePayload.volume !== undefined) {
+      const vol = Number(safePayload.volume);
+      if (!isNaN(vol)) {
+        if (vol > 1.0) {
+          safePayload.volume = Math.max(0, Math.min(100, Math.round(vol)));
+        } else {
+          safePayload.volume = Math.max(0, Math.min(1.0, vol));
+        }
+      }
+    }
+
     const commandObj = {
       action,
-      payload: payload || {},
+      payload: safePayload,
       targetDeviceId: resolvedTargetId,
       originDeviceId: deviceId,
       timestamp: Date.now(),
@@ -496,7 +508,15 @@ io.on('connection', (socket) => {
 
     const userDevs = inMemoryDevices.get(userId);
     if (userDevs) {
-      userDevs.delete(deviceId);
+      const current = userDevs.get(deviceId);
+      if (current && current.socketId === socket.id) {
+        userDevs.delete(deviceId);
+      } else {
+        // Stale disconnect event from an older socket connection; do not delete the reconnected device
+        return;
+      }
+    } else {
+      return;
     }
 
     const devices = getDeviceList(userId);
@@ -518,5 +538,47 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+// ============================================================================
+// PERIODIC TTL SWEEPER (S2)
+// Removes stale/dead devices that disconnected abruptly without socket events
+// ============================================================================
+const TTL_SWEEPER_INTERVAL_MS = 30000;
+const DEVICE_INACTIVITY_LIMIT_MS = 90000;
+
+const sweeperInterval = setInterval(() => {
+  const now = Date.now();
+  for (const [userId, userDevs] of inMemoryDevices.entries()) {
+    let removed = false;
+    for (const [deviceId, dev] of userDevs.entries()) {
+      const lastActivity = dev.lastSeen || dev.connectedAt || 0;
+      const isExpired = (now - lastActivity) > DEVICE_INACTIVITY_LIMIT_MS;
+      const isSocketDead = !dev.socketId || !io.sockets.sockets.get(dev.socketId);
+      if (isExpired && isSocketDead) {
+        userDevs.delete(deviceId);
+        removed = true;
+        console.log(`[TTL Sweeper] Removed stale device=${deviceId} for user=${userId}`);
+      }
+    }
+    if (removed) {
+      const devices = getDeviceList(userId);
+      const userRoom = `user:${userId}`;
+      io.to(userRoom).emit('DEVICE_LIST_UPDATED', { devices });
+      if (devices.length === 0) {
+        deleteRamSessionIfEmpty(userId);
+      } else {
+        const session = getRamSession(userId);
+        if (session && !devices.some(d => d.deviceId === session.activeDeviceId)) {
+          session.activeDeviceId = devices[0].deviceId;
+          session.isPlaying = false;
+          session.updatedAt = Date.now();
+          setRamSession(userId, session);
+          io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', session);
+        }
+      }
+    }
+  }
+}, TTL_SWEEPER_INTERVAL_MS);
+sweeperInterval.unref();
 
 httpServer.listen(PORT, () => console.log(`[Sangita Sync] In-Memory RAM Sync Server listening on :${PORT}`));

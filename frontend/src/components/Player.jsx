@@ -51,57 +51,157 @@ function PlayerDisc({ track, token, discBg }) {
 function PlayerTopProgress({ pct, currentTime = 0, duration = 0, onSeek, formatTime }) {
   const [hoverPct, setHoverPct] = useState(null)
   const [hoverX, setHoverX] = useState(0)
+  const [dragPct, setDragPct] = useState(null)
+  const isDraggingRef = useRef(false)
+  const didDragRef = useRef(false)
+  const lastEmitTimeRef = useRef(0)
+  const lastEmitPctRef = useRef(null)
+  const progressRef = useRef(null)
+
+  const calcPctFromClientX = (clientX, target) => {
+    const el = progressRef.current || target
+    if (!el) return 0
+    const rect = el.getBoundingClientRect()
+    const width = rect.width > 0 ? rect.width : (el.offsetWidth || 100)
+    const x = Math.max(0, Math.min(width, clientX - rect.left))
+    return Math.max(0, Math.min(100, (x / width) * 100))
+  }
 
   const handleMouseMove = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const width = rect.width > 0 ? rect.width : (e.currentTarget.offsetWidth || 100)
-    const x = Math.max(0, Math.min(width, e.clientX - rect.left))
-    const p = (x / width) * 100
+    const p = calcPctFromClientX(e.clientX, e.currentTarget)
     setHoverPct(p)
     setHoverX(e.clientX)
+    if (isDraggingRef.current) {
+      didDragRef.current = true
+      setDragPct(p)
+      const now = Date.now()
+      if (now - lastEmitTimeRef.current >= 150 && (lastEmitPctRef.current === null || Math.abs(p - lastEmitPctRef.current) >= 2)) {
+        lastEmitTimeRef.current = now
+        lastEmitPctRef.current = p
+        onSeek?.(p)
+      }
+    }
   }
 
   const handleMouseLeave = () => {
-    setHoverPct(null)
+    if (!isDraggingRef.current) {
+      setHoverPct(null)
+    }
+  }
+
+  const handleMouseDown = (e) => {
+    if (e.button !== 0) return
+    isDraggingRef.current = true
+    didDragRef.current = false
+    const p = calcPctFromClientX(e.clientX, e.currentTarget)
+    setDragPct(p)
+    setHoverPct(p)
+    setHoverX(e.clientX)
+    lastEmitPctRef.current = p
+    lastEmitTimeRef.current = Date.now()
+    onSeek?.(p)
+
+    const onWindowMouseMove = (moveEvent) => {
+      if (!isDraggingRef.current) return
+      didDragRef.current = true
+      const currentP = calcPctFromClientX(moveEvent.clientX, progressRef.current)
+      setDragPct(currentP)
+      setHoverPct(currentP)
+      setHoverX(moveEvent.clientX)
+
+      const now = Date.now()
+      if (now - lastEmitTimeRef.current >= 150 && Math.abs(currentP - (lastEmitPctRef.current ?? 0)) >= 2) {
+        lastEmitTimeRef.current = now
+        lastEmitPctRef.current = currentP
+        onSeek?.(currentP)
+      }
+    }
+
+    const onWindowMouseUp = (upEvent) => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false
+        const finalP = calcPctFromClientX(upEvent.clientX, progressRef.current)
+        setDragPct(null)
+        setHoverPct(null)
+        lastEmitPctRef.current = null
+        onSeek?.(finalP)
+      }
+      window.removeEventListener('mousemove', onWindowMouseMove)
+      window.removeEventListener('mouseup', onWindowMouseUp)
+    }
+
+    window.addEventListener('mousemove', onWindowMouseMove)
+    window.addEventListener('mouseup', onWindowMouseUp)
+  }
+
+  const handleMouseUp = (e) => {
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false
+      const p = calcPctFromClientX(e.clientX, e.currentTarget)
+      setDragPct(null)
+      setHoverPct(null)
+      lastEmitPctRef.current = null
+      onSeek?.(p)
+    }
   }
 
   const handleClick = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const width = rect.width > 0 ? rect.width : (e.currentTarget.offsetWidth || 100)
-    const x = Math.max(0, Math.min(width, e.clientX - rect.left))
-    const p = Math.max(0, Math.min(100, (x / width) * 100))
-    if (onSeek) onSeek(p)
+    if (didDragRef.current) {
+      didDragRef.current = false
+      return
+    }
+    const p = calcPctFromClientX(e.clientX, e.currentTarget)
+    onSeek?.(p)
   }
 
   const getTouchPct = (e) => {
     const touch = e.touches?.[0] || e.changedTouches?.[0]
     if (!touch) return null
-    const rect = e.currentTarget.getBoundingClientRect()
-    const width = rect.width > 0 ? rect.width : (e.currentTarget.offsetWidth || 100)
-    const x = Math.max(0, Math.min(width, touch.clientX - rect.left))
-    return Math.max(0, Math.min(100, (x / width) * 100))
+    return calcPctFromClientX(touch.clientX, e.currentTarget)
   }
 
   const handleTouchStart = (e) => {
     const p = getTouchPct(e)
-    if (p !== null && onSeek) onSeek(p)
+    if (p !== null) {
+      isDraggingRef.current = true
+      setDragPct(p)
+      lastEmitPctRef.current = p
+      lastEmitTimeRef.current = Date.now()
+      onSeek?.(p)
+    }
   }
 
   const handleTouchMove = (e) => {
     const p = getTouchPct(e)
-    if (p !== null && onSeek) onSeek(p)
+    if (p !== null) {
+      setDragPct(p)
+      const now = Date.now()
+      if (now - lastEmitTimeRef.current >= 150 || (lastEmitPctRef.current !== null && Math.abs(p - lastEmitPctRef.current) >= 5)) {
+        lastEmitTimeRef.current = now
+        lastEmitPctRef.current = p
+        onSeek?.(p)
+      }
+    }
   }
 
   const handleTouchEnd = (e) => {
     const p = getTouchPct(e)
-    if (p !== null && onSeek) onSeek(p)
+    isDraggingRef.current = false
+    setDragPct(null)
+    lastEmitPctRef.current = null
+    if (p !== null) {
+      onSeek?.(p)
+    }
   }
 
   const hoverTimeSec = hoverPct !== null && duration > 0 ? (hoverPct / 100) * duration : 0
-  const safePct = Math.min(100, Math.max(0, Number(pct) || 0))
+  const activePct = dragPct !== null ? dragPct : (Number(pct) || 0)
+  const safePct = Math.min(100, Math.max(0, activePct))
+  const displayCurrentTime = dragPct !== null && duration > 0 ? (dragPct / 100) * duration : currentTime
 
   return (
     <div
+      ref={progressRef}
       className="player-top-progress"
       role="slider"
       tabIndex={0}
@@ -110,7 +210,7 @@ function PlayerTopProgress({ pct, currentTime = 0, duration = 0, onSeek, formatT
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(safePct)}
-      aria-valuetext={`${formatTime ? formatTime(currentTime) : '0:00'} of ${formatTime ? formatTime(duration) : '0:00'}`}
+      aria-valuetext={`${formatTime ? formatTime(displayCurrentTime) : '0:00'} of ${formatTime ? formatTime(duration) : '0:00'}`}
       onKeyDown={(e) => {
         const changes = {
           ArrowLeft: -5,
@@ -128,15 +228,17 @@ function PlayerTopProgress({ pct, currentTime = 0, duration = 0, onSeek, formatT
       }}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
       onClick={handleClick}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      title="Click to seek"
+      title="Click or drag to seek"
       data-testid="player-top-progress"
     >
       <span className="player-top-time player-top-time-start">
-        {formatTime ? formatTime(currentTime) : '0:00'}
+        {formatTime ? formatTime(displayCurrentTime) : '0:00'}
       </span>
 
       <div className="player-top-progress-track">
@@ -278,6 +380,15 @@ function Player({
       ? `Now playing: ${remoteTitle} by ${remoteArtist}`
       : ''
 
+    const lastRemoteSeekRef = useRef(0)
+    const handleRemoteSeek = (newPct, meta = {}) => {
+      const now = Date.now()
+      if (meta.isEnd || now - lastRemoteSeekRef.current >= 150) {
+        lastRemoteSeekRef.current = now
+        onSendRemote({ action: 'seek', payload: { pct: newPct } })
+      }
+    }
+
     return (
       <footer className="player player-remote" data-testid="player-bar">
         <div
@@ -289,7 +400,7 @@ function Player({
         >
           {remoteAnnouncement}
         </div>
-        <PlayerTopProgress pct={remotePct} currentTime={remotePositionSec} duration={remoteDurationSec} onSeek={(newPct) => onSendRemote({ action: 'seek', payload: { pct: newPct } })} formatTime={formatTime} />
+        <PlayerTopProgress pct={remotePct} currentTime={remotePositionSec} duration={remoteDurationSec} onSeek={handleRemoteSeek} formatTime={formatTime} />
         <div className="player-left">
           <PlayerDisc track={activeTrack} token={token} discBg={discBg} />
           <div className="player-info">
@@ -336,50 +447,64 @@ function Player({
           </button>
         </div>
         <div className="player-center">
-          <div className="player-controls">
+          {requiresUserGesture ? (
             <button
-              className={`btn-icon btn-shuffle ${isShuffle ? 'active' : ''}`}
-              onClick={() => onSendRemote({ action: 'shuffle', payload: { shuffle: !isShuffle }})}
-              title={isShuffle ? "Shuffle on" : "Shuffle off"}
-              aria-label="Shuffle"
-              aria-pressed={isShuffle}
+              type="button"
+              className="player-gesture-unlock-btn"
+              onClick={onUnlockWebAudio}
+              data-testid="player-gesture-unlock-btn"
+              title="Audio paused by browser • Click to play"
+              aria-label="Audio paused by browser. Click to play"
             >
-              <ShuffleIcon />
+              <PlayIcon width={14} height={14} />
+              <span>Audio paused by browser • Click to play</span>
             </button>
-            <button
-              className="btn-icon btn-prev"
-              onClick={() => onSendRemote({ action: 'prev' })}
-              title="Previous"
-              aria-label="Previous"
-            >
-              <PrevIcon />
-            </button>
-            <button
-              className="btn-play-main"
-              onClick={() => onSendRemote({ action: remoteIsPlaying ? 'pause' : 'play' })}
-              title={remoteIsPlaying ? "Pause" : "Play"}
-              aria-label={remoteIsPlaying ? "Pause" : "Play"}
-            >
-              {remoteIsPlaying ? <PauseIcon/> : <PlayIcon/>}
-            </button>
-            <button
-              className="btn-icon btn-next"
-              onClick={() => onSendRemote({ action: 'next' })}
-              title="Next"
-              aria-label="Next"
-            >
-              <NextIcon />
-            </button>
-            <button
-              className={`btn-icon btn-repeat ${isLoop ? 'active' : ''}`}
-              onClick={() => onSendRemote({ action: 'loop', payload: { loop: !isLoop }})}
-              title={isLoop ? "Repeat on" : "Repeat off"}
-              aria-label="Repeat"
-              aria-pressed={isLoop}
-            >
-              <LoopIcon />
-            </button>
-          </div>
+          ) : (
+            <div className="player-controls">
+              <button
+                className={`btn-icon btn-shuffle ${isShuffle ? 'active' : ''}`}
+                onClick={() => onSendRemote({ action: 'shuffle', payload: { shuffle: !isShuffle }})}
+                title={isShuffle ? "Shuffle on" : "Shuffle off"}
+                aria-label="Shuffle"
+                aria-pressed={isShuffle}
+              >
+                <ShuffleIcon />
+              </button>
+              <button
+                className="btn-icon btn-prev"
+                onClick={() => onSendRemote({ action: 'prev' })}
+                title="Previous"
+                aria-label="Previous"
+              >
+                <PrevIcon />
+              </button>
+              <button
+                className="btn-play-main"
+                onClick={() => onSendRemote({ action: remoteIsPlaying ? 'pause' : 'play' })}
+                title={remoteIsPlaying ? "Pause" : "Play"}
+                aria-label={remoteIsPlaying ? "Pause" : "Play"}
+              >
+                {remoteIsPlaying ? <PauseIcon/> : <PlayIcon/>}
+              </button>
+              <button
+                className="btn-icon btn-next"
+                onClick={() => onSendRemote({ action: 'next' })}
+                title="Next"
+                aria-label="Next"
+              >
+                <NextIcon />
+              </button>
+              <button
+                className={`btn-icon btn-repeat ${isLoop ? 'active' : ''}`}
+                onClick={() => onSendRemote({ action: 'loop', payload: { loop: !isLoop }})}
+                title={isLoop ? "Repeat on" : "Repeat off"}
+                aria-label="Repeat"
+                aria-pressed={isLoop}
+              >
+                <LoopIcon />
+              </button>
+            </div>
+          )}
         </div>
         <div className="player-right">
           {onToggleLyrics && (
@@ -515,55 +640,69 @@ function Player({
       </div>
 
       <div className="player-center">
-        <div className="player-controls">
+        {requiresUserGesture ? (
           <button
-            className={`btn-icon btn-shuffle ${isShuffle ? 'active' : ''}`}
-            onClick={onToggleShuffle}
-            data-testid="player-shuffle-btn"
-            title={isShuffle ? "Shuffle on" : "Shuffle off"}
-            aria-label="Shuffle"
-            aria-pressed={isShuffle}
+            type="button"
+            className="player-gesture-unlock-btn"
+            onClick={onUnlockWebAudio}
+            data-testid="player-gesture-unlock-btn"
+            title="Audio paused by browser • Click to play"
+            aria-label="Audio paused by browser. Click to play"
           >
-            <ShuffleIcon />
+            <PlayIcon width={14} height={14} />
+            <span>Audio paused by browser • Click to play</span>
           </button>
-          <button
-            className="btn-icon btn-prev"
-            onClick={onPrev}
-            data-testid="player-prev-btn"
-            title="Previous"
-            aria-label="Previous"
-          >
-            <PrevIcon />
-          </button>
-          <button
-            className="btn-play-main"
-            onClick={onTogglePlay}
-            data-testid="player-play-btn"
-            title={isPlaying ? "Pause" : "Play"}
-            aria-label={isPlaying ? "Pause" : "Play"}
-          >
-            {isPlaying ? <PauseIcon/> : <PlayIcon/>}
-          </button>
-          <button
-            className="btn-icon btn-next"
-            onClick={onNext}
-            data-testid="player-next-btn"
-            title="Next"
-            aria-label="Next"
-          >
-            <NextIcon />
-          </button>
-          <button
-            className={`btn-icon btn-repeat ${isLoop ? 'active' : ''}`}
-            onClick={onToggleLoop}
-            data-testid="player-loop-btn"
-            title={isLoop ? "Repeat on" : "Repeat off"}
-            aria-label="Repeat"
-            aria-pressed={isLoop}
-          >
-            <LoopIcon />
-          </button>
-        </div>
+        ) : (
+          <div className="player-controls">
+            <button
+              className={`btn-icon btn-shuffle ${isShuffle ? 'active' : ''}`}
+              onClick={onToggleShuffle}
+              data-testid="player-shuffle-btn"
+              title={isShuffle ? "Shuffle on" : "Shuffle off"}
+              aria-label="Shuffle"
+              aria-pressed={isShuffle}
+            >
+              <ShuffleIcon />
+            </button>
+            <button
+              className="btn-icon btn-prev"
+              onClick={onPrev}
+              data-testid="player-prev-btn"
+              title="Previous"
+              aria-label="Previous"
+            >
+              <PrevIcon />
+            </button>
+            <button
+              className="btn-play-main"
+              onClick={onTogglePlay}
+              data-testid="player-play-btn"
+              title={isPlaying ? "Pause" : "Play"}
+              aria-label={isPlaying ? "Pause" : "Play"}
+            >
+              {isPlaying ? <PauseIcon/> : <PlayIcon/>}
+            </button>
+            <button
+              className="btn-icon btn-next"
+              onClick={onNext}
+              data-testid="player-next-btn"
+              title="Next"
+              aria-label="Next"
+            >
+              <NextIcon />
+            </button>
+            <button
+              className={`btn-icon btn-repeat ${isLoop ? 'active' : ''}`}
+              onClick={onToggleLoop}
+              data-testid="player-loop-btn"
+              title={isLoop ? "Repeat on" : "Repeat off"}
+              aria-label="Repeat"
+              aria-pressed={isLoop}
+            >
+              <LoopIcon />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="player-right">

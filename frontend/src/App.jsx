@@ -538,29 +538,6 @@ export default function App() {
     }
   }, [broadcastState, getMyDeviceId]);
 
-  useEffect(() => {
-    if (!syncState) return;
-    const myId = getMyDeviceId();
-    const isMeActive = syncState.activeDeviceId === myId;
-
-    if (syncState.isTransferHandoff && isMeActive) {
-      console.log('[Sync] Transfer handoff targeting me, staging track:', syncState.trackId, 'pos:', syncState.positionMs);
-      isApplyingRemoteStateRef.current = true;
-      ensureTrackStagedInWebPlayer(syncState.trackId, syncState.positionMs);
-      if (syncState.isPlaying) {
-        attemptWebPlayWithGestureGuard();
-      }
-      setTimeout(() => { isApplyingRemoteStateRef.current = false; }, 400);
-    } else if (isMeActive && syncState.trackId && loadedTrackIdRef.current !== syncState.trackId) {
-      isApplyingRemoteStateRef.current = true;
-      ensureTrackStagedInWebPlayer(syncState.trackId, syncState.positionMs);
-      if (syncState.isPlaying) {
-        attemptWebPlayWithGestureGuard();
-      }
-      setTimeout(() => { isApplyingRemoteStateRef.current = false; }, 400);
-    }
-  }, [syncState, getMyDeviceId, ensureTrackStagedInWebPlayer, attemptWebPlayWithGestureGuard]);
-
   const isPlaying = isActiveDevice ? isLocalPlaying : !!syncState?.isPlaying;
 
   const isActiveRef   = useRef(isActiveDevice)
@@ -571,7 +548,7 @@ export default function App() {
   useEffect(() => { devicesRef.current = devices }, [devices])
   useEffect(() => { sendRemoteRef.current = sendRemoteControl }, [sendRemoteControl])
 
-  const currentTrack = (() => {
+  const currentTrack = useMemo(() => {
     const curPath = loadedTrackIdRef.current || syncState?.trackId;
     if (!curPath) return null;
     if (currentIndex >= 0 && queue[currentIndex]?.path === curPath) return queue[currentIndex];
@@ -602,7 +579,7 @@ export default function App() {
       playlist: plName,
       artist: artistName,
     };
-  })();
+  }, [loadedTrackIdRef.current, syncState?.trackId, currentIndex, queue, playlists]);
 
   useEffect(() => {
     if (!currentTrack?.path || !token) {
@@ -760,13 +737,22 @@ export default function App() {
       }
     }
 
-    // Include isActiveDevice in the dedup key so that a transfer (active status change)
+    // Include isActiveDevice and isTransferHandoff in the dedup key so that a transfer
     // always triggers the effect, even if syncState.trackId/updatedAt haven't changed yet
-    const stateId = `${syncState.activeDeviceId}:${syncState.trackId}:${syncState.updatedAt}:${isActiveDevice}`
+    const stateId = `${syncState.activeDeviceId}:${syncState.trackId}:${syncState.updatedAt}:${isActiveDevice}:${syncState.isTransferHandoff}`
     if (lastSyncIdRef.current === stateId && indexRef.current === trackIdx) return
     lastSyncIdRef.current = stateId
 
-    console.log('[SyncEffect]', { isActiveDevice, trackId: syncState.trackId, trackIdx,
+    const myId = getMyDeviceId();
+    const isMeActive = syncState.activeDeviceId === myId || isActiveDevice;
+    const isHandoff = Boolean(syncState.isTransferHandoff && isMeActive);
+
+    if (isHandoff) {
+      console.log('[SyncEffect] Authoritative transfer handoff targeting me, track:', syncState.trackId, 'pos:', syncState.positionMs);
+      setSyncState(prev => (prev?.isTransferHandoff ? { ...prev, isTransferHandoff: false } : prev));
+    }
+
+    console.log('[SyncEffect]', { isActiveDevice, isMeActive, isHandoff, trackId: syncState.trackId, trackIdx,
       wasActive: wasActiveRef.current, loadedTrack: loadedTrackIdRef.current,
       activeDeviceId: syncState.activeDeviceId, isPlaying: syncState.isPlaying })
 
@@ -782,8 +768,8 @@ export default function App() {
     wasActiveRef.current = isActiveDevice;
 
     if (isActiveDevice) {
-      if (trackIdx < 0 || !audioRef.current || !targetPath) {
-        console.log('[SyncEffect] Active but no track to play', { trackIdx, targetPath })
+      if (!targetPath || !audioRef.current) {
+        console.log('[SyncEffect] Active but no track or audioRef to play', { trackIdx, targetPath })
         return
       }
 
@@ -797,8 +783,8 @@ export default function App() {
         }
       }
 
-      if (trackChanged || (justClaimed && loadedTrackIdRef.current !== targetPath)) {
-        console.log('[SyncEffect] Loading track on active device', { trackChanged, justClaimed, targetPath })
+      if (trackChanged || justClaimed || isHandoff) {
+        console.log('[SyncEffect] Loading track on active device', { trackChanged, justClaimed, isHandoff, targetPath })
         const drift     = syncState.isPlaying ? Math.max(0, Date.now() - (syncState.updatedAt || Date.now())) : 0
         const targetSec = Math.max(0, ((syncState.positionMs || 0) + drift) / 1000)
         
@@ -816,13 +802,7 @@ export default function App() {
           }
 
           if (syncState.isPlaying) {
-            const p = audio.play()
-            if (p !== undefined) {
-              p.catch(err => {
-                console.warn('[SyncEffect] Auto-play prevented (gesture unlock needed):', err.message)
-                setIsLocalPlaying(false)
-              })
-            }
+            attemptWebPlayWithGestureGuard();
           } else {
             audio.pause()
           }
@@ -857,7 +837,7 @@ export default function App() {
         setVolume(Math.round(syncState.volume * 100));
       }
     }
-  }, [syncState, isActiveDevice, playlists])
+  }, [syncState, isActiveDevice, playlists, getMyDeviceId, attemptWebPlayWithGestureGuard, setSyncState, ensureTrackStagedInWebPlayer])
 
   useEffect(() => {
     if (!syncState) return
@@ -1345,7 +1325,7 @@ export default function App() {
     if (!isAct) {
       isActiveRef.current = true;
       setIsActiveDevice(true);
-      claimActiveDevice();
+      claimActiveDevice(track.path);
     }
 
     if (!audioRef.current) return
@@ -1364,6 +1344,7 @@ export default function App() {
       isPlaying: false, isBuffering: true, volume: volumeRef.current / 100,
       isLoop: isLoopRef.current,
       isShuffle: isShuffleRef.current,
+      forceClaim: true,
       updatedAt: Date.now(),
     })
   }, [broadcastState, getMyDeviceId, claimActiveDevice])
@@ -1508,7 +1489,7 @@ export default function App() {
     if (!isAct) {
       isActiveRef.current = true;
       setIsActiveDevice(true);
-      claimActiveDevice();
+      claimActiveDevice(loadedTrackIdRef.current || syncStateRef.current?.trackId);
     }
 
     const audio = audioRef.current; if (!audio) return
@@ -1539,17 +1520,24 @@ export default function App() {
       isPlaying: newPlaying, volume: volumeRef.current / 100,
       isLoop: isLoopRef.current,
       isShuffle: isShuffleRef.current,
+      forceClaim: true,
       updatedAt: Date.now(),
     })
   }, [broadcastState, getMyDeviceId, internalPlayTrack, claimActiveDevice, getActiveQueueAndIndex])
 
-  const seekTo = useCallback((pct) => {
+  const lastRemoteSeekTimeRef = useRef(0);
+  const seekTo = useCallback((pct, meta = {}) => {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
     const devs = devicesRef.current || [];
     const isRemoteOnline = Boolean(sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId());
 
     if (!isAct && isRemoteOnline) {
+      const now = Date.now();
+      if (!meta.isEnd && (now - lastRemoteSeekTimeRef.current < 150)) {
+        return;
+      }
+      lastRemoteSeekTimeRef.current = now;
       const dur = sState?.durationMs || (audioRef.current && isFinite(audioRef.current.duration) ? audioRef.current.duration * 1000 : 0);
       const positionMs = Math.round((pct / 100) * dur);
       sendRemoteRef.current?.({ action: 'seek', payload: { pct, positionMs } });
@@ -2252,6 +2240,11 @@ export default function App() {
     setSidebarCollapsed(c => !c);
   }, []);
 
+  const handleClaimDevice = useCallback(() => {
+    const trackId = currentTrack?.path || loadedTrackIdRef.current || syncState?.trackId;
+    claimActiveDevice(trackId);
+  }, [claimActiveDevice, currentTrack, syncState]);
+
   const handleOpenDevices = useCallback(() => {
     setShowDevices(true);
   }, []);
@@ -2465,6 +2458,7 @@ export default function App() {
                 onPlayTrack={(track, idx, tracks) => {
                   handlePlayDiscoveredTracks(tracks, idx, false);
                 }}
+                onTogglePlay={togglePlay}
                 onPlayAll={(tracks) => handlePlayDiscoveredTracks(tracks, 0, false)}
                 onShuffle={(tracks) => handlePlayDiscoveredTracks(tracks, 0, true)}
                 favorites={favorites}
@@ -2575,6 +2569,7 @@ export default function App() {
                       setCurrentIndex(idx);
                       internalPlayTrack(track, idx);
                     }}
+                    onTogglePlay={togglePlay}
                     durations={durations}
                     token={token}
                     favorites={favorites}
@@ -2647,6 +2642,7 @@ export default function App() {
                   currentIndex={queue.findIndex(t => t.path === currentTrack?.path)}
                   isPlaying={isPlaying}
                   onPlayTrack={playTrack}
+                  onTogglePlay={togglePlay}
                   durations={durations}
                   token={token}
                   favorites={favorites}
@@ -2693,7 +2689,7 @@ export default function App() {
           currentTime={currentTime} duration={duration} onSeek={seekTo}
           volume={volume} onVolumeChange={changeVolume} formatTime={formatTime}
           isActiveDevice={isActiveDevice} activeDeviceName={activeDeviceName} syncState={syncState}
-          onClaimDevice={claimActiveDevice} onSendRemote={sendRemoteControl}
+          onClaimDevice={handleClaimDevice} onSendRemote={sendRemoteControl}
           devices={devices} myDeviceId={getMyDeviceId()} onOpenDevices={handleOpenDevices}
           showRightPanel={showRightPanel} onToggleRightPanel={handleToggleRightPanel}
           token={token}

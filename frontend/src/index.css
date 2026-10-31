@@ -3367,6 +3367,31 @@ body:has(.fullscreen-mode) .main-scroll-body,
   gap: 18px;
 }
 
+.player-gesture-unlock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent);
+  color: #000000;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 20px;
+  border-radius: 9999px;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.player-gesture-unlock-btn:hover {
+  transform: scale(1.04);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.player-gesture-unlock-btn:active {
+  transform: scale(0.98);
+}
+
 .btn-icon {
   background: transparent;
   border: none;

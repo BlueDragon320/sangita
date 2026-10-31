@@ -443,4 +443,53 @@ describe('Player Component & Controls', () => {
     fireEvent.click(addBtn)
     expect(handleAddToPlaylist).toHaveBeenCalledWith(mockTrack)
   })
+
+  it('renders autoplay gesture unlock UI when requiresUserGesture is true (F4)', () => {
+    const handleUnlock = vi.fn()
+    render(
+      <Player
+        track={mockTrack}
+        playlist="Rock Classics"
+        isPlaying={false}
+        isActiveDevice={true}
+        requiresUserGesture={true}
+        onUnlockWebAudio={handleUnlock}
+      />
+    )
+
+    const unlockBtn = screen.getByTestId('player-gesture-unlock-btn')
+    expect(unlockBtn).toBeInTheDocument()
+    expect(unlockBtn).toHaveTextContent(/Audio paused by browser/i)
+    fireEvent.click(unlockBtn)
+    expect(handleUnlock).toHaveBeenCalledTimes(1)
+  })
+
+  it('supports desktop mouse drag scrubbing on PlayerTopProgress (F6)', () => {
+    const handleSeek = vi.fn()
+    render(
+      <Player
+        track={mockTrack}
+        playlist="Rock Classics"
+        isPlaying={true}
+        currentTime={50}
+        duration={100}
+        onSeek={handleSeek}
+        formatTime={(s) => `${s}s`}
+        isActiveDevice={true}
+      />
+    )
+
+    const progress = screen.getByTestId('player-top-progress')
+    // Mouse down to begin dragging
+    fireEvent.mouseDown(progress, { clientX: 20, button: 0 })
+    expect(handleSeek).toHaveBeenCalled()
+
+    // Drag move to a new position
+    fireEvent.mouseMove(progress, { clientX: 60 })
+    expect(handleSeek).toHaveBeenCalled()
+
+    // Mouse up on window finishes gesture
+    fireEvent.mouseUp(window, { clientX: 85 })
+    expect(handleSeek).toHaveBeenCalled()
+  })
 })

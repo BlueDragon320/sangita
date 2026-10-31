@@ -117,6 +117,7 @@ function TrackRowItem({
   isFav,
   token,
   onPlayTrack,
+  onTogglePlay,
   onToggleFavorite,
   onAddToPlaylist,
   onDownloadTrack,
@@ -260,7 +261,12 @@ function TrackRowItem({
             aria-label={playActionLabel}
             onClick={(e) => {
               e.stopPropagation()
-              if (onPlayTrack) onPlayTrack(track, idx)
+              if (isActive) {
+                if (onTogglePlay) onTogglePlay()
+                else if (onPlayTrack) onPlayTrack(track, idx)
+              } else {
+                if (onPlayTrack) onPlayTrack(track, idx)
+              }
             }}
           >
             {isActive ? (
@@ -502,6 +508,7 @@ function TrackList({
   currentIndex,
   isPlaying,
   onPlayTrack,
+  onTogglePlay,
   durations = {},
   token,
   favorites = [],
@@ -586,6 +593,7 @@ function TrackList({
             isFav={isFav}
             token={token}
             onPlayTrack={onPlayTrack}
+            onTogglePlay={onTogglePlay}
             onToggleFavorite={onToggleFavorite}
             onAddToPlaylist={onAddToPlaylist}
             onDownloadTrack={onDownloadTrack}

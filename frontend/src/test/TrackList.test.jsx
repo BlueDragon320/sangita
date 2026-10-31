@@ -390,4 +390,46 @@ describe('TrackList Component & Duration Rendering', () => {
     fireEvent.click(downloadAction)
     expect(handleDownload).not.toHaveBeenCalled()
   })
+
+  it('toggles play/pause when clicking play button on active track row instead of restarting (F5)', () => {
+    const handlePlay = vi.fn()
+    const handleTogglePlay = vi.fn()
+    render(
+      <TrackList
+        tracks={mockTracks}
+        currentIndex={0}
+        isPlaying={true}
+        onPlayTrack={handlePlay}
+        onTogglePlay={handleTogglePlay}
+        durations={mockDurations}
+      />
+    )
+
+    // The play button for the active row (index 0) has title "Pause Faded"
+    const activePlayBtn = screen.getByRole('button', { name: 'Pause Faded' })
+    fireEvent.click(activePlayBtn)
+    expect(handleTogglePlay).toHaveBeenCalledTimes(1)
+    expect(handlePlay).not.toHaveBeenCalled()
+  })
+
+  it('calls onPlayTrack when clicking play button on inactive track row (F5)', () => {
+    const handlePlay = vi.fn()
+    const handleTogglePlay = vi.fn()
+    render(
+      <TrackList
+        tracks={mockTracks}
+        currentIndex={0}
+        isPlaying={true}
+        onPlayTrack={handlePlay}
+        onTogglePlay={handleTogglePlay}
+        durations={mockDurations}
+      />
+    )
+
+    // The play button for the inactive row (index 1) has title "Play Alone"
+    const inactivePlayBtn = screen.getByRole('button', { name: 'Play Alone' })
+    fireEvent.click(inactivePlayBtn)
+    expect(handlePlay).toHaveBeenCalledWith(mockTracks[1], 1)
+    expect(handleTogglePlay).not.toHaveBeenCalled()
+  })
 })

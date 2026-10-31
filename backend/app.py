@@ -146,17 +146,26 @@ class _RequestDbProxy:
         pass
     def __getattr__(self, name):
         return getattr(self._conn, name)
+    def __setattr__(self, name, value):
+        if name == "_conn":
+            super().__setattr__(name, value)
+        else:
+            setattr(self._conn, name, value)
 
 def get_db():
     if has_request_context():
         if "db" not in g:
             raw_conn = sqlite3.connect(STATS_DB)
             raw_conn.row_factory = sqlite3.Row
+            raw_conn.execute("PRAGMA foreign_keys = ON;")
+            raw_conn.execute("PRAGMA busy_timeout = 5000;")
             g.raw_db = raw_conn
             g.db = _RequestDbProxy(raw_conn)
         return g.db
     conn = sqlite3.connect(STATS_DB)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA busy_timeout = 5000;")
     return conn
 
 @app.teardown_appcontext
@@ -168,6 +177,31 @@ def close_db(error=None):
             raw_db.close()
         except Exception:
             pass
+
+def sync_folder_playlists(conn=None):
+    """Reconciles source_folders with classification='playlist' into the playlists table."""
+    should_close = False
+    if conn is None:
+        conn = get_db()
+        should_close = True
+    try:
+        folder_sources = conn.execute(
+            "SELECT id, folder_name, display_name FROM source_folders WHERE classification = 'playlist'"
+        ).fetchall()
+        for fs in folder_sources:
+            fp_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"sangita:source_folder:{fs['folder_name']}"))
+            conn.execute("""
+                INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist, source_folder_id)
+                VALUES (?, 'system', ?, '', 'public', 1, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    description = excluded.description,
+                    source_folder_id = excluded.source_folder_id
+            """, (fp_id, fs["display_name"] or fs["folder_name"], fs["id"]))
+        conn.commit()
+    finally:
+        if should_close:
+            conn.close()
 
 def migrate_v2_schema(conn):
     """
@@ -425,12 +459,20 @@ def migrate_v2_schema(conn):
         except Exception as e:
             print(f"[Migration user_saved_tracks warning] {e}")
 
+        # Synchronize folder playlists
+        try:
+            sync_folder_playlists(conn)
+        except Exception as e:
+            print(f"[Migration sync_folder_playlists warning] {e}")
+
 def init_db():
     conn = get_db()
     try:
+        conn.isolation_level = None
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=-8000")
+        conn.isolation_level = ""
     except Exception as e:
         print(f"[DB Pragma Warning] {e}")
 
@@ -652,21 +694,22 @@ def format_bytes(b):
         b /= 1024.0
     return f"{b:.1f} PB"
 
-def record_user_data_consumption(username, num_bytes, device_id=None):
+def record_user_data_consumption(username, num_bytes, device_id=None, is_new_stream=True):
     if not username or not num_bytes or num_bytes <= 0:
         return
     try:
         tz_obj, _ = get_tz_from_request()
         today_str = datetime.now(tz_obj).strftime('%Y-%m-%d')
         conn = get_db()
+        req_inc = 1 if is_new_stream else 0
         conn.execute("""
             INSERT INTO user_daily_data (username, date, bytes_consumed, stream_requests, last_updated)
-            VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(username, date) DO UPDATE SET
                 bytes_consumed = bytes_consumed + ?,
-                stream_requests = stream_requests + 1,
+                stream_requests = stream_requests + ?,
                 last_updated = CURRENT_TIMESTAMP
-        """, (username, today_str, int(num_bytes), int(num_bytes)))
+        """, (username, today_str, int(num_bytes), req_inc, int(num_bytes), req_inc))
 
         conn.execute("""
             INSERT INTO user_totals (username, total_seconds, total_bytes)
@@ -780,7 +823,7 @@ MAX_FAILED_LOGIN_ATTEMPTS = 3
 LOGIN_LOCKOUT_SECONDS = 300  # 5-minute break if password attempts fail 3 times
 
 def _get_client_ip():
-    if request.headers.get("X-Forwarded-For"):
+    if request.remote_addr in ("127.0.0.1", "::1", "localhost") and request.headers.get("X-Forwarded-For"):
         return request.headers.get("X-Forwarded-For").split(",")[0].strip()
     return request.remote_addr or "127.0.0.1"
 
@@ -1087,8 +1130,7 @@ def _is_authorized_node_or_admin():
     node_secret = request.headers.get("X-Sangita-Node-Secret") or request.args.get("node_secret")
     if node_secret and hmac.compare_digest(node_secret, SECRET_KEY):
         return True
-    client_ip = _get_client_ip()
-    if client_ip in ("127.0.0.1", "::1", "localhost"):
+    if request.remote_addr in ("127.0.0.1", "::1", "localhost"):
         return True
     return False
 
@@ -2251,21 +2293,18 @@ def v2_get_playlists():
     is_admin = g.user.get("role") == "admin"
     discover = request.args.get("discover", "").strip().lower() == "true"
     try:
-        # Sync folder playlists for any source folders classified as 'playlist'
-        folder_sources = conn.execute(
-            "SELECT id, folder_name, display_name FROM source_folders WHERE classification = 'playlist'"
-        ).fetchall()
-        for fs in folder_sources:
-            fp_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"sangita:source_folder:{fs['folder_name']}"))
-            conn.execute("""
-                INSERT INTO playlists (id, owner, title, description, visibility, is_folder_playlist, source_folder_id)
-                VALUES (?, 'system', ?, '', 'public', 1, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    title = excluded.title,
-                    description = excluded.description,
-                    source_folder_id = excluded.source_folder_id
-            """, (fp_id, fs["display_name"] or fs["folder_name"], fs["id"]))
-        conn.commit()
+        # Ensure folder playlists exist (reconcile only if missing to keep reads strictly read-only)
+        needs_reconcile = conn.execute("""
+            SELECT 1 FROM source_folders sf
+            WHERE sf.classification = 'playlist'
+              AND NOT EXISTS (
+                  SELECT 1 FROM playlists p
+                  WHERE p.is_folder_playlist = 1 AND p.source_folder_id = sf.id
+              )
+            LIMIT 1
+        """).fetchone()
+        if needs_reconcile:
+            sync_folder_playlists(conn)
 
         # Get set of saved playlist IDs for this user
         saved_rows = conn.execute(
@@ -3327,7 +3366,7 @@ def get_current_user_stats():
     conn = get_db()
     try:
         # 1. Total listening time
-        row_tot = conn.execute("SELECT total_seconds FROM user_totals WHERE username = ?", (username,)).fetchone()
+        row_tot = conn.execute("SELECT total_seconds, total_bytes FROM user_totals WHERE username = ?", (username,)).fetchone()
         total_seconds = row_tot["total_seconds"] if row_tot else 0
 
         # 2. Unique tracks & total plays count
@@ -3727,14 +3766,53 @@ def stream_audio(filepath):
     resp = send_from_directory(os.path.dirname(full_path), os.path.basename(full_path), conditional=True)
     resp.headers["Cache-Control"] = "public, max-age=86400"
 
-    # Record data consumption for this user
+    # Explicit audio MIME types (B6)
+    lower_path = full_path.lower()
+    if lower_path.endswith(".opus"):
+        resp.headers["Content-Type"] = "audio/ogg; codecs=opus"
+    elif lower_path.endswith(".flac"):
+        resp.headers["Content-Type"] = "audio/flac"
+    elif lower_path.endswith(".m4a"):
+        resp.headers["Content-Type"] = "audio/mp4"
+
+    # Record data consumption for this user (B5)
     try:
-        bytes_count = resp.calculate_content_length() or resp.content_length
-        if not bytes_count and os.path.isfile(full_path):
-            bytes_count = os.path.getsize(full_path)
+        is_range_req = (resp.status_code == 206) or (request.range is not None)
+        is_new_stream = True
+        total_file_size = os.path.getsize(full_path) if os.path.isfile(full_path) else 0
+
+        # Only increment stream_requests when request.range starts at byte 0 or is absent
+        if request.range and request.range.ranges:
+            first_range = request.range.ranges[0]
+            start_byte = first_range[0]
+            if start_byte is not None and start_byte > 0:
+                is_new_stream = False
+        elif request.headers.get("Range"):
+            raw_range = request.headers.get("Range", "").strip()
+            if raw_range.startswith("bytes="):
+                spec = raw_range[6:].split(",")[0].split("-")[0].strip()
+                if spec.isdigit() and int(spec) > 0:
+                    is_new_stream = False
+
+        # Calculate actual bytes served
+        bytes_count = resp.content_length or resp.calculate_content_length()
+        if not bytes_count and is_range_req:
+            # Fallback: compute from request.range
+            if request.range and request.range.ranges:
+                r_start, r_end = request.range.ranges[0]
+                if r_end is not None and r_start is not None:
+                    bytes_count = r_end - r_start
+                elif r_start is not None and total_file_size:
+                    bytes_count = max(0, total_file_size - r_start)
+                elif r_start is not None and r_start < 0 and total_file_size:
+                    bytes_count = min(-r_start, total_file_size)
+
+        if not bytes_count:
+            bytes_count = total_file_size
+
         if bytes_count and hasattr(g, "username") and g.username:
             dev_id = request.args.get("device_id") or request.headers.get("X-Device-Id")
-            record_user_data_consumption(g.username, bytes_count, dev_id)
+            record_user_data_consumption(g.username, bytes_count, dev_id, is_new_stream=is_new_stream)
     except Exception as e:
         print(f"[Stream Data Tracking Error] {e}")
 

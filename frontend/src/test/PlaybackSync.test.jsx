@@ -91,4 +91,25 @@ describe('authoritative browser playback updates', () => {
     expect(player).toHaveTextContent('Phone song')
     expect(player).toHaveTextContent('Playing on')
   })
+
+  it('passes explicit trackId when claiming device while passive (F1)', async () => {
+    localStorage.setItem('sangita_token', 'test-token')
+    sync.active = false
+    sync.state = {
+      activeDeviceId: 'phone',
+      originDeviceId: 'phone',
+      trackId: 'Old/song.mp3',
+      positionMs: 5000,
+      durationMs: 120000,
+      isPlaying: true
+    }
+    sync.claimActiveDevice.mockClear()
+    sync.broadcastState.mockClear()
+
+    render(<App />)
+    const claimBtn = await screen.findByRole('button', { name: 'Play on this device' })
+    fireEvent.click(claimBtn)
+
+    expect(sync.claimActiveDevice).toHaveBeenCalledWith('Old/song.mp3')
+  })
 })

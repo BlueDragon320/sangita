@@ -195,8 +195,8 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
         originDeviceId: deviceId.current,
       });
   }, []);
-  const transferPlayback = useCallback((targetDeviceId) => {
-    console.log('[transferPlayback] target:', targetDeviceId, 'myId:', deviceId.current);
+  const transferPlayback = useCallback((targetDeviceId, targetTrackId) => {
+    console.log('[transferPlayback] target:', targetDeviceId, 'myId:', deviceId.current, 'trackId:', targetTrackId);
     lastTargetRef.current = targetDeviceId;
 
     // Save rollback snapshot
@@ -233,7 +233,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
       }
     }
 
-    const currentTrackId = wasActive ? getTrackIdRef.current?.() : syncStateRef.current?.trackId;
+    const currentTrackId = targetTrackId || (wasActive ? getTrackIdRef.current?.() : syncStateRef.current?.trackId);
 
     if (socketRef.current) {
       socketRef.current.emit('TRANSFER_PLAYBACK', {
@@ -284,8 +284,8 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
       });
     }
   }, [audioRef]);
-  const claimActiveDevice = useCallback(() => {
-    transferPlayback(deviceId.current);
+  const claimActiveDevice = useCallback((explicitTrackId) => {
+    transferPlayback(deviceId.current, explicitTrackId);
   }, [transferPlayback]);
   const retryTransfer = useCallback(() => {
     if (lastTargetRef.current) {

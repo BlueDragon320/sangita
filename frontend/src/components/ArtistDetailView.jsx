@@ -39,6 +39,7 @@ export default function ArtistDetailView({
   currentTrack,
   isPlaying,
   onPlayTrack,
+  onTogglePlay,
   onPlayAll,
   onShuffle,
   favorites = [],
@@ -589,6 +590,7 @@ export default function ArtistDetailView({
                 onPlayTrack(track, idx, tracks)
               }
             }}
+            onTogglePlay={onTogglePlay}
             durations={durations}
             token={token}
             favorites={favorites}
