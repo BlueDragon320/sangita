@@ -115,3 +115,117 @@ test('web and Android devices receive position and a remote command once, isolat
     server.kill();
   }
 });
+
+test('TRANSFER_PLAYBACK with explicit trackId broadcasts the correct trackId and isTransferHandoff: true', async () => {
+  const port = await freePort();
+  const secret = 'test-only-secret-for-device-sync';
+  const server = spawn(process.execPath, ['server.js'], {
+    cwd: require('node:path').resolve(__dirname, '..'),
+    env: { ...process.env, SYNC_PORT: String(port), SECRET_KEY: secret, REDIS_URL: 'redis://127.0.0.1:1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const sockets = [];
+  try {
+    await new Promise((resolve, reject) => {
+      let output = '';
+      const timer = setTimeout(() => reject(new Error('Sync server did not start')), 10000);
+      server.stdout.on('data', chunk => { output += chunk; if (output.includes('listening on')) { clearTimeout(timer); resolve(); } });
+      server.once('exit', code => reject(new Error(`Sync server exited: ${code}`)));
+    });
+    const connect = async (user) => {
+      const socket = io(`http://127.0.0.1:${port}`, { auth: { token: tokenFor(user, secret) }, transports: ['websocket'], reconnection: false });
+      sockets.push(socket);
+      await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
+      return socket;
+    };
+
+    const web = await connect('alice');
+    const webRegistered = onceEvent(web, 'DEVICE_LIST_UPDATED', v => v.devices.some(d => d.deviceId === 'web-player'));
+    web.emit('REGISTER_DEVICE', { deviceId: 'web-player', deviceName: 'Web Browser', deviceType: 'desktop' });
+    await webRegistered;
+
+    const android = await connect('alice');
+    const bothRegistered = onceEvent(android, 'DEVICE_LIST_UPDATED', v => v.devices.length === 2);
+    android.emit('REGISTER_DEVICE', { deviceId: 'android-phone', deviceName: 'Pixel Phone', deviceType: 'mobile' });
+    await bothRegistered;
+
+    // Set initial playback state on web
+    const initialPlayPromise = onceEvent(android, 'PLAYBACK_STATE_CHANGED', s => s.trackId === 'Initial/Song.mp3');
+    web.emit('PLAYBACK_STATE_CHANGED', {
+      trackId: 'Initial/Song.mp3',
+      positionMs: 15000,
+      durationMs: 240000,
+      isPlaying: true,
+      isBuffering: false,
+    });
+    await initialPlayPromise;
+
+    // Now android requests TRANSFER_PLAYBACK with an explicit trackId
+    const handoffOnWeb = onceEvent(web, 'PLAYBACK_STATE_CHANGED', s => s.isTransferHandoff === true);
+    const handoffOnAndroid = onceEvent(android, 'PLAYBACK_STATE_CHANGED', s => s.isTransferHandoff === true);
+
+    android.emit('TRANSFER_PLAYBACK', {
+      targetDeviceId: 'android-phone',
+      playImmediately: true,
+      positionMs: 55000,
+      durationMs: 210000,
+      trackId: 'Explicit/Artist - Custom Song.flac',
+    });
+
+    const webHandoff = await handoffOnWeb;
+    const androidHandoff = await handoffOnAndroid;
+
+    // Verify handoff state received by both devices
+    for (const handoff of [webHandoff, androidHandoff]) {
+      assert.equal(handoff.trackId, 'Explicit/Artist - Custom Song.flac');
+      assert.equal(handoff.isTransferHandoff, true);
+      assert.equal(handoff.activeDeviceId, 'android-phone');
+      assert.equal(handoff.originDeviceId, 'android-phone');
+      assert.equal(handoff.positionMs, 55000);
+      assert.equal(handoff.durationMs, 210000);
+      assert.equal(handoff.isPlaying, true);
+      assert.equal(handoff.isBuffering, false);
+    }
+
+    // Verify forceClaim in PLAYBACK_STATE_CHANGED allows web-player to reclaim playback
+    const reclaimOnAndroid = onceEvent(android, 'PLAYBACK_STATE_CHANGED', s => s.activeDeviceId === 'web-player');
+    web.emit('PLAYBACK_STATE_CHANGED', {
+      forceClaim: true,
+      trackId: 'Reclaimed/Track.mp3',
+      positionMs: 2000,
+      durationMs: 190000,
+      isPlaying: true,
+      isBuffering: false,
+    });
+    const reclaimed = await reclaimOnAndroid;
+    assert.equal(reclaimed.activeDeviceId, 'web-player');
+    assert.equal(reclaimed.trackId, 'Reclaimed/Track.mp3');
+    assert.equal(reclaimed.isPlaying, true);
+
+    // Verify REMOTE_CONTROL routes directly when target socket is known
+    const remoteCmdOnWeb = onceEvent(web, 'REMOTE_COMMAND');
+    android.emit('REMOTE_CONTROL', {
+      action: 'pause',
+      payload: {},
+      targetDeviceId: 'web-player',
+    });
+    const cmd = await remoteCmdOnWeb;
+    assert.equal(cmd.action, 'pause');
+    assert.equal(cmd.targetDeviceId, 'web-player');
+    assert.equal(cmd.originDeviceId, 'android-phone');
+
+    // Verify REMOTE_CONTROL fallback to room broadcast when targetDeviceId has no active socket
+    const fallbackCmd = onceEvent(web, 'REMOTE_COMMAND', c => c.targetDeviceId === 'unregistered-speaker');
+    android.emit('REMOTE_CONTROL', {
+      action: 'next',
+      payload: {},
+      targetDeviceId: 'unregistered-speaker',
+    });
+    const fallbackReceived = await fallbackCmd;
+    assert.equal(fallbackReceived.action, 'next');
+    assert.equal(fallbackReceived.targetDeviceId, 'unregistered-speaker');
+  } finally {
+    sockets.forEach(socket => socket.disconnect());
+    server.kill();
+  }
+});

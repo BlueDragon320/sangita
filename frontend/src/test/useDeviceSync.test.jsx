@@ -48,7 +48,7 @@ describe('device sync session snapshots', () => {
       trackId: 'Second/new.mp3', positionMs: 80000 }))
     act(() => result.current.transferPlayback('web'))
     expect(wire.emit).toHaveBeenCalledWith('TRANSFER_PLAYBACK', {
-      targetDeviceId: 'web', positionMs: undefined, durationMs: undefined,
+      targetDeviceId: 'web', positionMs: undefined, durationMs: undefined, trackId: 'Second/new.mp3',
     })
   })
 
@@ -56,7 +56,7 @@ describe('device sync session snapshots', () => {
     const { result } = renderHook(() => useDeviceSync({ token: 'test', audioRef: audioRef(), isPlaying: false }))
     act(() => result.current.transferPlayback('phone'))
     expect(wire.emit).toHaveBeenCalledWith('TRANSFER_PLAYBACK', {
-      targetDeviceId: 'phone', positionMs: 10000, durationMs: 180000,
+      targetDeviceId: 'phone', positionMs: 10000, durationMs: 180000, trackId: undefined,
     })
   })
 

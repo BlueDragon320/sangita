@@ -334,11 +334,12 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('TRANSFER_PLAYBACK', ({ targetDeviceId, playImmediately = true, positionMs, durationMs }) => {
+  socket.on('TRANSFER_PLAYBACK', ({ targetDeviceId, playImmediately = true, positionMs, durationMs, trackId }) => {
     const { userId, deviceId } = socket;
     if (!userId || !targetDeviceId) return;
 
     const currentSession = getRamSession(userId) || {};
+    const effectiveTrackId = trackId || currentSession.trackId || '';
 
     let extrapolatedPositionMs = Number(positionMs !== undefined ? positionMs : (currentSession.positionMs || 0));
     if (positionMs === undefined && currentSession.isPlaying && currentSession.updatedAt) {
@@ -351,6 +352,7 @@ io.on('connection', (socket) => {
 
     const handoffState = {
       ...currentSession,
+      trackId: effectiveTrackId,
       positionMs: extrapolatedPositionMs,
       durationMs: Number(durationMs !== undefined ? durationMs : (currentSession.durationMs || 0)),
       activeDeviceId: targetDeviceId,
@@ -367,12 +369,12 @@ io.on('connection', (socket) => {
     io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', handoffState);
     const devices = getDeviceList(userId);
     io.to(userRoom).emit('DEVICE_LIST_UPDATED', { devices });
-    console.log(`[Transfer RAM] user=${userId} → device=${targetDeviceId} pos=${handoffState.positionMs}ms`);
+    console.log(`[Transfer RAM] user=${userId} → device=${targetDeviceId} track="${handoffState.trackId}" pos=${handoffState.positionMs}ms`);
   });
 
   socket.on('PLAYBACK_STATE_CHANGED', (state) => {
     const { userId, deviceId } = socket;
-    if (!userId || !deviceId) return;
+    if (!userId || !deviceId || !state) return;
 
     let currentSession = getRamSession(userId);
     if (!currentSession) {
@@ -399,24 +401,40 @@ io.on('connection', (socket) => {
       return; // Passive device cannot directly overwrite active state
     }
 
+    const resolvedActiveDeviceId = state.forceClaim
+      ? (state.activeDeviceId || deviceId)
+      : (state.activeDeviceId || currentSession.activeDeviceId || deviceId);
+
+    const isBuffering = state.isBuffering !== undefined
+      ? Boolean(state.isBuffering)
+      : Boolean(currentSession.isBuffering);
+
+    const isPlaying = state.isPlaying !== undefined
+      ? Boolean(state.isPlaying && !isBuffering)
+      : Boolean(currentSession.isPlaying && !isBuffering);
+
     const updatedSession = {
       ...currentSession,
       ...state,
-      trackId: state.trackId !== undefined ? state.trackId : currentSession.trackId,
-      positionMs: Number(state.positionMs ?? currentSession.positionMs ?? 0),
-      durationMs: Number(state.durationMs ?? currentSession.durationMs ?? 0),
-      isPlaying: Boolean(state.isPlaying && !state.isBuffering),
-      isBuffering: Boolean(state.isBuffering),
-      activeDeviceId: state.activeDeviceId || currentSession.activeDeviceId || deviceId,
+      trackId: state.trackId !== undefined ? state.trackId : (currentSession.trackId || ''),
+      positionMs: Number(state.positionMs !== undefined ? state.positionMs : (currentSession.positionMs ?? 0)),
+      durationMs: Number(state.durationMs !== undefined ? state.durationMs : (currentSession.durationMs ?? 0)),
+      isPlaying,
+      isBuffering,
+      volume: state.volume !== undefined ? Number(state.volume) : (currentSession.volume ?? 0.8),
+      isLoop: state.isLoop !== undefined ? Boolean(state.isLoop) : Boolean(currentSession.isLoop),
+      isShuffle: state.isShuffle !== undefined ? Boolean(state.isShuffle) : Boolean(currentSession.isShuffle),
+      activeDeviceId: resolvedActiveDeviceId,
       originDeviceId: deviceId,
       isTransferHandoff: false,
       updatedAt: Date.now(),
     };
+    delete updatedSession.forceClaim;
 
     setRamSession(userId, updatedSession);
 
-    // Instantly propagate state update to other devices in room
-    socket.to(userRoom).emit('PLAYBACK_STATE_CHANGED', updatedSession);
+    // Instantly propagate state update to entire room
+    io.to(userRoom).emit('PLAYBACK_STATE_CHANGED', updatedSession);
   });
 
   socket.on('POSITION_REPORT', (report) => {
@@ -463,10 +481,10 @@ io.on('connection', (socket) => {
 
     const userDevs = inMemoryDevices.get(userId);
     const targetDev = userDevs?.get(resolvedTargetId);
-    if (targetDev && targetDev.socketId) {
+    if (targetDev && targetDev.socketId && io.sockets.sockets.get(targetDev.socketId)) {
       io.to(targetDev.socketId).emit('REMOTE_COMMAND', commandObj);
     } else {
-      // Fallback for a device that has not registered its socket yet.
+      // Fallback for a device that has not registered its socket yet or reconnected.
       socket.to(userRoom).emit('REMOTE_COMMAND', commandObj);
     }
   });

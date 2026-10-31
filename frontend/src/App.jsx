@@ -433,15 +433,25 @@ export default function App() {
     });
 
     const streamUrl = `/api/stream/${encodeURIComponent(trackPath)}?token=${encodeURIComponent(token)}`;
+    const targetSec = (positionMs || 0) / 1000;
     if (loadedTrackIdRef.current !== trackPath) {
       loadedTrackIdRef.current = trackPath;
       audioRef.current.src = streamUrl;
+      const onMetadata = () => {
+        if (audioRef.current && targetSec > 0) {
+          try {
+            audioRef.current.currentTime = Math.min(targetSec, audioRef.current.duration || targetSec);
+          } catch (e) {}
+        }
+      };
+      audioRef.current.addEventListener('loadedmetadata', onMetadata, { once: true });
       audioRef.current.load();
-    }
-
-    const targetSec = (positionMs || 0) / 1000;
-    if (Math.abs((audioRef.current.currentTime || 0) - targetSec) > 1.5) {
-      audioRef.current.currentTime = targetSec;
+    } else {
+      if (Math.abs((audioRef.current.currentTime || 0) - targetSec) > 1.5) {
+        try {
+          audioRef.current.currentTime = targetSec;
+        } catch (e) {}
+      }
     }
   }, [token]);
 
@@ -464,6 +474,11 @@ export default function App() {
     console.log('[RemoteCommand] Received action:', command.action, 'payload:', command.payload);
     switch (command.action) {
       case 'play':
+        if (!audioRef.current?.src || audioRef.current.src === window.location.href) {
+          if (syncStateRef.current?.trackId) {
+            ensureTrackStagedInWebPlayer(syncStateRef.current.trackId, syncStateRef.current.positionMs);
+          }
+        }
         attemptWebPlayWithGestureGuard();
         break;
       case 'pause':
@@ -557,7 +572,7 @@ export default function App() {
   useEffect(() => { sendRemoteRef.current = sendRemoteControl }, [sendRemoteControl])
 
   const currentTrack = (() => {
-    const curPath = isActiveDevice ? loadedTrackIdRef.current : (syncState?.trackId || loadedTrackIdRef.current);
+    const curPath = loadedTrackIdRef.current || syncState?.trackId;
     if (!curPath) return null;
     if (currentIndex >= 0 && queue[currentIndex]?.path === curPath) return queue[currentIndex];
     const inQueue = queue.find(t => t.path === curPath);
@@ -568,23 +583,25 @@ export default function App() {
         return {
           id: `${plName}-${idx}`,
           path: curPath,
+          title: curPath.split('/').pop().replace(/\.[^/.]+$/, ''),
           name: curPath.split('/').pop().replace(/\.[^/.]+$/, ''),
-          playlist: plName
+          playlist: plName,
+          artist: plName
         };
       }
     }
-    // A remote song need not be in this user's saved playlists or current queue.
-    // Keep the player visible using the identity supplied by the sync server.
-    if (!isActiveDevice && syncState?.trackId === curPath) {
-      const filename = curPath.split('/').pop() || curPath;
-      return {
-        id: curPath,
-        path: curPath,
-        name: filename.replace(/\.[^/.]+$/, ''),
-        playlist: curPath.includes('/') ? curPath.substring(0, curPath.lastIndexOf('/')) : 'Library',
-      };
-    }
-    return null;
+    const filename = curPath.split('/').pop() || curPath;
+    const cleanName = filename.replace(/\.[^/.]+$/, '');
+    const plName = curPath.includes('/') ? curPath.substring(0, curPath.lastIndexOf('/')) : 'Library';
+    const artistName = curPath.includes('/') ? curPath.substring(0, curPath.indexOf('/')) : 'Library';
+    return {
+      id: curPath,
+      path: curPath,
+      title: cleanName,
+      name: cleanName,
+      playlist: plName,
+      artist: artistName,
+    };
   })();
 
   useEffect(() => {
@@ -736,6 +753,10 @@ export default function App() {
          q = buildTracks(foundPlaylist, playlists[foundPlaylist]);
          setQueue(q);
          trackIdx = q.findIndex(t => t.path === syncState.trackId);
+      } else if (isActiveDevice) {
+         ensureTrackStagedInWebPlayer(syncState.trackId, syncState.positionMs);
+         q = queueRef.current;
+         trackIdx = q.findIndex(t => (t.path || t.id) === syncState.trackId);
       }
     }
 
@@ -751,11 +772,11 @@ export default function App() {
 
     if (trackIdx >= 0) {
       setCurrentIndex(trackIdx)
-    } else if (Object.keys(playlists).length > 0) {
+    } else if (Object.keys(playlists).length > 0 && !syncState.trackId) {
       setCurrentIndex(-1)
     }
 
-    const targetPath = trackIdx >= 0 ? q[trackIdx].path : null;
+    const targetPath = trackIdx >= 0 ? q[trackIdx].path : (syncState.trackId || loadedTrackIdRef.current);
     const trackChanged = targetPath !== null && loadedTrackIdRef.current !== targetPath;
     const justClaimed = !wasActiveRef.current && isActiveDevice;
     wasActiveRef.current = isActiveDevice;
@@ -1310,7 +1331,7 @@ export default function App() {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
     const devs = devicesRef.current || [];
-    const isRemoteOnline = sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId() && devs.some(d => d.deviceId === sState.activeDeviceId);
+    const isRemoteOnline = Boolean(sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId());
     console.log('[internalPlayTrack] isAct:', isAct, 'isRemoteOnline:', isRemoteOnline, 'track:', track.path, 'index:', index, 'forceLocal:', forceLocal);
 
     const isLocal = forceLocal === true;
@@ -1470,7 +1491,7 @@ export default function App() {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
     const devs = devicesRef.current || [];
-    const isRemoteOnline = sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId() && devs.some(d => d.deviceId === sState.activeDeviceId);
+    const isRemoteOnline = Boolean(sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId());
     
     // Ensure we only force play/pause if forcePlay is explicitly a boolean (ignores React click event objects)
     const shouldForce = typeof forcePlay === 'boolean' ? forcePlay : undefined;
@@ -1526,7 +1547,7 @@ export default function App() {
     const isAct = isActiveRef.current;
     const sState = syncStateRef.current;
     const devs = devicesRef.current || [];
-    const isRemoteOnline = sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId() && devs.some(d => d.deviceId === sState.activeDeviceId);
+    const isRemoteOnline = Boolean(sState?.activeDeviceId && sState.activeDeviceId !== getMyDeviceId());
 
     if (!isAct && isRemoteOnline) {
       const dur = sState?.durationMs || (audioRef.current && isFinite(audioRef.current.duration) ? audioRef.current.duration * 1000 : 0);

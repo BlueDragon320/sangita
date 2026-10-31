@@ -122,7 +122,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
     });
     socket.on('PLAYBACK_STATE_CHANGED', (state) => {
       // Check if this confirms an in-flight transfer
-      if (pendingTransferRef.current && state?.activeDeviceId === pendingTransferRef.current.targetDeviceId) {
+      if (pendingTransferRef.current && (state?.activeDeviceId === pendingTransferRef.current.targetDeviceId || state?.isTransferHandoff)) {
         if (transferTimeoutRef.current) {
           clearTimeout(transferTimeoutRef.current);
           transferTimeoutRef.current = null;
@@ -138,6 +138,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
       setSyncState(state);
       const amActive = !state?.activeDeviceId || state.activeDeviceId === deviceId.current;
       setIsActiveDevice(amActive);
+      isActiveRef.current = amActive;
       if (!amActive && audioRef.current && !audioRef.current.paused) {
         audioRef.current.pause();
       }
@@ -150,7 +151,7 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
     });
     const handleCmd = (command) => {
       if (command?.targetDeviceId && command.targetDeviceId !== deviceId.current) return;
-      if (isActiveRef.current && onRemoteCmdRef.current) onRemoteCmdRef.current(command);
+      if (onRemoteCmdRef.current) onRemoteCmdRef.current(command);
     };
     socket.on('REMOTE_COMMAND', handleCmd);
     socket.on('REMOTE_CONTROL', handleCmd);
@@ -232,16 +233,19 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
       }
     }
 
+    const currentTrackId = wasActive ? getTrackIdRef.current?.() : syncStateRef.current?.trackId;
+
     if (socketRef.current) {
       socketRef.current.emit('TRANSFER_PLAYBACK', {
         targetDeviceId,
         positionMs: currentPosMs,
         durationMs: currentDurMs,
+        trackId: currentTrackId,
       });
       setSyncState(prev => {
         const base = prev || {
           activeDeviceId: targetDeviceId,
-          trackId: null,
+          trackId: currentTrackId || null,
           positionMs: currentPosMs ?? 0,
           durationMs: currentDurMs ?? 0,
           isPlaying: false,
@@ -250,7 +254,6 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
           isShuffle: false,
         };
         const updatedPos = currentPosMs !== undefined ? currentPosMs : base.positionMs;
-        const currentTrackId = wasActive ? getTrackIdRef.current?.() : null;
         return { ...base, activeDeviceId: targetDeviceId,
           trackId: currentTrackId || base.trackId,
           positionMs: updatedPos, durationMs: currentDurMs ?? base.durationMs,
