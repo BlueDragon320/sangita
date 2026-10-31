@@ -579,7 +579,7 @@ describe('Hero Component & Spotify Layout', () => {
     expect(screen.queryByTestId('hero-edit-modal')).not.toBeInTheDocument()
   })
 
-  it('renders Add to Library / Remove from Library button in hero action bar for non-owner playlists', () => {
+  it('renders Add to Library / Remove from Library in 3-dot menu for non-owner playlists without cluttering action bar', () => {
     const handleToggleSave = vi.fn()
     const { rerender } = render(
       <Hero
@@ -596,12 +596,18 @@ describe('Hero Component & Spotify Layout', () => {
       />
     )
 
-    const saveBtn = screen.getByTestId('hero-save-btn')
-    expect(saveBtn).toBeInTheDocument()
-    expect(saveBtn).toHaveAttribute('aria-label', 'Add to Library')
-    expect(saveBtn).toHaveTextContent('Add to Library')
+    // Action bar does not have duplicate save button
+    expect(screen.queryByTestId('hero-save-btn')).not.toBeInTheDocument()
 
-    fireEvent.click(saveBtn)
+    // 3-dot menu has Add to Library
+    const moreBtn = screen.getByTestId('hero-more-btn')
+    fireEvent.click(moreBtn)
+
+    const menuSaveBtn = screen.getByTestId('hero-menu-save-btn')
+    expect(menuSaveBtn).toBeInTheDocument()
+    expect(menuSaveBtn).toHaveTextContent('Add to Library')
+
+    fireEvent.click(menuSaveBtn)
     expect(handleToggleSave).toHaveBeenCalledWith(true)
 
     // Rerender as saved
@@ -620,8 +626,9 @@ describe('Hero Component & Spotify Layout', () => {
       />
     )
 
-    expect(screen.getByTestId('hero-save-btn')).toHaveAttribute('aria-label', 'Remove from Library')
-    expect(screen.getByTestId('hero-save-btn')).toHaveTextContent('Remove from Library')
+    fireEvent.click(screen.getByTestId('hero-more-btn'))
+    const menuRemoveBtn = screen.getByTestId('hero-menu-save-btn')
+    expect(menuRemoveBtn).toHaveTextContent('Remove from Library')
   })
 
   it('suppresses auto-generated Folder playlist descriptions while rendering custom descriptions', () => {
