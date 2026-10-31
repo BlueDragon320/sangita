@@ -324,25 +324,6 @@ function TrackRowItem({
 
       {/* Actions & Duration Column */}
       <div className="col-duration" role="gridcell" style={{ minWidth: 44 }}>
-        {/* Add to Playlist shortcut button (desktop) */}
-        {onAddToPlaylist && (
-          <div className="track-row-actions">
-            <button
-              type="button"
-              className="btn-icon track-row-add-btn"
-              onClick={(e) => {
-                e.stopPropagation()
-                onAddToPlaylist(track)
-              }}
-              title="Add to playlist"
-              aria-label={`Add ${trackTitle} to playlist`}
-              data-testid={`track-row-add-${idx}`}
-            >
-              <PlusIcon width={16} height={16} />
-            </button>
-          </div>
-        )}
-
         {/* Duration timestamp */}
         <div className="track-duration-timestamp" style={{ minWidth: 44, fontVariantNumeric: 'tabular-nums' }}>
           {fmtDur(dur)}

@@ -63,7 +63,7 @@ describe('TrackList Component & Duration Rendering', () => {
     expect(play).toHaveBeenCalledWith(mockTracks[1], 1)
   })
 
-  it('calls onAddToPlaylist when + button is clicked', () => {
+  it('calls onAddToPlaylist via the 3-dots context menu without hover clutter', () => {
     const handleAddToPlaylist = vi.fn()
     render(
       <TrackList
@@ -77,8 +77,15 @@ describe('TrackList Component & Duration Rendering', () => {
       />
     )
 
-    const addBtn = screen.getByTestId('track-row-add-0')
-    fireEvent.click(addBtn)
+    // No hover + button cluttering the row
+    expect(screen.queryByTestId('track-row-add-0')).not.toBeInTheDocument()
+
+    // 3-dots menu contains Add to playlist
+    const moreBtn = screen.getAllByTestId('track-more-btn')[0]
+    fireEvent.click(moreBtn)
+
+    const addMenuItem = screen.getByTestId('track-action-playlist')
+    fireEvent.click(addMenuItem)
 
     expect(handleAddToPlaylist).toHaveBeenCalledWith(mockTracks[0])
   })
