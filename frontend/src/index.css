@@ -1017,6 +1017,26 @@ textarea:disabled,
   border-color: var(--text-dim);
 }
 
+.sidebar-empty-clear-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 20px;
+  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text, #fff);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-empty-clear-btn:hover {
+  background: var(--surface-active, rgba(255, 255, 255, 0.16));
+  border-color: var(--text-dim);
+}
+
 .sidebar-empty-collapsed-btn {
   display: flex;
   align-items: center;
@@ -9027,4 +9047,174 @@ body:has(.fullscreen-mode) .main-scroll-body,
 
 .toast-close-btn:hover {
   color: var(--text, #ffffff);
+}
+
+/* --- Offline / Reconnection Status Banner --- */
+.connection-status-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  margin: 12px 24px 0 24px;
+  border-radius: var(--radius-sm, 10px);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.4;
+  animation: slideInDown 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 50;
+  transition: all 0.2s ease;
+}
+
+@keyframes slideInDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.connection-status-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.connection-status-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.connection-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+}
+
+.connection-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.connection-retry-btn {
+  background: var(--accent);
+  color: var(--btn-text, #ffffff);
+  border: none;
+  border-radius: 20px;
+  padding: 6px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.connection-retry-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: scale(1.02);
+}
+
+.connection-retry-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.connection-retry-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.connection-dismiss-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim, #94a3b8);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 6px;
+  min-width: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.connection-dismiss-btn:hover {
+  color: var(--text, #ffffff);
+  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+}
+
+/* Theme variations */
+[data-theme="amoled"] .connection-status-banner {
+  background: #08090C;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #F4F4F5;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="dark"] .connection-status-banner {
+  background: #19191B;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #F4F4F5;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="light"] .connection-status-banner {
+  background: #FFFFFF;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: #18181B;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="amoled"] .connection-status-banner.network,
+[data-theme="dark"] .connection-status-banner.network {
+  border-left: 3px solid #F59E0B;
+}
+
+[data-theme="light"] .connection-status-banner.network {
+  border-left: 3px solid #D97706;
+}
+
+[data-theme="amoled"] .connection-status-banner.network .connection-status-icon,
+[data-theme="dark"] .connection-status-banner.network .connection-status-icon {
+  color: #FBBF24;
+}
+
+[data-theme="light"] .connection-status-banner.network .connection-status-icon {
+  color: #D97706;
+}
+
+[data-theme="amoled"] .connection-status-banner.sync,
+[data-theme="dark"] .connection-status-banner.sync {
+  border-left: 3px solid var(--accent);
+}
+
+[data-theme="light"] .connection-status-banner.sync {
+  border-left: 3px solid var(--accent);
+}
+
+[data-theme="amoled"] .connection-status-banner.sync .connection-status-icon,
+[data-theme="dark"] .connection-status-banner.sync .connection-status-icon,
+[data-theme="light"] .connection-status-banner.sync .connection-status-icon {
+  color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .connection-status-banner {
+    margin: 8px 12px 0 12px;
+    padding: 8px 14px;
+    font-size: 0.8rem;
+    gap: 10px;
+  }
+  .connection-retry-btn {
+    padding: 4px 12px;
+    font-size: 0.75rem;
+  }
 }

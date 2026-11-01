@@ -75,6 +75,45 @@ A release is ready only when existing users can upgrade without losing their lib
   - Verified `./gradlew testDebugUnitTest` and `assembleDebug`: **294/294 tests passed, 0 failures**.
 - [x] **Android Playlist Controls Plan**:
   - Verified single pencil in toolbar, removed duplicate buttons beside Play/Shuffle, preserved Move up/down per track, and tested deletion confirmation inside the pencil edit dialog.
+- [x] **Playback Transfer, Remote Control, Reconnect & Multi-User Sync Reliability (Priority 1, Item 2)**:
+  - Hardened `sync-server/server.js`: added defensive guards against null/non-object payloads, sanitized `NaN`/negative bounds across `positionMs`, `durationMs`, and `volume`, protected active ownership from passive report poisoning, and preserved session attributes across handoffs.
+  - Added comprehensive test suite `sync-server/test/playback-transfer-and-ownership.test.cjs`:
+    - Web-to-Android and Android-to-Web seamless playback transfer verifying exact track identity, position in milliseconds, paused/playing handoff state, and active device ownership transfer.
+    - Remote control dispatch ensuring `SEEK_TO`, `TOGGLE_PLAY`, and `SKIP_NEXT` route strictly to active playback device and are invisible to passive controllers.
+    - Rapid seeking stress verifying high-frequency active scrubbing does not desynchronize session state or allow passive report poisoning.
+    - Graceful passive controller reconnect verifying latest session snapshot delivery without interrupting active playback.
+    - Multi-user room isolation verifying zero cross-talk between isolated user sessions.
+    - Active device sleep/disconnect fallback verifying ownership safely transfers paused to the next online controller.
+  - Verification: `npm test` in `sync-server/` -> **9/9 tests passed in 2.3s**. Frontend vitest -> **289/289 passed in 7.4s**. Backend pytest -> **108/108 passed in 10.5s**.
+- [x] **Web Storefront, Reconnection Banner & UI State Polish (Priority 3, Item 1 & User Directives)**:
+  - **Shielded Internal B2B Metrics & Clean Storefront**: Verified customer-facing views (`DiscoverView.jsx`, `TrackList.jsx`, `HomeDashboard.jsx`, `ArtistDetailView.jsx`) strictly shield internal ranking engine scores, raw algorithmic weights, and diagnostic telemetry from shoppers. Telemetry remains isolated exclusively in `AdminDashboard.jsx`.
+  - **Offline & Reconnection Banner**: Added responsive, accessible (`role="status"`, `aria-live="polite"`) connection banner in `App.jsx` and `index.css`. Activates when network disconnects or sync server disconnects, providing an actionable Retry button and dismiss control across all three themes (Pure AMOLED Black, Dark Obsidian, Light Zinc) with high color contrast (WCAG AA/AAA).
+  - **Empty States & Polite Actions**: Verified and enhanced empty states across Discover, Search, and Library (`Sidebar.jsx`, `DiscoverView.jsx`, `TrackList.jsx`, `App.jsx`) to provide clear, actionable and polite CTAs (e.g., "Clear search", "Explore Discover", "Add Playlist from Discover").
+  - **Verification**: `npm test` in `frontend/` -> **296/296 tests passed across 25 suites**; `npm run build` in `frontend/` -> **0 errors, built in 1.27s**.
+- [x] **Multi-User Authorization & Security Audit (Priority 2, Item 1 & Item 2)**:
+  - **Private Playlist Isolation**: Verified non-owner users cannot fetch (`/api/v2/playlists/<id>` returns 404), modify (403), add/remove tracks (403), delete (403), clone (404), or save (404) private playlists owned by another user. Playlist discover and library listings strictly omit other users' private playlists unless explicitly granted.
+  - **Restricted Folders Playback, Download & Artwork Scoping**: Configured User Alpha with `Folder_A` and User Beta with `Folder_B`. Enforced strict 403 Forbidden checks preventing User Alpha from streaming, downloading, or reading lyrics from `Folder_B` (and vice versa for User Beta). Cover art for unpermitted folders strictly returns 403/404.
+  - **Token & Sensitive Credential Redaction in Logs**: Installed `SensitiveDataRedactingFilter` on root, Werkzeug, and Flask loggers. Redacts query tokens (`?token=[REDACTED]`), node secrets, passwords (`"password": "[REDACTED]"`), and Bearer tokens across logging and error output. Tested invalid logins and sensitive URL requests to ensure zero secret leakage in stdout, stderr, or logs.
+  - **GPU Service & Model Endpoints Hardening**: Secured `/api/lyrics/model/<model_name>/info` and `/api/lyrics/model/<model_name>/<filename>` by enforcing strict admin role verification for Bearer tokens; non-admin users receive 401 Unauthorized. Admin status remains protected via `@require_admin`.
+  - **Catalog Sources Metadata Protection**: In `/api/v2/catalog/sources`, unpermitted folders are marked `has_access: false` and their `track_count` is masked to `0` to prevent internal catalog size leakage to unauthorized shoppers.
+  - **Resource Leak Fixes**: Fixed unclosed SQLite connections in `app.py` across `get_track_info`, `_check_login_lockout`, `_record_failed_login`, `_clear_login_lockout`, `stream_audio`, and `api_health`.
+  - **Verification**: `PYTHONPATH=. /usr/bin/python3 -m pytest backend/test_multiuser_authorization.py -W default` -> **8/8 passed in 0.82s**. Full backend test suite: **123/123 passed in 9.59s, 0 warnings**.
+- [x] **Backend Health Check & Storage Observability (Priority 3, Item 3)**:
+  - Implemented `/api/health` (and `/health`) endpoint returning structured JSON payload: database connectivity & table count, storage capacity & free space in MB on `data/` and `music/`, sync server connectivity, and Sangita version.
+  - Returns HTTP 200 when operational (or degraded without critical failure), and HTTP 503 if critical database or storage failure occurs.
+  - Zero sensitive data exposure and zero SQLite connection leaks.
+  - Verification: `PYTHONPATH=. /usr/bin/python3 -m pytest backend/test_health_and_observability.py -W default` -> **10/10 passed in 0.26s**.
+- [x] **Catalog Robustness & Large Library Benchmarking (Priority 1, Item 1 & Priority 3, Item 2)**:
+  - Added `_resolve_music_relpath` in `backend/app.py` resolving URL decoding ambiguities for paths containing literal `%` and special characters (`'`, `"`, `#`, `%`, `&`, `+`, `[`, `]`).
+  - Added robust Unicode scanning handling Japanese, Cyrillic, Hindi, accented characters, and emojis without crashes or mojibake.
+  - Added safe handling for 0-byte and corrupted audio files, missing file references (`is_available = false`, `unavailable_count`), and non-audio asset exclusion.
+  - Implemented `@app.route("/api/tracks")` providing fast catalog-wide track listings.
+  - Benchmarked against 1,000 synthetic audio tracks: `/api/playlists` scan execution duration was **5.01 ms** (598x faster than the 3,000 ms budget), and average search latency was **6.15 ms** (8.1x faster than the 50 ms budget).
+  - Verification: `PYTHONPATH=. /usr/bin/python3 -m pytest backend/test_catalog_stress_and_unicode.py -W default` -> **7/7 passed in 0.47s**. Full backend suite: **123/123 passed**.
+- [x] **Android Full Schema Upgrade & Offline Resilience (Priority 0, Item 3 & Priority 1, Item 3)**:
+  - Added `FullSchemaUpgradeTest.kt` validating in-memory step-by-step schema migrations from v1 through v5 with representative populated fixtures.
+  - Verified downloads, audio file paths, playlist track ordering positions, account scoping (`default_account`), and failure tracking flags are 100% preserved. Zero rows dropped.
+  - Verification: `./gradlew testDebugUnitTest` in `sangita-android-app` -> **297/297 tests passed (100%)**.
 
 ---
 

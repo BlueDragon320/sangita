@@ -615,8 +615,82 @@ export default function App() {
     broadcastState, transferPlayback, sendRemoteControl,
     claimActiveDevice, getMyDeviceId,
     transferStatus, retryTransfer,
+    isConnected, isConnecting, connectError, reconnect,
   } = useDeviceSync({ token, audioRef, isPlaying: isLocalPlaying, onRemoteCommand: handleRemoteCommand,
     getTrackId: () => loadedTrackIdRef.current });
+
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' && 'onLine' in navigator ? navigator.onLine : true));
+  const [isRetryingConnection, setIsRetryingConnection] = useState(false);
+  const [dismissedBanner, setDismissedBanner] = useState(false);
+  const wasConnectedRef = useRef(false);
+
+  useEffect(() => {
+    if (isConnected) {
+      wasConnectedRef.current = true;
+      setDismissedBanner(false);
+    }
+  }, [isConnected]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setDismissedBanner(false);
+      if (reconnect) reconnect();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setDismissedBanner(false);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [reconnect]);
+
+  const connectionStatus = useMemo(() => {
+    if (dismissedBanner) return null;
+
+    if (!isOnline) {
+      return {
+        type: 'network',
+        message: 'Network disconnected. Offline mode active — local playback remains available.',
+        onRetry: async () => {
+          setIsRetryingConnection(true);
+          try {
+            if (typeof navigator !== 'undefined' && navigator.onLine) {
+              setIsOnline(true);
+            }
+            if (token) {
+              await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+              setIsOnline(true);
+            }
+            if (reconnect) reconnect();
+            setLibraryRetry(n => n + 1);
+          } catch (e) {
+            console.warn('[Network] Retry failed:', e);
+          } finally {
+            setIsRetryingConnection(false);
+          }
+        },
+        onDismiss: () => setDismissedBanner(true),
+      };
+    }
+    if (token && isOnline && (!isConnected && !isConnecting && connectError)) {
+      return {
+        type: 'sync',
+        message: 'Sync server disconnected. Cross-device playback sync is temporarily unavailable.',
+        onRetry: () => {
+          setIsRetryingConnection(true);
+          if (reconnect) reconnect();
+          setTimeout(() => setIsRetryingConnection(false), 1000);
+        },
+        onDismiss: () => setDismissedBanner(true),
+      };
+    }
+    return null;
+  }, [dismissedBanner, isOnline, token, isConnected, isConnecting, connectError, reconnect]);
 
   const handleUnlockWebAudio = useCallback(async () => {
     if (!audioRef.current) return;
@@ -2508,6 +2582,59 @@ export default function App() {
             deviceCount={devices.length}
             onOpenMobileMenu={() => setMobileMenuOpen(true)}
           />
+
+          {connectionStatus && (
+            <div
+              className={`connection-status-banner ${connectionStatus.type}`}
+              role="status"
+              aria-live="polite"
+              data-testid="connection-status-banner"
+            >
+              <div className="connection-status-content">
+                <span className="connection-status-icon" aria-hidden="true">
+                  {connectionStatus.type === 'network' ? (
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                      <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" />
+                      <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" />
+                      <path d="M10.71 5.05A16 16 0 0 1 22.58 9" />
+                      <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" />
+                      <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+                      <line x1="12" y1="20" x2="12.01" y2="20" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+                    </svg>
+                  )}
+                </span>
+                <span className="connection-status-text">
+                  {connectionStatus.message}
+                </span>
+              </div>
+              <div className="connection-status-actions">
+                <button
+                  type="button"
+                  className="connection-retry-btn"
+                  onClick={connectionStatus.onRetry}
+                  disabled={isRetryingConnection}
+                  aria-label="Retry connection"
+                  data-testid="connection-retry-btn"
+                >
+                  {isRetryingConnection ? 'Connecting…' : 'Retry'}
+                </button>
+                <button
+                  type="button"
+                  className="connection-dismiss-btn"
+                  onClick={connectionStatus.onDismiss}
+                  aria-label="Dismiss connection notice"
+                  data-testid="connection-dismiss-btn"
+                >
+                  &times;
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className={`main-scroll-body ${showLyrics && currentTrack ? 'lyrics-mode' : ''}`}>
             {showLyrics && currentTrack ? (

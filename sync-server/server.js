@@ -264,7 +264,9 @@ io.on('connection', (socket) => {
   socket.join(userRoom);
   console.log(`[Connect] user=${userId} socket=${socket.id}`);
 
-  socket.on('REGISTER_DEVICE', ({ deviceId, deviceName, deviceType }) => {
+  socket.on('REGISTER_DEVICE', (data) => {
+    if (!data || typeof data !== 'object') return;
+    const { deviceId, deviceName, deviceType } = data;
     if (!deviceId) return;
     socket.deviceId = deviceId;
 
@@ -315,7 +317,9 @@ io.on('connection', (socket) => {
     console.log(`[Register RAM] user=${userId} device=${deviceId} name="${deviceName}" active=${session.activeDeviceId}`);
   });
 
-  socket.on('HEARTBEAT', ({ deviceId, deviceName, deviceType }) => {
+  socket.on('HEARTBEAT', (data) => {
+    if (!data || typeof data !== 'object') return;
+    const { deviceId, deviceName, deviceType } = data;
     if (!deviceId) return;
     const userDevs = inMemoryDevices.get(userId);
     if (userDevs && userDevs.has(deviceId)) {
@@ -334,7 +338,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('TRANSFER_PLAYBACK', ({ targetDeviceId, playImmediately = true, positionMs, durationMs, trackId }) => {
+  socket.on('TRANSFER_PLAYBACK', (data) => {
+    if (!data || typeof data !== 'object') return;
+    const { targetDeviceId, playImmediately = true, positionMs, durationMs, trackId } = data;
     const { userId, deviceId } = socket;
     if (!userId || !targetDeviceId) return;
 
@@ -342,6 +348,7 @@ io.on('connection', (socket) => {
     const effectiveTrackId = trackId || currentSession.trackId || '';
 
     let extrapolatedPositionMs = Number(positionMs !== undefined ? positionMs : (currentSession.positionMs || 0));
+    if (isNaN(extrapolatedPositionMs)) extrapolatedPositionMs = 0;
     if (positionMs === undefined && currentSession.isPlaying && currentSession.updatedAt) {
       const elapsed = Date.now() - Number(currentSession.updatedAt);
       extrapolatedPositionMs = Math.min(
@@ -349,15 +356,22 @@ io.on('connection', (socket) => {
         extrapolatedPositionMs + Math.max(0, elapsed)
       );
     }
+    extrapolatedPositionMs = Math.max(0, extrapolatedPositionMs);
+
+    const rawDur = Number(durationMs !== undefined ? durationMs : (currentSession.durationMs || 0));
+    const safeDur = isNaN(rawDur) ? 0 : Math.max(0, rawDur);
 
     const handoffState = {
       ...currentSession,
       trackId: effectiveTrackId,
       positionMs: extrapolatedPositionMs,
-      durationMs: Number(durationMs !== undefined ? durationMs : (currentSession.durationMs || 0)),
+      durationMs: safeDur,
       activeDeviceId: targetDeviceId,
       isPlaying: Boolean(playImmediately),
       isBuffering: false,
+      volume: currentSession.volume !== undefined ? Number(currentSession.volume) : 0.8,
+      isLoop: currentSession.isLoop !== undefined ? Boolean(currentSession.isLoop) : false,
+      isShuffle: currentSession.isShuffle !== undefined ? Boolean(currentSession.isShuffle) : false,
       originDeviceId: deviceId,
       isTransferHandoff: true,
       updatedAt: Date.now(),
@@ -374,7 +388,7 @@ io.on('connection', (socket) => {
 
   socket.on('PLAYBACK_STATE_CHANGED', (state) => {
     const { userId, deviceId } = socket;
-    if (!userId || !deviceId || !state) return;
+    if (!userId || !deviceId || !state || typeof state !== 'object') return;
 
     let currentSession = getRamSession(userId);
     if (!currentSession) {
@@ -413,15 +427,29 @@ io.on('connection', (socket) => {
       ? Boolean(state.isPlaying && !isBuffering)
       : Boolean(currentSession.isPlaying && !isBuffering);
 
+    const rawPos = Number(state.positionMs !== undefined ? state.positionMs : (currentSession.positionMs ?? 0));
+    const safePos = isNaN(rawPos) ? (currentSession.positionMs ?? 0) : Math.max(0, rawPos);
+
+    const rawDur = Number(state.durationMs !== undefined ? state.durationMs : (currentSession.durationMs ?? 0));
+    const safeDur = isNaN(rawDur) ? (currentSession.durationMs ?? 0) : Math.max(0, rawDur);
+
+    const rawVol = state.volume !== undefined ? Number(state.volume) : (currentSession.volume ?? 0.8);
+    let safeVol = isNaN(rawVol) ? (currentSession.volume ?? 0.8) : rawVol;
+    if (safeVol > 1.0) {
+      safeVol = Math.max(0, Math.min(100, Math.round(safeVol)));
+    } else {
+      safeVol = Math.max(0, Math.min(1.0, safeVol));
+    }
+
     const updatedSession = {
       ...currentSession,
       ...state,
       trackId: state.trackId !== undefined ? state.trackId : (currentSession.trackId || ''),
-      positionMs: Number(state.positionMs !== undefined ? state.positionMs : (currentSession.positionMs ?? 0)),
-      durationMs: Number(state.durationMs !== undefined ? state.durationMs : (currentSession.durationMs ?? 0)),
+      positionMs: safePos,
+      durationMs: safeDur,
       isPlaying,
       isBuffering,
-      volume: state.volume !== undefined ? Number(state.volume) : (currentSession.volume ?? 0.8),
+      volume: safeVol,
       isLoop: state.isLoop !== undefined ? Boolean(state.isLoop) : Boolean(currentSession.isLoop),
       isShuffle: state.isShuffle !== undefined ? Boolean(state.isShuffle) : Boolean(currentSession.isShuffle),
       activeDeviceId: resolvedActiveDeviceId,
@@ -438,8 +466,15 @@ io.on('connection', (socket) => {
   });
 
   socket.on('POSITION_REPORT', (report) => {
+    if (!report || typeof report !== 'object') return;
     const session = getRamSession(userId);
     if (!session || session.activeDeviceId !== socket.deviceId) return;
+
+    const rawPos = Number(report.positionMs !== undefined ? report.positionMs : session.positionMs);
+    const safePos = isNaN(rawPos) ? (session.positionMs ?? 0) : Math.max(0, rawPos);
+
+    const rawDur = report.durationMs !== undefined ? Number(report.durationMs) : session.durationMs;
+    const safeDur = isNaN(rawDur) ? (session.durationMs ?? 0) : Math.max(0, rawDur);
 
     // The active player's identity and transport state belong to the same
     // in-memory snapshot as its position. This also repairs a missed track-change
@@ -447,8 +482,8 @@ io.on('connection', (socket) => {
     const updatedSession = {
       ...session,
       trackId: typeof report.trackId === 'string' && report.trackId ? report.trackId : session.trackId,
-      positionMs: Number(report.positionMs || 0),
-      durationMs: report.durationMs !== undefined ? Number(report.durationMs || 0) : session.durationMs,
+      positionMs: safePos,
+      durationMs: safeDur,
       isPlaying: typeof report.isPlaying === 'boolean' ? report.isPlaying : session.isPlaying,
       isBuffering: typeof report.isBuffering === 'boolean' ? report.isBuffering : session.isBuffering,
       originDeviceId: socket.deviceId,
@@ -462,16 +497,18 @@ io.on('connection', (socket) => {
     socket.to(userRoom).emit('POSITION_SYNC', updatedSession);
   });
 
-  socket.on('REMOTE_CONTROL', ({ action, payload, targetDeviceId }) => {
+  socket.on('REMOTE_CONTROL', (data) => {
+    if (!data || typeof data !== 'object') return;
+    const { action, payload, targetDeviceId } = data;
     const { userId, deviceId } = socket;
-    if (!userId) return;
+    if (!userId || !action) return;
 
     const session = getRamSession(userId);
     const resolvedTargetId = targetDeviceId || session?.activeDeviceId;
 
     if (!resolvedTargetId || resolvedTargetId === deviceId) return;
 
-    const safePayload = { ...(payload || {}) };
+    const safePayload = { ...(payload && typeof payload === 'object' ? payload : {}) };
     if (action === 'volume' && safePayload.volume !== undefined) {
       const vol = Number(safePayload.volume);
       if (!isNaN(vol)) {

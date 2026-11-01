@@ -103,9 +103,12 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
       setIsConnected(false);
       setConnectError(err?.message || 'Connection error');
     });
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
       setIsConnected(false);
       setIsConnecting(false);
+      if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'transport error') {
+        setConnectError(prev => prev || 'Disconnected from sync server');
+      }
     });
     socket.on('DEVICE_LIST_UPDATED', ({ devices: list }) => {
       const curList = list || [];
@@ -299,11 +302,22 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
   }, [transferPlayback]);
   const getMyDeviceId = useCallback(() => deviceId.current, []);
 
+  const reconnect = useCallback(() => {
+    if (socketRef.current) {
+      setIsConnecting(true);
+      setConnectError(null);
+      if (typeof socketRef.current.connect === 'function') {
+        socketRef.current.connect();
+      }
+    }
+  }, []);
+
   return {
     devices, isActiveDevice, setIsActiveDevice, syncState, setSyncState,
     broadcastState, transferPlayback, sendRemoteControl,
     claimActiveDevice, getMyDeviceId,
     isConnecting, isConnected, connectError,
     transferStatus, retryTransfer,
+    reconnect,
   };
 }

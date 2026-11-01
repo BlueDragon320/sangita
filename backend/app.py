@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 import subprocess
 import signal
@@ -16,6 +17,7 @@ import io
 import glob
 import uuid
 import urllib.parse
+import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from functools import wraps
@@ -23,6 +25,43 @@ from flask import Flask, request, jsonify, send_from_directory, abort, g, has_re
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
 import psutil
+
+class SensitiveDataRedactingFilter(logging.Filter):
+    """Redacts sensitive tokens, passwords, and secrets from logging records and messages."""
+    PATTERNS = [
+        (re.compile(r'([?&]token=)([^&\s"\']+)', re.IGNORECASE), r'\1[REDACTED]'),
+        (re.compile(r'([?&]node_secret=)([^&\s"\']+)', re.IGNORECASE), r'\1[REDACTED]'),
+        (re.compile(r'(Bearer\s+)[A-Za-z0-9_\-\.]+', re.IGNORECASE), r'\1[REDACTED]'),
+        (re.compile(r'("password"\s*:\s*")[^"]+(")', re.IGNORECASE), r'\1[REDACTED]\2'),
+        (re.compile(r'([?&]password=)([^&\s"\']+)', re.IGNORECASE), r'\1[REDACTED]'),
+        (re.compile(r'(password[:=]\s*)[^\s,]+', re.IGNORECASE), r'\1[REDACTED]'),
+        (re.compile(r'(secret_key[:=]\s*)[^\s,]+', re.IGNORECASE), r'\1[REDACTED]'),
+    ]
+
+    def _redact_str(self, text):
+        if not isinstance(text, str):
+            return text
+        for pat, repl in self.PATTERNS:
+            text = pat.sub(repl, text)
+        return text
+
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            record.msg = self._redact_str(record.msg)
+        if record.args:
+            if isinstance(record.args, tuple):
+                record.args = tuple(self._redact_str(a) if isinstance(a, str) else a for a in record.args)
+            elif isinstance(record.args, dict):
+                record.args = {k: (self._redact_str(v) if isinstance(v, str) else v) for k, v in record.args.items()}
+        return True
+
+_sensitive_filter = SensitiveDataRedactingFilter()
+logging.getLogger().addFilter(_sensitive_filter)
+logging.getLogger("werkzeug").addFilter(_sensitive_filter)
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_sensitive_filter)
+for _h in logging.getLogger("werkzeug").handlers:
+    _h.addFilter(_sensitive_filter)
 
 try:
     import mutagen
@@ -39,6 +78,7 @@ except ImportError:
     ImageStat = None
 
 app = Flask(__name__, static_folder=None)
+app.logger.addFilter(_sensitive_filter)
 # Hardened production configuration (Items 10, 11, 12)
 app.config["DEBUG"] = False
 app.config["ENV"] = os.environ.get("FLASK_ENV", "production")
@@ -841,6 +881,7 @@ def _check_login_lockout(username, ip):
     if user_norm:
         keys.append(f"user_ip:{user_norm}@{ip}")
 
+    conn = None
     try:
         conn = get_db()
         placeholders = ",".join("?" for _ in keys)
@@ -848,7 +889,6 @@ def _check_login_lockout(username, ip):
             f"SELECT lock_key, failed_attempts, locked_until FROM login_lockouts WHERE lock_key IN ({placeholders})",
             keys
         ).fetchall()
-        conn.close()
 
         max_remaining = 0
         for r in rows:
@@ -864,6 +904,9 @@ def _check_login_lockout(username, ip):
     except Exception as e:
         print(f"[Lockout Check Error] {e}")
         return False, 0
+    finally:
+        if conn is not None:
+            conn.close()
 
 def _record_failed_login(username, ip):
     """
@@ -877,6 +920,7 @@ def _record_failed_login(username, ip):
     if user_norm:
         keys.append(f"user_ip:{user_norm}@{ip}")
 
+    conn = None
     try:
         conn = get_db()
         max_attempts = 0
@@ -915,13 +959,15 @@ def _record_failed_login(username, ip):
             """, (key, new_count, locked_until, now))
 
         conn.commit()
-        conn.close()
 
         remaining_attempts = max(0, MAX_FAILED_LOGIN_ATTEMPTS - max_attempts)
         return is_locked, remaining, remaining_attempts
     except Exception as e:
         print(f"[Record Failed Login Error] {e}")
         return False, 0, 0
+    finally:
+        if conn is not None:
+            conn.close()
 
 def _clear_login_lockout(username, ip):
     """
@@ -932,14 +978,17 @@ def _clear_login_lockout(username, ip):
     if user_norm:
         keys.append(f"user_ip:{user_norm}@{ip}")
 
+    conn = None
     try:
         conn = get_db()
         placeholders = ",".join("?" for _ in keys)
         conn.execute(f"DELETE FROM login_lockouts WHERE lock_key IN ({placeholders})", keys)
         conn.commit()
-        conn.close()
     except Exception:
         pass
+    finally:
+        if conn is not None:
+            conn.close()
 
 # ---------------------------------------------------------------------------
 # Rate Limiting, Security Headers & Input Sanitization (Items 6, 7, 8, 9, 10, 11)
@@ -1045,16 +1094,39 @@ def sanitize_name(name, max_len=64):
         return None
     return cleaned
 
+def get_user_allowed_sources(user):
+    """Returns list of allowed source folder names or ['*'] for admin/wildcard."""
+    if not user:
+        return []
+    if user.get("role") == "admin":
+        return ["*"]
+    rules = user.get("rules", {})
+    if "allowed_folders" in rules:
+        return rules.get("allowed_folders") or []
+    return rules.get("allowed_playlists", ["*"])
+
 def user_has_source_access(user, source_name):
     """Returns True if user is authorized to access songs in source_name ('*' wildcard, explicit list, or admin)."""
     if not user:
         return False
     if user.get("role") == "admin":
         return True
-    allowed = user.get("rules", {}).get("allowed_playlists", ["*"])
+    allowed = get_user_allowed_sources(user)
     if "*" in allowed:
         return True
     return source_name in allowed
+
+def _resolve_music_relpath(filepath):
+    """Normalize music relative path from request/URL parameter, safely handling percent characters without corrupting literal %20, %25, etc."""
+    if not filepath or not isinstance(filepath, str):
+        return ""
+    cand = os.path.normpath(filepath).replace("\\", "/")
+    if os.path.exists(os.path.join(MUSIC_DIR, cand)):
+        return cand
+    unquoted = os.path.normpath(urllib.parse.unquote(filepath)).replace("\\", "/")
+    if os.path.exists(os.path.join(MUSIC_DIR, unquoted)):
+        return unquoted
+    return cand
 
 def get_track_source(track_path):
     """Extracts the top-level folder name or 'Library' for root songs."""
@@ -1103,6 +1175,7 @@ def get_track_info(track_path):
     """Retrieves metadata (title, artist, duration) for a given track_path."""
     name, artist = parse_track_name(track_path)
     duration = None
+    conn = None
     try:
         conn = get_db()
         row = conn.execute("SELECT duration, title, artist FROM track_cache WHERE path = ?", (track_path,)).fetchone()
@@ -1115,6 +1188,9 @@ def get_track_info(track_path):
                 artist = row["artist"]
     except Exception:
         pass
+    finally:
+        if conn is not None:
+            conn.close()
     return {
         "track_path": track_path,
         "title": name,
@@ -1123,19 +1199,131 @@ def get_track_info(track_path):
     }
 
 def _is_authorized_node_or_admin():
-    """Verify authorization via Bearer JWT, internal node cluster secret, or loopback (Items 3, 4, 9)."""
-    if app.config.get("TESTING"):
-        return True
+    """Verify authorization via Bearer JWT (admin only), internal node cluster secret, or loopback (Items 3, 4, 9)."""
     header = request.headers.get("Authorization", "").replace("Bearer ", "")
     token = header or request.args.get("token", "")
-    if token and _verify_token(token):
-        return True
+    if token:
+        username = _verify_token(token)
+        if username:
+            users = load_users()
+            user = users.get(username)
+            if user and user.get("role") == "admin":
+                return True
+        return False
+
     node_secret = request.headers.get("X-Sangita-Node-Secret") or request.args.get("node_secret")
     if node_secret and hmac.compare_digest(node_secret, SECRET_KEY):
         return True
-    if request.remote_addr in ("127.0.0.1", "::1", "localhost"):
+
+    client_ip = _get_client_ip()
+    if client_ip in ("127.0.0.1", "::1", "localhost"):
         return True
+
     return False
+
+def _get_free_disk_mb(path):
+    """Safely calculates available disk space in megabytes for a given path using shutil.disk_usage."""
+    try:
+        p = os.path.abspath(path)
+        while p and not os.path.exists(p):
+            parent = os.path.dirname(p)
+            if parent == p:
+                break
+            p = parent
+        if os.path.exists(p):
+            usage = shutil.disk_usage(p)
+            return round(usage.free / (1024 * 1024), 2)
+    except Exception:
+        pass
+    return 0.0
+
+@app.route("/health", methods=["GET", "HEAD"])
+@app.route("/api/health", methods=["GET", "HEAD"])
+def api_health():
+    """
+    Comprehensive health check & storage observability endpoint.
+    Returns operational status, database statistics, storage availability,
+    sync server reachability, and backend version without leaking internal secrets.
+    """
+    # 1. Lightweight database check
+    db_ok = False
+    stats_count = 0
+    db_status = "ok"
+    conn = None
+    is_standalone = False
+
+    try:
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM play_events").fetchone()
+            stats_count = int(row[0]) if row else 0
+            db_ok = True
+        except sqlite3.OperationalError:
+            conn.execute("SELECT 1").fetchone()
+            stats_count = 0
+            db_ok = True
+    except Exception:
+        db_ok = False
+        db_status = "error"
+        stats_count = None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    database_payload = {
+        "status": db_status if db_ok else "error",
+        "stats_count": stats_count
+    }
+
+    # 2. Storage space metrics using shutil.disk_usage
+    data_free_mb = _get_free_disk_mb(DATA_DIR)
+    music_free_mb = _get_free_disk_mb(MUSIC_DIR)
+    storage_payload = {
+        "data_dir_free_mb": data_free_mb,
+        "music_dir_free_mb": music_free_mb
+    }
+    storage_ok = data_free_mb > 0 and music_free_mb > 0
+
+    # 3. Sync server reachability check (non-blocking short timeout)
+    sync_url = (os.environ.get("SYNC_SERVER_URL") or "").strip()
+    if not sync_url:
+        sync_server_status = "disabled"
+    else:
+        try:
+            clean_url = sync_url.rstrip("/")
+            res = requests.get(f"{clean_url}/health", timeout=2.0)
+            if res.status_code == 200:
+                sync_server_status = "ok"
+            elif res.status_code < 500:
+                res_base = requests.get(clean_url, timeout=2.0)
+                if res_base.status_code < 400:
+                    sync_server_status = "ok"
+                else:
+                    sync_server_status = "unreachable"
+            else:
+                sync_server_status = "unreachable"
+        except Exception:
+            sync_server_status = "unreachable"
+
+    # 4. Determine overall status and HTTP response code
+    # Critical storage or database failures result in degraded status and HTTP 503
+    critical_failure = (not db_ok) or (not storage_ok)
+    is_degraded = critical_failure or (sync_server_status == "unreachable")
+    overall_status = "degraded" if is_degraded else "ok"
+    http_code = 503 if critical_failure else 200
+
+    response_payload = {
+        "status": overall_status,
+        "database": database_payload,
+        "storage": storage_payload,
+        "sync_server": sync_server_status,
+        "version": "1.2.0"
+    }
+
+    return jsonify(response_payload), http_code
 
 @app.route("/api/login", methods=["POST"])
 @rate_limit(limit=15, window=60, key_prefix="login")
@@ -1267,7 +1455,7 @@ def get_playlists():
     if not os.path.exists(MUSIC_DIR):
         return jsonify(result)
         
-    allowed = g.user.get("rules", {}).get("allowed_playlists", ["*"])
+    allowed = get_user_allowed_sources(g.user)
     
     # Discover tracks in root (Library)
     if "*" in allowed or "Library" in allowed:
@@ -1290,11 +1478,84 @@ def get_playlists():
             if "*" in allowed or folder in allowed:
                 tracks = sorted([
                     f for f in os.listdir(folder_path)
-                    if f.lower().endswith(AUDIO_EXTS)
+                    if os.path.isfile(os.path.join(folder_path, f)) and f.lower().endswith(AUDIO_EXTS)
                 ])
                 if tracks:
                     result[folder] = [f"{folder}/{t}" for t in tracks]
     return jsonify(result)
+
+@app.route("/api/tracks", methods=["GET"])
+@require_auth
+def get_tracks():
+    """Return all tracks accessible to the authenticated user with metadata, supporting search filtering."""
+    root = os.path.realpath(MUSIC_DIR)
+    if not os.path.exists(root):
+        if request.args.get("format") == "list":
+            return jsonify([]), 200
+        return jsonify({"tracks": [], "total": 0}), 200
+
+    q = (request.args.get("q") or request.args.get("search") or "").strip().lower()
+
+    dur_map = {}
+    try:
+        conn = get_db()
+        rows = conn.execute("SELECT path, duration FROM track_cache").fetchall()
+        dur_map = {r["path"].replace("\\", "/"): r["duration"] for r in rows}
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+    result = []
+    # 1. Root tracks (Library)
+    if user_has_source_access(g.user, "Library"):
+        try:
+            for f in sorted(os.listdir(root)):
+                full_p = os.path.join(root, f)
+                if os.path.isfile(full_p) and f.lower().endswith(AUDIO_EXTS):
+                    title, artist = parse_track_name(f)
+                    if q and q not in title.lower() and q not in artist.lower() and q not in f.lower():
+                        continue
+                    result.append({
+                        "id": f,
+                        "path": f,
+                        "track_path": f,
+                        "title": title,
+                        "artist": artist,
+                        "duration": dur_map.get(f),
+                        "source": "Library"
+                    })
+        except Exception:
+            pass
+
+    # 2. Subfolder tracks
+    try:
+        for folder in sorted(os.listdir(root)):
+            folder_path = os.path.join(root, folder)
+            if os.path.isdir(folder_path) and not folder.startswith("."):
+                if user_has_source_access(g.user, folder):
+                    for f in sorted(os.listdir(folder_path)):
+                        full_p = os.path.join(folder_path, f)
+                        if os.path.isfile(full_p) and f.lower().endswith(AUDIO_EXTS):
+                            rel = f"{folder}/{f}"
+                            title, artist = parse_track_name(f)
+                            if q and q not in title.lower() and q not in artist.lower() and q not in rel.lower():
+                                continue
+                            result.append({
+                                "id": rel,
+                                "path": rel,
+                                "track_path": rel,
+                                "title": title,
+                                "artist": artist,
+                                "duration": dur_map.get(rel),
+                                "source": folder
+                            })
+    except Exception:
+        pass
+
+    if request.args.get("format") == "list":
+        return jsonify(result), 200
+    return jsonify({"tracks": result, "total": len(result)}), 200
 
 # Cache parsed tags by file modification time; only return tracks the user can stream.
 _track_metadata_cache = {}
@@ -3702,11 +3963,13 @@ def get_track_durations():
                     if rel_path in cached and cached[rel_path][0] == mtime and cached[rel_path][1] is not None:
                         durations[rel_path] = cached[rel_path][1]
                     else:
+                        dur = None
                         if mutagen is not None:
-                            audio = mutagen.File(full_path)
-                            dur = round(audio.info.length, 1) if (audio and hasattr(audio, 'info') and getattr(audio.info, 'length', None)) else None
-                        else:
-                            dur = None
+                            try:
+                                audio = mutagen.File(full_path)
+                                dur = round(audio.info.length, 1) if (audio and hasattr(audio, 'info') and getattr(audio.info, 'length', None)) else None
+                            except Exception:
+                                dur = None
                         durations[rel_path] = dur
                         to_insert.append((rel_path, mtime, dur))
                 except Exception:
@@ -3736,22 +3999,25 @@ def get_durations():
 @app.route("/api/stream/<path:filepath>")
 @require_auth
 def stream_audio(filepath):
-    safe = os.path.normpath(urllib.parse.unquote(filepath)).replace("\\", "/")
+    safe = _resolve_music_relpath(filepath)
     if safe.startswith("..") or safe.startswith("/") or os.path.isabs(safe):
         abort(403)
 
     pl_id = request.args.get("playlist_id") or request.args.get("playlist")
     if pl_id:
         conn = get_db()
-        pl = conn.execute("""
-            SELECT p.*, sf.folder_name as source_folder_name
-            FROM playlists p
-            LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
-            WHERE p.id = ?
-        """, (pl_id,)).fetchone()
-        if pl and pl["visibility"] == "private":
-            if not user_has_playlist_access(conn, g.user, pl):
-                abort(404)
+        try:
+            pl = conn.execute("""
+                SELECT p.*, sf.folder_name as source_folder_name
+                FROM playlists p
+                LEFT JOIN source_folders sf ON p.source_folder_id = sf.id
+                WHERE p.id = ?
+            """, (pl_id,)).fetchone()
+            if pl and pl["visibility"] == "private":
+                if not user_has_playlist_access(conn, g.user, pl):
+                    abort(404)
+        finally:
+            conn.close()
 
     source_name = get_track_source(safe)
     if not user_has_source_access(g.user, source_name):
@@ -3824,7 +4090,7 @@ def stream_audio(filepath):
 @app.route("/api/download/<path:filepath>")
 @require_auth
 def download_audio(filepath):
-    safe = os.path.normpath(urllib.parse.unquote(filepath)).replace("\\", "/")
+    safe = _resolve_music_relpath(filepath)
     if safe.startswith("..") or safe.startswith("/") or os.path.isabs(safe):
         abort(403)
 
@@ -4003,7 +4269,7 @@ def extract_cover_art(full_path):
 def get_cover_art(filepath):
     import urllib.parse
     from flask import Response
-    safe = os.path.normpath(urllib.parse.unquote(filepath)).replace("\\", "/")
+    safe = _resolve_music_relpath(filepath)
     if safe.startswith("..") or safe.startswith("/") or os.path.isabs(safe):
         abort(403)
 
@@ -4228,8 +4494,7 @@ def _get_detected_source_folders(conn=None):
             # User grants for this folder
             grants = []
             for uname, udata in users.items():
-                allowed = udata.get("rules", {}).get("allowed_playlists", ["*"])
-                if "*" in allowed or folder in allowed:
+                if user_has_source_access(udata, folder):
                     grants.append(uname)
 
             folders_list.append({
@@ -5604,7 +5869,7 @@ def get_user_stats(username):
 @require_auth
 def get_track_lyrics(filepath):
     import urllib.parse
-    safe = os.path.normpath(urllib.parse.unquote(filepath)).replace("\\", "/")
+    safe = _resolve_music_relpath(filepath)
     if safe.startswith("..") or safe.startswith("/") or os.path.isabs(safe):
         abort(403)
 
@@ -6216,7 +6481,7 @@ def admin_lyrics_edit():
     if not filepath:
         return jsonify({"error": "filepath is required"}), 400
 
-    safe = os.path.normpath(urllib.parse.unquote(filepath))
+    safe = _resolve_music_relpath(filepath)
     if safe.startswith("..") or safe.startswith("/"):
         abort(403)
 
