@@ -2,6 +2,7 @@ import unittest
 import os
 import sqlite3
 import tempfile
+from datetime import datetime
 import app as app_mod
 
 class TestAuditFixesB1B6(unittest.TestCase):
@@ -120,7 +121,8 @@ class TestAuditFixesB1B6(unittest.TestCase):
             # Query daily data
             conn = app_mod.get_db()
             try:
-                today_str = conn.execute("SELECT strftime('%Y-%m-%d', 'now')").fetchone()[0]
+                tz_obj, _ = app_mod.get_tz_from_request()
+                today_str = datetime.now(tz_obj).strftime('%Y-%m-%d')
                 row1 = conn.execute("SELECT bytes_consumed, stream_requests FROM user_daily_data WHERE username = 'audit_tester' AND date = ?", (today_str,)).fetchone()
                 self.assertIsNotNone(row1)
                 initial_reqs = row1['stream_requests']
