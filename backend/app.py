@@ -1320,7 +1320,7 @@ def api_health():
         "database": database_payload,
         "storage": storage_payload,
         "sync_server": sync_server_status,
-        "version": "1.2.0"
+        "version": "2.0.0"
     }
 
     return jsonify(response_payload), http_code
@@ -6514,7 +6514,7 @@ def serve_frontend(path):
         abort(405)
     static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
     if not os.path.isdir(static_dir):
-        return jsonify({"status": "Sangita Backend API is running", "version": "1.0.0"}), 200
+        return jsonify({"status": "Sangita Backend API is running", "version": "2.0.0"}), 200
     if path:
         safe_path = os.path.normpath(path)
         if safe_path.startswith("..") or safe_path.startswith("/"):
@@ -6529,7 +6529,7 @@ def serve_frontend(path):
     index_file = os.path.join(static_dir, "index.html")
     if os.path.isfile(index_file):
         return send_from_directory(static_dir, "index.html")
-    return jsonify({"status": "Sangita Backend API is running", "version": "1.0.0"}), 200
+    return jsonify({"status": "Sangita Backend API is running", "version": "2.0.0"}), 200
 
 # Error handlers to prevent diagnostic artifact / stack trace leaks (Items 7, 9)
 @app.errorhandler(400)

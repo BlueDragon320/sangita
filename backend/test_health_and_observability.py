@@ -25,7 +25,7 @@ def test_api_health_success_schema(client):
 
     # Required top-level fields
     assert data["status"] == "ok"
-    assert data["version"] == "1.2.0"
+    assert data["version"] == "2.0.0"
 
     # Database observability payload
     assert "database" in data
@@ -154,4 +154,4 @@ def test_health_alias_endpoint(client):
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "ok"
-    assert data["version"] == "1.2.0"
+    assert data["version"] == "2.0.0"
