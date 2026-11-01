@@ -697,6 +697,7 @@ def format_bytes(b):
 def record_user_data_consumption(username, num_bytes, device_id=None, is_new_stream=True):
     if not username or not num_bytes or num_bytes <= 0:
         return
+    conn = None
     try:
         tz_obj, _ = get_tz_from_request()
         today_str = datetime.now(tz_obj).strftime('%Y-%m-%d')
@@ -729,9 +730,11 @@ def record_user_data_consumption(username, num_bytes, device_id=None, is_new_str
                 pass
 
         conn.commit()
-        conn.close()
     except Exception as e:
         print(f"[RecordDataConsumption Error] {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 _users_cache = {"mtime": 0, "data": None}
 

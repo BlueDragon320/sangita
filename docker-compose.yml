@@ -31,20 +31,17 @@ services:
     restart: unless-stopped
 
   sync-server:
-    image: node:20-alpine
+    build: ./sync-server
     container_name: sangita-sync-server
-    working_dir: /app
-    volumes:
-      - ./sync-server:/app
-      - ./data:/app/data:ro
     expose:
       - "3001"
+    volumes:
+      - ./data:/app/data:ro
     environment:
       - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env}
       - REDIS_URL=redis://redis:6379
       - SYNC_PORT=3001
       - CORS_ORIGIN=*
-    command: sh -c "npm install && npm start"
     depends_on:
       - redis
     restart: unless-stopped

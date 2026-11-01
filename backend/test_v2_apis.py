@@ -178,8 +178,11 @@ class TestV2APIsComprehensive(unittest.TestCase):
 
         # Map RockFolder to this artist
         conn = app_mod.get_db()
-        conn.execute("UPDATE source_folders SET classification = 'artist', mapped_artist_id = ?, mapped_artist_name = ?, display_name = ? WHERE folder_name = 'RockFolder'", (art_id, art_name, art_name))
-        conn.commit()
+        try:
+            conn.execute("UPDATE source_folders SET classification = 'artist', mapped_artist_id = ?, mapped_artist_name = ?, display_name = ? WHERE folder_name = 'RockFolder'", (art_id, art_name, art_name))
+            conn.commit()
+        finally:
+            conn.close()
 
         # Both user1 and user2 have access to RockFolder -> artist is visible
         res = self.client.get('/api/v2/artists', headers=self.user2_headers)
@@ -265,13 +268,17 @@ class TestV2APIsComprehensive(unittest.TestCase):
         """Verify strict allowed_playlists enforcement on stream, download, cover, and lyrics."""
         # Stream:
         # user2 allowed RockFolder -> 200/206
-        self.assertIn(self.client.get('/api/stream/RockFolder/rock_anthem.mp3', headers=self.user2_headers).status_code, (200, 206))
+        res_stream = self.client.get('/api/stream/RockFolder/rock_anthem.mp3', headers=self.user2_headers)
+        self.assertIn(res_stream.status_code, (200, 206))
+        res_stream.close()
         # user2 denied SecretFolder -> 403
         self.assertEqual(self.client.get('/api/stream/SecretFolder/secret_classified.mp3', headers=self.user2_headers).status_code, 403)
 
         # Download:
         # user2 allowed RockFolder -> 200
-        self.assertEqual(self.client.get('/api/download/RockFolder/rock_anthem.mp3', headers=self.user2_headers).status_code, 200)
+        res_download = self.client.get('/api/download/RockFolder/rock_anthem.mp3', headers=self.user2_headers)
+        self.assertEqual(res_download.status_code, 200)
+        res_download.close()
         # user2 denied SecretFolder -> 403
         self.assertEqual(self.client.get('/api/download/SecretFolder/secret_classified.mp3', headers=self.user2_headers).status_code, 403)
 
@@ -793,6 +800,7 @@ class TestV2APIsComprehensive(unittest.TestCase):
         # user2 can stream with playlist_id
         stream_ok = self.client.get(f'/api/stream/RockFolder/rock_anthem.mp3?playlist_id={pl_id}', headers=self.user2_headers)
         self.assertIn(stream_ok.status_code, (200, 206))
+        stream_ok.close()
 
         # user2 cannot stream JazzFolder track (track source strictly enforced -> 403)
         stream_denied = self.client.get(f'/api/stream/JazzFolder/jazz_smooth.mp3?playlist_id={pl_id}', headers=self.user2_headers)

@@ -523,10 +523,12 @@ class TestCatalogRedesign(unittest.TestCase):
         # User B accessing allowed track -> 200 or 206
         res_stream_ok = self.client.get('/api/stream/AllowedFolder/allowed_track.mp3', headers=self.user_b_headers)
         self.assertIn(res_stream_ok.status_code, (200, 206))
+        res_stream_ok.close()
 
         # User B accessing restricted track -> 403 Forbidden
         res_stream_denied = self.client.get('/api/stream/RestrictedFolder/restricted_secret_song.mp3', headers=self.user_b_headers)
         self.assertEqual(res_stream_denied.status_code, 403, "Restricted track stream must return 403")
+        res_stream_denied.close()
 
     # =========================================================================
     # 6. Additional Thorough Redesign Edge Cases

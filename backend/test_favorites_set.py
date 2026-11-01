@@ -11,13 +11,17 @@ class FavoriteSetTest(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.db = os.path.join(self.tempdir.name, 'test.db')
-        with sqlite3.connect(self.db) as conn:
-            conn.execute('''CREATE TABLE playlist_tracks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL, playlist_name TEXT NOT NULL,
-                track_path TEXT NOT NULL, position INTEGER DEFAULT 0,
-                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (username, playlist_name, track_path))''')
+        conn = sqlite3.connect(self.db)
+        try:
+            with conn:
+                conn.execute('''CREATE TABLE playlist_tracks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL, playlist_name TEXT NOT NULL,
+                    track_path TEXT NOT NULL, position INTEGER DEFAULT 0,
+                    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (username, playlist_name, track_path))''')
+        finally:
+            conn.close()
         self.patches = [
             patch.object(app_mod, 'STATS_DB', self.db),
             patch.object(app_mod, '_verify_token', return_value='alice'),

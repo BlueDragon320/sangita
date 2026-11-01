@@ -2,12 +2,24 @@ import unittest
 import json
 import os
 import sqlite3
+import tempfile
 import uuid
 import app as app_mod
 
 class TestAdminLibraryAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Folder discovery reads the filesystem, so provide our own library
+        # rather than depending on a developer's music directory.
+        library = tempfile.TemporaryDirectory(prefix='sangita-admin-library-')
+        cls.addClassCleanup(library.cleanup)
+        original_music_dir = app_mod.MUSIC_DIR
+        app_mod.MUSIC_DIR = library.name
+        cls.addClassCleanup(setattr, app_mod, 'MUSIC_DIR', original_music_dir)
+        os.mkdir(os.path.join(library.name, 'main'))
+        with open(os.path.join(library.name, 'main', 'fixture.mp3'), 'wb') as track:
+            track.write(b'fixture')
+
         # Safely backup users.json
         cls._users_backup = None
         if os.path.exists(app_mod.USERS_FILE):

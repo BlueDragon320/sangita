@@ -5,6 +5,15 @@ import tempfile
 import app as app_mod
 
 class TestAuditFixesB1B6(unittest.TestCase):
+    def _cleanup_db(self):
+        conn = app_mod.get_db()
+        try:
+            conn.execute("DELETE FROM user_daily_data WHERE username = 'audit_tester'")
+            conn.execute("DELETE FROM user_totals WHERE username = 'audit_tester'")
+            conn.commit()
+        finally:
+            conn.close()
+
     def setUp(self):
         self.app = app_mod.app
         self.client = self.app.test_client()
@@ -18,6 +27,14 @@ class TestAuditFixesB1B6(unittest.TestCase):
         }
         app_mod.save_users(users)
         self.headers = {'Authorization': f'Bearer {self.user_token}'}
+        self._cleanup_db()
+
+    def tearDown(self):
+        self._cleanup_db()
+        users = app_mod.load_users()
+        if 'audit_tester' in users:
+            del users['audit_tester']
+            app_mod.save_users(users)
 
     def test_b1_ip_spoofing_prevented(self):
         """B1: _get_client_ip() and _is_authorized_node_or_admin() verify peer remote_addr."""
@@ -52,22 +69,28 @@ class TestAuditFixesB1B6(unittest.TestCase):
     def test_b3_wal_and_pragmas(self):
         """B3: Database connection applies busy_timeout=5000 and foreign_keys=ON, journal_mode is WAL."""
         conn = app_mod.get_db()
-        fk = conn.execute("PRAGMA foreign_keys;").fetchone()[0]
-        self.assertEqual(fk, 1)
-        busy_timeout = conn.execute("PRAGMA busy_timeout;").fetchone()[0]
-        self.assertEqual(busy_timeout, 5000)
-        mode = conn.execute("PRAGMA journal_mode;").fetchone()[0]
-        self.assertEqual(mode.lower(), "wal")
+        try:
+            fk = conn.execute("PRAGMA foreign_keys;").fetchone()[0]
+            self.assertEqual(fk, 1)
+            busy_timeout = conn.execute("PRAGMA busy_timeout;").fetchone()[0]
+            self.assertEqual(busy_timeout, 5000)
+            mode = conn.execute("PRAGMA journal_mode;").fetchone()[0]
+            self.assertEqual(mode.lower(), "wal")
+        finally:
+            conn.close()
 
     def test_b4_total_bytes_reported_in_stats(self):
         """B4: Total bandwidth consumption is populated in /api/user/stats."""
         conn = app_mod.get_db()
-        conn.execute("""
-            INSERT INTO user_totals (username, total_seconds, total_bytes)
-            VALUES ('audit_tester', 120, 5242880)
-            ON CONFLICT(username) DO UPDATE SET total_bytes = 5242880
-        """)
-        conn.commit()
+        try:
+            conn.execute("""
+                INSERT INTO user_totals (username, total_seconds, total_bytes)
+                VALUES ('audit_tester', 120, 5242880)
+                ON CONFLICT(username) DO UPDATE SET total_bytes = 5242880
+            """)
+            conn.commit()
+        finally:
+            conn.close()
 
         res = self.client.get('/api/user/stats', headers=self.headers)
         self.assertEqual(res.status_code, 200)
@@ -75,6 +98,7 @@ class TestAuditFixesB1B6(unittest.TestCase):
         self.assertIn('data_consumed_total', data)
         self.assertEqual(data['data_consumed_total']['bytes'], 5242880)
         self.assertIn('5.0 MB', data['data_consumed_total']['formatted'])
+        res.close()
 
     def test_b5_range_request_data_accounting(self):
         """B5: Range request accounts only for partial bytes and does not count as new stream when offset > 0."""
@@ -91,13 +115,18 @@ class TestAuditFixesB1B6(unittest.TestCase):
                 'Range': 'bytes=0-999'
             })
             self.assertIn(res1.status_code, (200, 206))
+            res1.close()
 
             # Query daily data
             conn = app_mod.get_db()
-            today_str = conn.execute("SELECT strftime('%Y-%m-%d', 'now')").fetchone()[0]
-            row1 = conn.execute("SELECT bytes_consumed, stream_requests FROM user_daily_data WHERE username = 'audit_tester'").fetchone()
-            initial_reqs = row1['stream_requests']
-            initial_bytes = row1['bytes_consumed']
+            try:
+                today_str = conn.execute("SELECT strftime('%Y-%m-%d', 'now')").fetchone()[0]
+                row1 = conn.execute("SELECT bytes_consumed, stream_requests FROM user_daily_data WHERE username = 'audit_tester' AND date = ?", (today_str,)).fetchone()
+                self.assertIsNotNone(row1)
+                initial_reqs = row1['stream_requests']
+                initial_bytes = row1['bytes_consumed']
+            finally:
+                conn.close()
 
             # Seeking request: bytes 5000-5999 (offset 5000 > 0, should NOT increment stream_requests)
             res2 = self.client.get(f'/api/stream/{test_track_name}', headers={
@@ -105,10 +134,16 @@ class TestAuditFixesB1B6(unittest.TestCase):
                 'Range': 'bytes=5000-5999'
             })
             self.assertIn(res2.status_code, (200, 206))
+            res2.close()
 
-            row2 = conn.execute("SELECT bytes_consumed, stream_requests FROM user_daily_data WHERE username = 'audit_tester'").fetchone()
-            self.assertEqual(row2['stream_requests'], initial_reqs, "Seeking (offset > 0) must not increment stream_requests")
-            self.assertEqual(row2['bytes_consumed'], initial_bytes + 1000, "Should account for exactly 1000 bytes requested")
+            conn = app_mod.get_db()
+            try:
+                row2 = conn.execute("SELECT bytes_consumed, stream_requests FROM user_daily_data WHERE username = 'audit_tester' AND date = ?", (today_str,)).fetchone()
+                self.assertIsNotNone(row2)
+                self.assertEqual(row2['stream_requests'], initial_reqs, "Seeking (offset > 0) must not increment stream_requests")
+                self.assertEqual(row2['bytes_consumed'], initial_bytes + 1000, "Should account for exactly 1000 bytes requested")
+            finally:
+                conn.close()
         finally:
             if os.path.exists(test_track_path):
                 os.unlink(test_track_path)
@@ -127,6 +162,7 @@ class TestAuditFixesB1B6(unittest.TestCase):
             try:
                 res = self.client.get(f'/api/stream/{fname}', headers=self.headers)
                 self.assertEqual(res.headers.get("Content-Type"), expected_mime)
+                res.close()
             finally:
                 if os.path.exists(fpath):
                     os.unlink(fpath)
