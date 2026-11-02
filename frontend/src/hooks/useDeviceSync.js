@@ -99,16 +99,44 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
     });
     socket.on('connect_error', (err) => {
       console.warn('[Sync] connect error:', err.message);
-      setIsConnecting(false);
+      // Don't immediately surface the error — socket.io will auto-retry.
+      // Keep isConnecting=true while retries are in-flight so the banner
+      // stays hidden until all attempts are exhausted (reconnect_failed).
       setIsConnected(false);
-      setConnectError(err?.message || 'Connection error');
+      setIsConnecting(true);
     });
     socket.on('disconnect', (reason) => {
       setIsConnected(false);
-      setIsConnecting(false);
-      if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'transport error') {
-        setConnectError(prev => prev || 'Disconnected from sync server');
+      // If socket.io will auto-reconnect, stay in "connecting" state so the
+      // error banner doesn't flash during the brief reconnect window.
+      const willAutoReconnect =
+        reason !== 'io server disconnect' &&
+        reason !== 'io client disconnect';
+      if (willAutoReconnect) {
+        setIsConnecting(true);
+        setConnectError(null);
+      } else {
+        setIsConnecting(false);
+        setConnectError('Disconnected from sync server');
       }
+    });
+    // socket.io auto-reconnect events
+    socket.io.on('reconnect_attempt', () => {
+      setIsConnecting(true);
+      setConnectError(null);
+    });
+    socket.io.on('reconnect', () => {
+      // Successful reconnect — clear any lingering error state.
+      setIsConnecting(false);
+      setIsConnected(true);
+      setConnectError(null);
+    });
+    socket.io.on('reconnect_failed', () => {
+      // All retry attempts exhausted — now show the banner.
+      console.warn('[Sync] All reconnection attempts failed');
+      setIsConnecting(false);
+      setIsConnected(false);
+      setConnectError('Reconnection failed after multiple attempts');
     });
     socket.on('DEVICE_LIST_UPDATED', ({ devices: list }) => {
       const curList = list || [];
@@ -175,6 +203,9 @@ export function useDeviceSync({ token, audioRef, isPlaying, onRemoteCommand, get
       }
       clearInterval(heartbeatRef.current);
       clearInterval(posReportRef.current);
+      socket.io.off('reconnect_attempt');
+      socket.io.off('reconnect');
+      socket.io.off('reconnect_failed');
       socket.disconnect();
       socketRef.current = null;
     };
