@@ -627,19 +627,20 @@ export default function App() {
   useEffect(() => {
     if (isConnected) {
       wasConnectedRef.current = true;
-      setDismissedBanner(false);
+      // Do NOT reset dismissedBanner here — the user dismissed it intentionally
+      // and a socket reconnect should not force it back onto screen.
     }
   }, [isConnected]);
 
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      setDismissedBanner(false);
+      setDismissedBanner(false); // network recovered — let the user see status
       if (reconnect) reconnect();
     };
     const handleOffline = () => {
       setIsOnline(false);
-      setDismissedBanner(false);
+      // Don't reset dismissed state — user may have already dismissed the banner
     };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
