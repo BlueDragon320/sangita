@@ -9,9 +9,31 @@
   --radius-md: 12px;
   --ease-smooth: cubic-bezier(.22, 1, .36, 1);
 }
-[data-theme="amoled"] {
+/* Dark keeps the previous AMOLED glass palette; AMOLED uses black surfaces. */
+[data-theme="dark"] {
+  --bg: #000000;
+  --surface: #000000;
+  --surface-hi: #101217;
+  --card: #08090C;
+  --card-hover: #101217;
+  --border: rgba(255, 255, 255, .1);
+  --border-hi: rgba(255, 255, 255, .18);
+  --zinc-accent: #101217;
+  --text: #FFFFFF;
+  --text-sub: #A1A1A6;
+  --text-dim: #85858B;
+  --state-hover: rgba(255, 255, 255, .08);
+  --state-active: rgba(255, 255, 255, .14);
+  --player-bg: #000000;
   --glass-panel: rgba(13, 16, 21, .9);
   --glass-card: rgba(255, 255, 255, .045);
+}
+[data-theme="amoled"] {
+  --surface-hi: #000000;
+  --card: #000000;
+  --glass-panel: #000000;
+  --glass-card: #000000;
+  --glass-shadow: none;
 }
 [data-theme="light"] {
   --glass-panel: rgba(255, 255, 255, .72);
@@ -171,4 +193,38 @@ body { letter-spacing: -.01em; }
 @media (prefers-reduced-motion: reduce) {
   .btn-home-action, .home-jump-card, .home-artist-card { transition: none; }
   .btn-home-action:hover, .home-jump-card:hover, .home-artist-card:hover { transform: none; }
+}
+
+/* Pure-black base surfaces, with artwork and interactive highlights retained. */
+[data-theme="amoled"] .app-body,
+[data-theme="amoled"] .main-scroll-body,
+[data-theme="amoled"] .player,
+[data-theme="amoled"] .home-hero,
+[data-theme="amoled"] .hero-container,
+[data-theme="amoled"] .hero,
+[data-theme="amoled"] .artist-hero,
+[data-theme="amoled"] .login-page,
+[data-theme="amoled"] .login-stage,
+[data-theme="amoled"] .login-story,
+[data-theme="amoled"] .login-orbit-inner {
+  background: #000000;
+}
+[data-theme="amoled"] .sidebar,
+[data-theme="amoled"] .main-area,
+[data-theme="amoled"] .right-panel,
+[data-theme="amoled"] .player {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+[data-theme="amoled"] .home-hero,
+[data-theme="amoled"] .login-stage,
+[data-theme="amoled"] .login-orbit-inner { box-shadow: none; }
+[data-theme="amoled"] .home-hero::after,
+[data-theme="amoled"] .login-story::before { display: none; }
+[data-theme="amoled"] .login-orbit { box-shadow: none; }
+
+/* Preserve the former AMOLED playlist tint in the glass-themed Dark option. */
+[data-theme="dark"] .hero-container,
+[data-theme="dark"] .hero {
+  background: linear-gradient(180deg, hsl(var(--hero-accent-hue, 224deg), 32%, 10%) 0%, #000000 65%);
 }

@@ -13,8 +13,8 @@ export const THEME_OPTIONS = [
     id: 'dark',
     name: 'Dark Obsidian',
     shortName: 'Dark',
-    desc: 'Deep #080A0F surfaces',
-    previewBg: '#080A0F',
+    desc: 'Blue-tinted glass surfaces',
+    previewBg: '#0D1015',
     accentColor: '#66A3BF'
   },
   {
