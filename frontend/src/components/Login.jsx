@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import SangitaLogo from './SangitaLogo.jsx'
+import logo from '../assets/logo.png'
 import ThemeSelector from './ThemeSelector.jsx'
 
 export default function Login({ onLogin, currentTheme, onSelectTheme }) {
@@ -61,91 +62,99 @@ export default function Login({ onLogin, currentTheme, onSelectTheme }) {
       <div className="login-theme-selector" data-testid="login-theme-selector">
         <ThemeSelector theme={activeTheme} onSelectTheme={handleSelectTheme} />
       </div>
-      <div className="login-wrapper">
-        <div className="login-warning-header" role="note">
-          Private website for personal use. Access is restricted to authorized accounts.
+      <div className="login-stage">
+        <div className="login-story" aria-hidden="true">
+          <div className="login-story-brand"><img src={logo} alt="" width="28" height="28" /><span>SANGITA</span></div>
+          <div className="login-orbit"><div className="login-orbit-inner"><img src={logo} alt="" width="64" height="64" /></div></div>
+          <div className="login-story-copy"><span>YOUR MUSIC, YOUR SPACE</span><p>All the music<br />that feels like you.</p><small>A little more room to listen.</small></div>
+          <div className="login-story-footer">A PERSONAL LISTENING EXPERIENCE <span>✳</span></div>
         </div>
-        <div className="login-card">
-          <div className="login-logo">
-            <div className="login-logo-icon">
-              <SangitaLogo size={36} color="var(--accent)" />
-            </div>
-            <span className="login-logo-name">Sangita</span>
+        <div className="login-wrapper">
+          <div className="login-warning-header" role="note">
+            Private website for personal use. Access is restricted to authorized accounts.
           </div>
-          <p className="login-tagline">Your personal music server</p>
-          <form onSubmit={handleSubmit} noValidate>
-            <div className="login-field">
-              <label className="login-label" htmlFor="u">Username</label>
-              <input
-                id="u"
-                className="login-input"
-                type="text"
-                autoComplete="username"
-                placeholder="admin"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                autoFocus
-                required
-                disabled={loading}
-                aria-invalid={!!error}
-                aria-describedby={error ? "login-error-msg" : undefined}
-                data-testid="login-username-input"
-              />
+          <div className="login-card">
+            <div className="login-logo">
+              <div className="login-logo-icon">
+                <SangitaLogo size={36} color="var(--accent)" />
+              </div>
+              <span className="login-logo-name">Sangita</span>
             </div>
-            <div className="login-field">
-              <label className="login-label" htmlFor="p">Password</label>
-              <div className="login-input-wrapper">
+            <p className="login-tagline">Your personal music server</p>
+            <form onSubmit={handleSubmit} noValidate>
+              <div className="login-field">
+                <label className="login-label" htmlFor="u">Username</label>
                 <input
-                  id="p"
-                  className="login-input login-input-password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
+                  id="u"
+                  className="login-input"
+                  type="text"
+                  autoComplete="username"
+                  placeholder="admin"
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  autoFocus
                   required
                   disabled={loading}
                   aria-invalid={!!error}
                   aria-describedby={error ? "login-error-msg" : undefined}
-                  data-testid="login-password-input"
+                  data-testid="login-username-input"
                 />
-                <button
-                  type="button"
-                  className="login-password-toggle"
-                  onClick={() => setShowPassword(prev => !prev)}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  title={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? (
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                      <line x1="1" y1="1" x2="23" y2="23" />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
-                </button>
               </div>
-            </div>
-            {error && (
-              <div id="login-error-msg" className="login-error" role="alert">
-                {error}
+              <div className="login-field">
+                <label className="login-label" htmlFor="p">Password</label>
+                <div className="login-input-wrapper">
+                  <input
+                    id="p"
+                    className="login-input login-input-password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                    disabled={loading}
+                    aria-invalid={!!error}
+                    aria-describedby={error ? "login-error-msg" : undefined}
+                    data-testid="login-password-input"
+                  />
+                  <button
+                    type="button"
+                    className="login-password-toggle"
+                    onClick={() => setShowPassword(prev => !prev)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    title={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? (
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
-            )}
-            <button className="login-btn" type="submit" disabled={loading} data-testid="login-submit-btn">
-              {loading ? (
-                <span className="login-btn-loading">
-                  <span className="spinner-inline" data-testid="login-spinner" aria-hidden="true" />
-                  Signing in…
-                </span>
-              ) : (
-                'Sign in'
+              {error && (
+                <div id="login-error-msg" className="login-error" role="alert">
+                  {error}
+                </div>
               )}
-            </button>
-          </form>
+              <button className="login-btn" type="submit" disabled={loading} data-testid="login-submit-btn">
+                {loading ? (
+                  <span className="login-btn-loading">
+                    <span className="spinner-inline" data-testid="login-spinner" aria-hidden="true" />
+                    Signing in…
+                  </span>
+                ) : (
+                  'Sign in'
+                )}
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     </div>
