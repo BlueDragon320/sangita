@@ -173,7 +173,7 @@ def _load_or_generate_secret_key():
     return new_secret
 
 SECRET_KEY = _load_or_generate_secret_key()
-TOKEN_TTL  = 86400 * 7
+TOKEN_TTL  = int(os.environ.get("TOKEN_TTL", 86400 * 30))
 
 if PASSWORD == "sangita123":
     print("[SECURITY WARNING] Default admin password 'sangita123' is active. Set SANGITA_PASS in production.")
